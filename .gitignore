@@ -1,6 +1,7 @@
 # Node
 node_modules/
 dist/
+desktop/electron-dist/
 build/
 *.tsbuildinfo
 package-lock.json

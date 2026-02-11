@@ -1,65 +1,30 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
+import { app, BrowserWindow } from "electron";
 import path from "path";
 
-let mainWindow: BrowserWindow | null = null;
+const isDev = !app.isPackaged;
 
-const DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL || "http://localhost:5173";
-
-function createMainWindow() {
-  mainWindow = new BrowserWindow({
-    width: 1360,
-    height: 880,
-    minWidth: 1100,
-    minHeight: 760,
-    backgroundColor: "#f2ede5",
+function createWindow() {
+  const win = new BrowserWindow({
+    width: 1280,
+    height: 800,
+    backgroundColor: "#f3efe6",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true,
     },
   });
 
-  if (app.isPackaged) {
-    void mainWindow.loadFile(path.join(__dirname, "../dist/index.html"));
+  if (isDev) {
+    void win.loadURL("http://localhost:5173");
+    win.webContents.openDevTools({ mode: "detach" });
   } else {
-    void mainWindow.loadURL(DEV_SERVER_URL);
-    mainWindow.webContents.openDevTools({ mode: "detach" });
+    void win.loadFile(path.join(__dirname, "../dist/index.html"));
   }
-
-  mainWindow.on("closed", () => {
-    mainWindow = null;
-  });
 }
 
-ipcMain.handle("volumia:selectImages", async () => {
-  const selection = await dialog.showOpenDialog({
-    title: "Select reference images",
-    properties: ["openFile", "multiSelections"],
-    filters: [{ name: "Images", extensions: ["png", "jpg", "jpeg", "webp"] }],
-  });
-
-  return selection.canceled ? [] : selection.filePaths;
-});
-
-ipcMain.handle("volumia:openFolder", async (_event, folderPath: string) => {
-  if (!folderPath) return false;
-  await shell.openPath(folderPath);
-  return true;
-});
-
-app.whenReady().then(() => {
-  createMainWindow();
-
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createMainWindow();
-    }
-  });
-});
+app.whenReady().then(createWindow);
 
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") {
-    app.quit();
-  }
+  if (process.platform !== "darwin") app.quit();
 });

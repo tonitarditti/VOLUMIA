@@ -1,31 +1,25 @@
-import { FolderKanban, Sparkles } from "lucide-react";
-import type { AppScreen } from "../App";
+import { BookOpen, Sparkles } from "lucide-react";
+import type { AppRoute } from "../app/routes";
 
 type TopBarProps = {
-  screen: AppScreen;
-  onScreenChange: (screen: AppScreen) => void;
+  route: AppRoute;
+  onRouteChange: (route: AppRoute) => void;
 };
 
-export function TopBar({ screen, onScreenChange }: TopBarProps) {
+export function TopBar({ route, onRouteChange }: TopBarProps) {
   return (
-    <header className="topBar">
+    <header className="topBar bg-panel border-appBorder">
       <div className="brandGroup">
         <p className="brandEyebrow">VOLUMIA</p>
         <h1>Creative 3D Assistant</h1>
       </div>
 
-      <nav className="screenTabs" aria-label="Main views">
-        <button
-          className={screen === "generate" ? "screenTab active" : "screenTab"}
-          onClick={() => onScreenChange("generate")}
-        >
+      <nav className="navTabs" aria-label="Main views">
+        <button className={route === "generate" ? "navTab active" : "navTab"} onClick={() => onRouteChange("generate")}>
           <Sparkles size={16} /> Generate
         </button>
-        <button
-          className={screen === "library" ? "screenTab active" : "screenTab"}
-          onClick={() => onScreenChange("library")}
-        >
-          <FolderKanban size={16} /> Library
+        <button className={route === "library" ? "navTab active" : "navTab"} onClick={() => onRouteChange("library")}>
+          <BookOpen size={16} /> Library
         </button>
       </nav>
     </header>

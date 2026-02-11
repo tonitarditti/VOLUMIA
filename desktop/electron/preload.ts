@@ -1,14 +1,7 @@
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge } from "electron";
 
-const electronAPI = {
-  selectImages: () => ipcRenderer.invoke("volumia:selectImages") as Promise<string[]>,
-  openFolder: (folderPath: string) => ipcRenderer.invoke("volumia:openFolder", folderPath) as Promise<boolean>,
-};
+contextBridge.exposeInMainWorld("volumia", {
+  ping: () => "pong",
+});
 
-contextBridge.exposeInMainWorld("electronAPI", electronAPI);
-
-declare global {
-  interface Window {
-    electronAPI: typeof electronAPI;
-  }
-}
+export {};

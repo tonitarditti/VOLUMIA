@@ -1,16 +1,19 @@
+import type { AppRoute } from "../app/routes";
+
 type StatusBarProps = {
+  route: AppRoute;
   status: string;
   progress: number;
-  assetCount: number;
+  itemCount: number;
 };
 
-export function StatusBar({ status, progress, assetCount }: StatusBarProps) {
+export function StatusBar({ route, status, progress, itemCount }: StatusBarProps) {
   return (
-    <footer className="statusBar">
-      <p>{status}</p>
+    <footer className="statusBar bg-panel border-appBorder">
+      <p>View: {route}</p>
+      <p>Status: {status}</p>
       <p>Progress: {progress}%</p>
-      <p>Library assets: {assetCount}</p>
-      <p>Engine: Local secure IPC</p>
+      <p>Library: {itemCount} items</p>
     </footer>
   );
 }
