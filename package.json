@@ -1,4 +1,9 @@
 {
+  "scripts": {
+    "dev": "npm --prefix desktop run dev",
+    "react": "npm --prefix desktop run react",
+    "electron": "npm --prefix desktop run electron"
+  },
   "dependencies": {
     "idb-keyval": "^6.2.2",
     "react": "^19.2.4",

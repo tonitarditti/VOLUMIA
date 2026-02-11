@@ -18,7 +18,7 @@ interface JobStore {
   clearJob: () => void;
 }
 
-export const useJobStore = create<JobStore>((set, get) => ({
+export const useJobStore = create<JobStore>((set, _get) => ({
   jobState: 'idle',
   jobId: null,
   progress: 0,

@@ -87,21 +87,21 @@ export const LeftSidebar: React.FC = () => {
 
             <div className="option-group">
               <label className="checkbox-label">
-                <input type="checkbox" defaultChecked onChange={(e) => toggleOutputObj()} />
+                <input type="checkbox" defaultChecked onChange={() => toggleOutputObj()} />
                 Export OBJ
               </label>
             </div>
 
             <div className="option-group">
               <label className="checkbox-label">
-                <input type="checkbox" onChange={(e) => toggleOutputGlb()} />
+                <input type="checkbox" onChange={() => toggleOutputGlb()} />
                 Export GLB
               </label>
             </div>
 
             <div className="option-group">
               <label className="checkbox-label">
-                <input type="checkbox" defaultChecked onChange={(e) => toggleTextures()} />
+                <input type="checkbox" defaultChecked onChange={() => toggleTextures()} />
                 Include Textures
               </label>
             </div>
