@@ -62,7 +62,7 @@ export default function Viewport3D() {
 
     const mat = new THREE.MeshStandardMaterial({ color: 0xe6dfd5, roughness: 0.9, metalness: 0 });
 
-    // “chair-like” demo
+    // "chair-like" demo
     const seat = new THREE.Mesh(new THREE.BoxGeometry(60, 6, 60), mat);
     seat.position.set(0, 45, 0);
     wrapper.add(seat);
@@ -133,7 +133,7 @@ export default function Viewport3D() {
     <div style={{ height: "100%", display: "flex", flexDirection: "column", gap: 10 }}>
       <div className="viewportHeader">
         <div className="viewportTitle">Viewport</div>
-        <div className="viewportMeta">Wrapper scaling · {maintain ? "Proportions ON" : "Axis ON"}</div>
+        <div className="viewportMeta">Wrapper scaling - {maintain ? "Proportions ON" : "Axis ON"}</div>
       </div>
       <div ref={mountRef} className="viewportCanvas" />
     </div>

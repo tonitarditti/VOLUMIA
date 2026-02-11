@@ -27,14 +27,14 @@ export const useJobStore = create<State>((set) => ({
 
   startFakeJob: () => {
     const steps: Array<{ s: JobStatus; m: string; p: number; ms: number }> = [
-      { s: "preprocessing", m: "Analyzing image…", p: 12, ms: 800 },
-      { s: "reconstructing", m: "Reconstructing volume…", p: 48, ms: 1200 },
-      { s: "postprocessing", m: "Cleaning geometry…", p: 72, ms: 900 },
-      { s: "exporting", m: "Preparing editable model…", p: 90, ms: 700 },
+      { s: "preprocessing", m: "Analyzing image...", p: 12, ms: 800 },
+      { s: "reconstructing", m: "Reconstructing volume...", p: 48, ms: 1200 },
+      { s: "postprocessing", m: "Cleaning geometry...", p: 72, ms: 900 },
+      { s: "exporting", m: "Preparing editable model...", p: 90, ms: 700 },
       { s: "done", m: "Model ready (editable).", p: 100, ms: 400 },
     ];
 
-    set({ status: "preprocessing", message: "Starting…", progress: 1 });
+    set({ status: "preprocessing", message: "Starting...", progress: 1 });
 
     let i = 0;
     const tick = () => {

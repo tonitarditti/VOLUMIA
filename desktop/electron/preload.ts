@@ -1,9 +1,9 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
 const electronAPI = {
-  openFile: () => ipcRenderer.invoke('dialog:openFile'),
+  openFile: () => ipcRenderer.invoke('volumia:selectImages'),
   openOutputFolder: (folderPath: string) =>
-    ipcRenderer.invoke('dialog:openOutputFolder', folderPath),
+    ipcRenderer.invoke('volumia:openFolder', folderPath),
 }
 
 // Expose safe APIs to renderer process

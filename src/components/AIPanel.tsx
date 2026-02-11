@@ -35,7 +35,7 @@ export default function AIPanel() {
   const setDim = useViewportStore((s) => s.setDim);
   const setMaintain = useViewportStore((s) => s.setMaintainProportions);
 
-  const summary = useMemo(() => `${mode} · ${detail} · ${precision}`, [mode, detail, precision]);
+  const summary = useMemo(() => `${mode} - ${detail} - ${precision}`, [mode, detail, precision]);
 
   return (
     <div className="aiPanel">
@@ -111,7 +111,7 @@ export default function AIPanel() {
 
       <SectionTitle>Actions</SectionTitle>
       <button className="primary" disabled={status !== "idle" && status !== "done"} onClick={startFakeJob}>
-        {status === "idle" || status === "done" ? "Generate Editable Model" : "Generating…"}
+        {status === "idle" || status === "done" ? "Generate Editable Model" : "Generating..."}
       </button>
 
       <div className="mutedSmall">

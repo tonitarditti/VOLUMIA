@@ -52,14 +52,14 @@ export default function LeftSidebar() {
   return (
     <div className="sidebar">
       <Section title="Library (Local)">
-        <input placeholder="Search assets…" value={query} onChange={(e) => setQuery(e.target.value)} />
+        <input placeholder="Search assets..." value={query} onChange={(e) => setQuery(e.target.value)} />
 
         <label className="check">
           <input type="checkbox" checked={onlyFavorites} onChange={(e) => setOnlyFavorites(e.target.checked)} />
           Favorites only
         </label>
 
-        <div className="hint">{isHydrated ? `${filtered.length} assets` : "Loading…"}</div>
+        <div className="hint">{isHydrated ? `${filtered.length} assets` : "Loading..."}</div>
       </Section>
 
       <Section title="Save (Demo)">
@@ -101,7 +101,7 @@ export default function LeftSidebar() {
               </div>
 
               <div style={{ fontSize: 12, color: "rgba(46,42,38,.55)" }}>
-                {a.dims_cm.w}×{a.dims_cm.d}×{a.dims_cm.h} cm · v{a.version} {a.favorite ? "· ★" : ""}
+                {a.dims_cm.w}x{a.dims_cm.d}x{a.dims_cm.h} cm - v{a.version} {a.favorite ? "- *" : ""}
               </div>
 
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
