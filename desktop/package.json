@@ -2,14 +2,15 @@
   "name": "volumia-desktop",
   "version": "0.1.0",
   "description": "VOLUMIA - Your Creative 3D Assistant Desktop App",
-  "main": "electron/main.cjs",
+  "main": "electron-dist/main.js",
   "homepage": "./",
-  "type": "module",
   "scripts": {
-    "dev": "concurrently -k \"npm run react\" \"npm run electron\"",
+    "dev": "concurrently -k \"npm run react\" \"npm run electron:dev\"",
     "react": "vite --host 127.0.0.1 --port 5173 --strictPort",
-    "electron": "wait-on tcp:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron .",
-    "build": "vite build",
+    "electron:build": "tsc -p tsconfig.electron.json",
+    "electron:dev": "npm run electron:build && wait-on tcp:5173 && cross-env VITE_DEV_SERVER_URL=http://localhost:5173 electron ./electron-dist/main.js",
+    "electron": "electron ./electron-dist/main.js",
+    "build": "vite build && npm run electron:build",
     "preview": "vite preview",
     "dist": "npm run build && electron-builder",
     "lint": "eslint src --ext .ts,.tsx"
@@ -42,7 +43,7 @@
     "productName": "VOLUMIA",
     "files": [
       "dist/**/*",
-      "electron/**/*",
+      "electron-dist/**/*",
       "node_modules/**/*"
     ],
     "directories": {

@@ -1,40 +1,33 @@
-import React from 'react'
-import { useSettingsStore } from '../stores/settings.store'
-import { SettingsIcon, SunIcon, MoonIcon } from 'lucide-react'
-import '../styles/app.css'
+import { FolderKanban, Sparkles } from "lucide-react";
+import type { AppScreen } from "../App";
 
-export const TopBar: React.FC = () => {
-  const { theme, toggleTheme } = useSettingsStore()
+type TopBarProps = {
+  screen: AppScreen;
+  onScreenChange: (screen: AppScreen) => void;
+};
 
+export function TopBar({ screen, onScreenChange }: TopBarProps) {
   return (
-    <div className="top-bar">
-      <div className="top-bar-left">
-        <h1 className="brand-title">VOLUMIA</h1>
-        <p className="brand-tagline">Your Creative 3D Assistant</p>
+    <header className="topBar">
+      <div className="brandGroup">
+        <p className="brandEyebrow">VOLUMIA</p>
+        <h1>Creative 3D Assistant</h1>
       </div>
 
-      <div className="top-bar-center">
-        <div className="units-control">
-          <label>Units</label>
-          <select className="units-select">
-            <option>cm</option>
-            <option>m</option>
-          </select>
-        </div>
-      </div>
-
-      <div className="top-bar-right">
+      <nav className="screenTabs" aria-label="Main views">
         <button
-          className="icon-button"
-          onClick={toggleTheme}
-          title={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}
+          className={screen === "generate" ? "screenTab active" : "screenTab"}
+          onClick={() => onScreenChange("generate")}
         >
-          {theme === 'light' ? <MoonIcon size={20} /> : <SunIcon size={20} />}
+          <Sparkles size={16} /> Generate
         </button>
-        <button className="icon-button" title="Settings">
-          <SettingsIcon size={20} />
+        <button
+          className={screen === "library" ? "screenTab active" : "screenTab"}
+          onClick={() => onScreenChange("library")}
+        >
+          <FolderKanban size={16} /> Library
         </button>
-      </div>
-    </div>
-  )
+      </nav>
+    </header>
+  );
 }

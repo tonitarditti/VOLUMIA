@@ -13,9 +13,7 @@ export default function StatusBar() {
       </div>
 
       <div className="statusRight">
-        <div className="progressWrap" aria-label="progress">
-          <div className="progressBar" style={{ width: `${progress}%` }} />
-        </div>
+        <progress className="progressNative" value={progress} max={100} aria-label="progress" />
         <span className="kbd">{progress}%</span>
       </div>
     </div>

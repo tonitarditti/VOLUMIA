@@ -5,9 +5,9 @@ import { useViewportStore } from "../stores/viewport.store";
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div style={{ marginBottom: 14 }}>
+    <div className="sectionBlock">
       <div className="sectionTitle">{title}</div>
-      <div style={{ display: "grid", gap: 10 }}>{children}</div>
+      <div className="sectionBody">{children}</div>
     </div>
   );
 }
@@ -63,8 +63,27 @@ export default function LeftSidebar() {
       </Section>
 
       <Section title="Save (Demo)">
-        <input value={name} onChange={(e) => setName(e.target.value)} />
-        <input value={tags} onChange={(e) => setTags(e.target.value)} />
+        <label className="fieldLabel" htmlFor="asset-name">
+          Asset name
+        </label>
+        <input
+          id="asset-name"
+          title="Asset name"
+          placeholder="Asset name"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+        />
+
+        <label className="fieldLabel" htmlFor="asset-tags">
+          Tags (comma separated)
+        </label>
+        <input
+          id="asset-tags"
+          title="Tags"
+          placeholder="chair, nordic, wood"
+          value={tags}
+          onChange={(e) => setTags(e.target.value)}
+        />
 
         <button className="primary" onClick={() => saveDemoAsset({ name, tagsCsv: tags, dims })}>
           <Plus size={18} /> Save to Library
@@ -74,25 +93,15 @@ export default function LeftSidebar() {
       </Section>
 
       <Section title="Generated">
-        <div style={{ display: "grid", gap: 10 }}>
+        <div className="generatedList">
           {filtered.slice(0, 10).map((a) => (
-            <div
-              key={a.id}
-              style={{
-                border: "1px solid rgba(46,42,38,.10)",
-                background: "rgba(255,255,255,.55)",
-                borderRadius: 12,
-                padding: 10,
-                display: "grid",
-                gap: 6,
-              }}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
-                <div style={{ fontWeight: 700, fontSize: 13, lineHeight: 1.1 }}>{a.name}</div>
+            <div key={a.id} className="generatedCard">
+              <div className="generatedCardHeader">
+                <div className="generatedCardTitle">{a.name}</div>
 
                 <button
                   className="btn subtle"
-                  style={{ width: "auto", padding: "6px 10px" }}
+                  data-compact="true"
                   onClick={() => toggleFavorite(a.id)}
                   title="Favorite"
                 >
@@ -100,23 +109,13 @@ export default function LeftSidebar() {
                 </button>
               </div>
 
-              <div style={{ fontSize: 12, color: "rgba(46,42,38,.55)" }}>
+              <div className="generatedMeta">
                 {a.dims_cm.w}x{a.dims_cm.d}x{a.dims_cm.h} cm - v{a.version} {a.favorite ? "- *" : ""}
               </div>
 
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <div className="tagRow">
                 {a.tags.slice(0, 4).map((t) => (
-                  <span
-                    key={t}
-                    style={{
-                      fontSize: 11,
-                      padding: "3px 8px",
-                      borderRadius: 99,
-                      border: "1px solid rgba(46,42,38,.10)",
-                      background: "rgba(255,255,255,.35)",
-                      color: "rgba(46,42,38,.75)",
-                    }}
-                  >
+                  <span key={t} className="tagPill">
                     {t}
                   </span>
                 ))}

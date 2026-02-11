@@ -5,7 +5,7 @@ import { useViewportStore } from "../stores/viewport.store";
 
 function SectionTitle({ children }: { children: string }) {
   return (
-    <div className="sectionTitle" style={{ marginTop: 14 }}>
+    <div className="sectionTitle sectionTitleTop">
       {children}
     </div>
   );
@@ -59,16 +59,36 @@ export default function AIPanel() {
 
       <SectionTitle>Quality</SectionTitle>
       <div className="row2">
-        <select value={detail} onChange={(e) => setDetail(e.target.value as any)}>
-          <option value="low">Low</option>
-          <option value="medium">Medium</option>
-          <option value="high">High</option>
-        </select>
+        <div className="dimItem">
+          <label className="fieldLabel" htmlFor="quality-detail">
+            Detail level
+          </label>
+          <select
+            id="quality-detail"
+            title="Detail level"
+            value={detail}
+            onChange={(e) => setDetail(e.target.value as any)}
+          >
+            <option value="low">Low</option>
+            <option value="medium">Medium</option>
+            <option value="high">High</option>
+          </select>
+        </div>
 
-        <select value={precision} onChange={(e) => setPrecision(e.target.value as any)}>
-          <option value="loose">Loose</option>
-          <option value="accurate">Accurate</option>
-        </select>
+        <div className="dimItem">
+          <label className="fieldLabel" htmlFor="quality-precision">
+            Precision
+          </label>
+          <select
+            id="quality-precision"
+            title="Precision"
+            value={precision}
+            onChange={(e) => setPrecision(e.target.value as any)}
+          >
+            <option value="loose">Loose</option>
+            <option value="accurate">Accurate</option>
+          </select>
+        </div>
       </div>
 
       <SectionTitle>Materials</SectionTitle>
@@ -96,16 +116,40 @@ export default function AIPanel() {
 
       <div className="dimGrid">
         <div className="dimItem">
-          <div className="dimLabel">Width (cm)</div>
-          <input type="number" value={dims.w} onChange={(e) => setDim("w", Number(e.target.value))} />
+          <label className="dimLabel" htmlFor="dim-width">
+            Width (cm)
+          </label>
+          <input
+            id="dim-width"
+            type="number"
+            title="Width in centimeters"
+            value={dims.w}
+            onChange={(e) => setDim("w", Number(e.target.value))}
+          />
         </div>
         <div className="dimItem">
-          <div className="dimLabel">Depth (cm)</div>
-          <input type="number" value={dims.d} onChange={(e) => setDim("d", Number(e.target.value))} />
+          <label className="dimLabel" htmlFor="dim-depth">
+            Depth (cm)
+          </label>
+          <input
+            id="dim-depth"
+            type="number"
+            title="Depth in centimeters"
+            value={dims.d}
+            onChange={(e) => setDim("d", Number(e.target.value))}
+          />
         </div>
         <div className="dimItem">
-          <div className="dimLabel">Height (cm)</div>
-          <input type="number" value={dims.h} onChange={(e) => setDim("h", Number(e.target.value))} />
+          <label className="dimLabel" htmlFor="dim-height">
+            Height (cm)
+          </label>
+          <input
+            id="dim-height"
+            type="number"
+            title="Height in centimeters"
+            value={dims.h}
+            onChange={(e) => setDim("h", Number(e.target.value))}
+          />
         </div>
       </div>
 
@@ -122,7 +166,7 @@ export default function AIPanel() {
           : "Tip: Production + Medium + Accurate = best for editable SKP."}
       </div>
 
-      <div style={{ marginTop: "auto" }}>
+      <div className="aiPanelFooter">
         <SectionTitle>Export (mock)</SectionTitle>
         <div className="row2">
           <button className="btn subtle" disabled={status !== "done"}>

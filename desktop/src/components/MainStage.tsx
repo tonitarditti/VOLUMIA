@@ -1,58 +1,68 @@
-import React from 'react'
-import { useJobStore } from '@/stores/JobStateType.1'
-import '../styles/app.css'
+import { Heart, Sparkles } from "lucide-react";
+import type { AppScreen, LibraryAsset } from "../App";
 
-export const MainStage: React.FC = () => {
-  const { jobState, stageMessage, progress } = useJobStore()
+type MainStageProps = {
+  screen: AppScreen;
+  assets: LibraryAsset[];
+  progress: number;
+  status: string;
+  onToggleFavorite: (id: string) => void;
+};
 
-  if (jobState === 'idle') {
+export function MainStage({ screen, assets, progress, status, onToggleFavorite }: MainStageProps) {
+  if (screen === "generate") {
     return (
-      <div className="main-stage empty-state">
-        <div className="empty-content">
-          <h2>Ready to Generate</h2>
-          <p>Select an image and configure options to get started.</p>
-        </div>
-      </div>
-    )
-  }
+      <main className="mainPanel">
+        <div className="heroCard">
+          <p className="heroKicker">Generate</p>
+          <h2>Photoreference to editable 3D base</h2>
+          <p className="heroCopy">
+            Keep topology clean for downstream SketchUp edits. Use balanced quality for early exploration and high
+            fidelity for final geometry.
+          </p>
 
-  if (jobState === 'processing') {
-    return (
-      <div className="main-stage processing-state">
-        <div className="processing-content">
-          <h2>Processing</h2>
-          <p className="stage-message">{stageMessage}</p>
-          <div className="progress-bar">
-            <div className="progress-fill" style={{ width: `${progress * 100}%` }}></div>
+          <div className="pipelineStatus">
+            <Sparkles size={16} />
+            <span>{status}</span>
           </div>
-          <p className="progress-text">{Math.round(progress * 100)}%</p>
+
+          <progress className="progressNative" max={100} value={progress} aria-label="Generation progress" />
         </div>
-      </div>
-    )
+      </main>
+    );
   }
 
-  if (jobState === 'done') {
-    return (
-      <div className="main-stage result-state">
-        <div className="result-content">
-          <h2>✓ Success</h2>
-          <p>Your model has been generated successfully.</p>
-          <p className="stage-message">{stageMessage}</p>
-        </div>
+  return (
+    <main className="mainPanel">
+      <div className="libraryHeader">
+        <p className="heroKicker">Library</p>
+        <h2>Reusable generated assets</h2>
       </div>
-    )
-  }
 
-  if (jobState === 'error') {
-    return (
-      <div className="main-stage error-state">
-        <div className="error-content">
-          <h2>✗ Error</h2>
-          <p className="error-message">{stageMessage}</p>
-        </div>
+      <div className="assetGrid">
+        {assets.map((asset) => (
+          <article key={asset.id} className="assetCard">
+            <div className="assetHead">
+              <h3>{asset.name}</h3>
+              <button
+                className={asset.favorite ? "favoriteBtn active" : "favoriteBtn"}
+                onClick={() => onToggleFavorite(asset.id)}
+                aria-label={`Toggle favorite for ${asset.name}`}
+              >
+                <Heart size={15} />
+              </button>
+            </div>
+            <p className="assetMeta">
+              {asset.category} · Updated {asset.updatedAt}
+            </p>
+            <div className="tagWrap">
+              {asset.tags.map((tag) => (
+                <span key={`${asset.id}-${tag}`}>{tag}</span>
+              ))}
+            </div>
+          </article>
+        ))}
       </div>
-    )
-  }
-
-  return <div className="main-stage empty-state"></div>
+    </main>
+  );
 }

@@ -130,7 +130,7 @@ export default function Viewport3D() {
   }, [dims.w, dims.d, dims.h, maintain]);
 
   return (
-    <div style={{ height: "100%", display: "flex", flexDirection: "column", gap: 10 }}>
+    <div className="viewportRoot">
       <div className="viewportHeader">
         <div className="viewportTitle">Viewport</div>
         <div className="viewportMeta">Wrapper scaling - {maintain ? "Proportions ON" : "Axis ON"}</div>

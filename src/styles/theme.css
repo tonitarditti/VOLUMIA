@@ -64,6 +64,7 @@ body{ margin:0; background: var(--bg); color: var(--text); font-family: var(--fo
   color: rgba(46,42,38,.60);
   margin: 0 0 8px;
 }
+.sectionTitleTop{ margin-top: 14px; }
 
 .btn{
   display:flex; gap:10px; align-items:center; justify-content:flex-start;
@@ -76,6 +77,10 @@ body{ margin:0; background: var(--bg); color: var(--text); font-family: var(--fo
 }
 .btn:hover{ border-color: rgba(46,42,38,.18); }
 .btn.subtle{ background: rgba(255,255,255,.40); }
+.btn[data-compact="true"]{
+  width:auto;
+  padding: 6px 10px;
+}
 
 .primary{
   width:100%;
@@ -90,10 +95,54 @@ body{ margin:0; background: var(--bg); color: var(--text); font-family: var(--fo
 .primary:disabled{ opacity:.55; cursor:not-allowed; }
 
 .sidebar{ height:100%; display:flex; flex-direction:column; }
+.sectionBlock{ margin-bottom: 14px; }
+.sectionBody{ display:grid; gap: 10px; }
+.fieldLabel{
+  font-size: 12px;
+  color: rgba(46,42,38,.60);
+  margin: 0 2px -4px;
+}
 
 .hint{ font-size:12px; color: rgba(46,42,38,.55); padding-left: 4px; }
+.generatedList{ display:grid; gap: 10px; }
+.generatedCard{
+  border: 1px solid rgba(46,42,38,.10);
+  background: rgba(255,255,255,.55);
+  border-radius: 12px;
+  padding: 10px;
+  display: grid;
+  gap: 6px;
+}
+.generatedCardHeader{
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+}
+.generatedCardTitle{
+  font-weight: 700;
+  font-size: 13px;
+  line-height: 1.1;
+}
+.generatedMeta{
+  font-size: 12px;
+  color: rgba(46,42,38,.55);
+}
+.tagRow{
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.tagPill{
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 99px;
+  border: 1px solid rgba(46,42,38,.10);
+  background: rgba(255,255,255,.35);
+  color: rgba(46,42,38,.75);
+}
 
 .aiPanel{ height:100%; display:flex; flex-direction:column; gap: 10px; }
+.aiPanelFooter{ margin-top: auto; }
 .aiHeader{ display:flex; justify-content:space-between; align-items:baseline; }
 .aiTitle{ font-weight: 700; }
 .aiMeta{ font-size: 12px; color: rgba(46,42,38,.55); }
@@ -129,6 +178,12 @@ select, input{
 .viewportHeader{ display:flex; justify-content:space-between; align-items:baseline; }
 .viewportTitle{ font-weight: 700; }
 .viewportMeta{ font-size: 12px; color: rgba(46,42,38,.55); }
+.viewportRoot{
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
 .viewportCanvas{
   flex:1;
   border-radius: 12px;
@@ -158,16 +213,23 @@ select, input{
 .statusDot[data-status="preprocessing"]{ background: rgba(176,142,107,.28); }
 
 .statusRight{ display:flex; gap:10px; align-items:center; }
-.progressWrap{
-  width: 160px; height: 8px;
-  border-radius: 99px;
+.progressNative{
+  width: 160px;
+  height: 8px;
   border: 1px solid var(--line);
+  border-radius: 99px;
   background: rgba(255,255,255,.35);
-  overflow:hidden;
+  overflow: hidden;
 }
-.progressBar{
-  height:100%;
+.progressNative::-webkit-progress-bar{
+  background: rgba(255,255,255,.35);
+  border-radius: 99px;
+}
+.progressNative::-webkit-progress-value{
   background: rgba(176,142,107,.55);
-  width:0%;
-  transition: width 220ms ease;
+  border-radius: 99px;
+}
+.progressNative::-moz-progress-bar{
+  background: rgba(176,142,107,.55);
+  border-radius: 99px;
 }

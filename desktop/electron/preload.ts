@@ -1,16 +1,14 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer } from "electron";
 
 const electronAPI = {
-  openFile: () => ipcRenderer.invoke('volumia:selectImages'),
-  openOutputFolder: (folderPath: string) =>
-    ipcRenderer.invoke('volumia:openFolder', folderPath),
-}
+  selectImages: () => ipcRenderer.invoke("volumia:selectImages") as Promise<string[]>,
+  openFolder: (folderPath: string) => ipcRenderer.invoke("volumia:openFolder", folderPath) as Promise<boolean>,
+};
 
-// Expose safe APIs to renderer process
-contextBridge.exposeInMainWorld('electronAPI', electronAPI)
+contextBridge.exposeInMainWorld("electronAPI", electronAPI);
 
 declare global {
   interface Window {
-    electronAPI: typeof electronAPI
+    electronAPI: typeof electronAPI;
   }
 }
