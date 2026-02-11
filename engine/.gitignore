@@ -1,0 +1,21 @@
+# Python
+*.pyc
+__pycache__/
+*.pyo
+.pytest_cache/
+.coverage
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Files
+.DS_Store
+Thumbs.db
+
+# Generated
+build/
+dist/
+*.egg-info/
