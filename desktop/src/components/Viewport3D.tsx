@@ -11,7 +11,6 @@ type LibraryItem = {
 
 type Viewport3DProps = {
   route: AppRoute;
-  progress: number;
   status: string;
   items: LibraryItem[];
   onToggleFavorite: (id: string) => void;
