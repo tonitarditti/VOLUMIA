@@ -87,11 +87,15 @@ export default function App() {
 
   const settings = useSettingsStore((state) => state.settings);
   const appVersion = useSettingsStore((state) => state.appVersion);
+  const serviceStatus = useSettingsStore((state) => state.serviceStatus);
   const loadSettings = useSettingsStore((state) => state.load);
+  const restartService = useSettingsStore((state) => state.restartService);
+  const refreshServiceStatus = useSettingsStore((state) => state.refreshServiceStatus);
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [exportBusy, setExportBusy] = useState(false);
+  const [serviceActionBusy, setServiceActionBusy] = useState(false);
   const [exportMessage, setExportMessage] = useState<string | null>(null);
 
   const hasImages = useMemo(() => slots.some((slot) => slot.image), [slots]);
@@ -121,6 +125,14 @@ export default function App() {
   useEffect(() => {
     void Promise.all([loadStudioPresets(), loadSettings()]);
   }, [loadStudioPresets, loadSettings]);
+
+  useEffect(() => {
+    void refreshServiceStatus();
+    const timer = window.setInterval(() => {
+      void refreshServiceStatus();
+    }, 10000);
+    return () => window.clearInterval(timer);
+  }, [refreshServiceStatus]);
 
   useEffect(() => {
     void i18n.changeLanguage(resolveLanguage(settings.language));
@@ -266,7 +278,8 @@ export default function App() {
 
       setExportMessage(saveResult.savedPath ? t("app.savedPath", { path: saveResult.savedPath }) : result.message);
     } catch (error) {
-      setExportMessage(normalizeUiErrorMessage(error, t("exportModal.exportFailed"), t));
+      const baseMessage = normalizeUiErrorMessage(error, t("exportModal.exportFailed"), t);
+      setExportMessage(`${baseMessage} ${t("exportModal.recoverHint")}`.trim());
     } finally {
       setExportBusy(false);
     }
@@ -367,6 +380,28 @@ export default function App() {
         {showBackdrop ? <button type="button" className="sidebarBackdrop" onClick={() => setSidebarOpen(false)} /> : null}
 
         <main className="appContent">
+          {!serviceStatus.ok ? (
+            <div className="serviceBanner">
+              <span>{t("app.serviceOfflineBanner")}</span>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                disabled={serviceActionBusy}
+                onClick={async () => {
+                  setServiceActionBusy(true);
+                  try {
+                    await restartService();
+                  } finally {
+                    setServiceActionBusy(false);
+                  }
+                }}
+              >
+                {serviceActionBusy ? t("app.restartingService") : t("app.restartService")}
+              </Button>
+            </div>
+          ) : null}
+
           {errorMessage ? (
             <div className="errorBanner">
               <span>{errorMessage}</span>

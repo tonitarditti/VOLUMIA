@@ -280,6 +280,19 @@ select {
   color: #7a2f20;
 }
 
+.serviceBanner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 10px var(--space-3);
+  margin-bottom: var(--space-3);
+  border-radius: var(--radius-btn);
+  border: 1px solid var(--interactive-active-border);
+  background: var(--interactive-active-bg);
+  color: var(--interactive-text);
+}
+
 .errorBanner button {
   border: 0;
   background: transparent;

@@ -43,6 +43,9 @@
       "timeout": "The request timed out. Check service health and try again.",
       "validation": "The request payload is invalid. Review inputs and try again."
     },
+    "serviceOfflineBanner": "Service offline. Some actions are unavailable until the local service is restored.",
+    "restartService": "Restart service",
+    "restartingService": "Restarting service...",
     "savedPath": "Package saved: {{path}}"
   },
   "nav": {
@@ -165,6 +168,7 @@
     "textureSize": "Texture size",
     "exporting": "Exporting...",
     "exportPackage": "Export Package",
+    "recoverHint": "Recommended action: regenerate the model or restart the local service from Settings > Diagnostics.",
     "validationMissingGeneration": "No valid generation is available for export.",
     "validationMissingArtifacts": "Export assets are incomplete. Generate again before exporting.",
     "exportCanceled": "Export canceled.",

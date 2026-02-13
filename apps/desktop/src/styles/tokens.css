@@ -73,32 +73,32 @@
 :root[data-theme="dark"] {
   color-scheme: dark;
 
-  --bg: #15181f;
-  --panel: #1c212a;
-  --surface: #202631;
-  --border: #3a4250;
-  --text: #ece7de;
-  --text-muted: #c4bbaf;
+  --bg: #161412;
+  --panel: #1e1b18;
+  --surface: #24201c;
+  --border: #3a332c;
+  --text: #efeae3;
+  --text-muted: #b8b0a7;
   --accent: #a1866f;
 
-  --control-bg: #262d38;
-  --control-hover-bg: #2f3744;
-  --control-selected-bg: #39332c;
-  --control-selected-border: #a1866f;
+  --control-bg: var(--surface);
+  --control-hover-bg: #2a2520;
+  --control-selected-bg: rgba(161, 134, 111, 0.18);
+  --control-selected-border: rgba(161, 134, 111, 0.55);
   --primary-text-on-accent: #161412;
 
   --accent-hover: #bca28b;
   --focus-ring: rgba(161, 134, 111, 0.56);
   --focus-ring-strong: rgba(161, 134, 111, 0.55);
 
-  --interactive-bg: #24201c;
-  --interactive-border: #3a332c;
+  --interactive-bg: var(--surface);
+  --interactive-border: var(--border);
   --interactive-hover-bg: #2a2520;
   --interactive-hover-border: #4a4137;
   --interactive-active-bg: rgba(161, 134, 111, 0.18);
   --interactive-active-border: rgba(161, 134, 111, 0.55);
-  --interactive-text: #efeae3;
-  --interactive-muted-text: #b8b0a7;
+  --interactive-text: var(--text);
+  --interactive-muted-text: var(--text-muted);
   --interactive-disabled-opacity: 0.45;
 
   --button-primary-bg: #a1866f;

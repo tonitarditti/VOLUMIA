@@ -309,24 +309,47 @@ async function restartService() {
   return true;
 }
 
-async function getServiceStatus() {
-  try {
-    const response = await serviceHttp.get("/health", { timeout: 2500 });
-    return {
-      ok: response.status === 200 && Boolean(response.data?.ok),
-      managed: !serviceExternallyManaged,
-      url: serviceBaseUrl,
-      detail: response.data?.service ?? "Service healthy",
-    };
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : "Service unavailable";
-    return {
-      ok: false,
-      managed: !serviceExternallyManaged,
-      url: serviceBaseUrl,
-      detail: reason,
-    };
+async function delay(ms: number) {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function fetchServiceHealthWithRetry(attempts = 10, intervalMs = 500) {
+  let lastError: unknown = null;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      const response = await serviceHttp.get("/health", { timeout: 2500 });
+      if (response.status === 200 && response.data?.ok) {
+        return {
+          ok: true,
+          detail: response.data?.service ?? "Service healthy",
+        };
+      }
+      lastError = new Error(`Unexpected health response (${response.status}).`);
+    } catch (error) {
+      lastError = error;
+    }
+
+    if (attempt < attempts) {
+      await delay(intervalMs);
+    }
   }
+
+  const detail = lastError instanceof Error ? lastError.message : "Service unavailable";
+  return {
+    ok: false,
+    detail,
+  };
+}
+
+async function getServiceStatus() {
+  const status = await fetchServiceHealthWithRetry(10, 500);
+  return {
+    ok: status.ok,
+    managed: !serviceExternallyManaged,
+    url: serviceBaseUrl,
+    detail: status.detail,
+  };
 }
 
 function toServiceError(action: string, error: unknown): Error {

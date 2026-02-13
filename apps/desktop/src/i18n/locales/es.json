@@ -40,10 +40,13 @@
       "needOneImage": "Agrega al menos una imagen antes de generar.",
       "generationFailed": "La generación falló inesperadamente.",
       "serviceUnavailable": "El servicio no está activo. Reinícialo desde Configuración > Diagnóstico.",
-      "timeout": "La solicitud excedio el tiempo limite. Revisa el servicio e intenta de nuevo.",
-      "validation": "Los datos enviados no son validos. Revisa la entrada e intenta de nuevo."
+      "timeout": "La solicitud excedió el tiempo límite. Revisa el servicio e intenta de nuevo.",
+      "validation": "Los datos enviados no son válidos. Revisa la entrada e intenta de nuevo."
     },
-    "savedPath": "Paquete guardado: {{path}}"
+    "savedPath": "Paquete guardado: {{path}}",
+    "serviceOfflineBanner": "Servicio offline. Algunas acciones no estarán disponibles hasta restaurar el servicio local.",
+    "restartService": "Reiniciar servicio",
+    "restartingService": "Reiniciando servicio..."
   },
   "nav": {
     "newCapture": "Nueva Captura",
@@ -167,8 +170,9 @@
     "exportPackage": "Exportar Paquete",
     "exportCanceled": "Exportación cancelada.",
     "exportFailed": "La exportación falló.",
-    "validationMissingGeneration": "No hay una generacion valida para exportar.",
-    "validationMissingArtifacts": "Los archivos de exportacion estan incompletos. Genera de nuevo antes de exportar."
+    "validationMissingGeneration": "No hay una generación válida para exportar.",
+    "validationMissingArtifacts": "Los archivos de exportación están incompletos. Genera de nuevo antes de exportar.",
+    "recoverHint": "Acción recomendada: regenerar el modelo o reiniciar el servicio local desde Configuración > Diagnóstico."
   },
   "settings": {
     "title": "Configuración",
