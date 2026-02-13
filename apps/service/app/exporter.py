@@ -99,6 +99,16 @@ def _validate_export_assets(generation_dir: Path, generation_result: GenerationR
     return high_textures, low_textures
 
 
+def _load_generation_context(generation_dir: Path) -> dict:
+    context_file = generation_dir / "generation_context.json"
+    if not context_file.exists():
+        return {}
+    try:
+        return json.loads(context_file.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
 def create_export_package(
     generation_dir: Path,
     generation_result: GenerationResult,
@@ -116,12 +126,21 @@ def create_export_package(
     package_name = f"{object_name}_SketchUp_Package.zip"
     zip_path = exports_dir / package_name
 
+    generation_context = _load_generation_context(generation_dir)
+    object_context = generation_context.get("object", {}) if isinstance(generation_context, dict) else {}
+    pipeline_context = generation_context.get("pipeline", {}) if isinstance(generation_context, dict) else {}
+
     materials_json = {
         "schema": MATERIALS_SCHEMA_VERSION,
+        "pipeline": pipeline_context,
         "object": {
             "name": generation_result.objectName,
             "generationId": generation_result.generationId,
             "preset": generation_result.resolvedPreset,
+            "mode": object_context.get("mode", "auto"),
+            "units": object_context.get("units", options.units),
+            "scale": object_context.get("scale", {"dimension": "height", "valueCm": None}),
+            "dimensionsMeters": object_context.get("dimensionsMeters"),
             "qualityTargets": {
                 "highFaces": generation_result.stats["high"].faces,
                 "lowFaces": generation_result.stats["low"].faces,
