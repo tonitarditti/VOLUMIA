@@ -265,12 +265,16 @@ def _save_texture_set(
     material_name: str,
     texture_dir: Path,
     include_optional: bool = True,
+    base_color_override: Image.Image | None = None,
 ) -> dict[str, str | None]:
     base_name = f"{material_name}_BaseColor.png"
     normal_name = f"{material_name}_Normal.png"
     rough_name = f"{material_name}_Roughness.png"
 
-    texture_set.base_color.save(texture_dir / base_name)
+    if base_color_override is not None:
+        base_color_override.save(texture_dir / base_name)
+    else:
+        texture_set.base_color.save(texture_dir / base_name)
     texture_set.normal.save(texture_dir / normal_name)
     texture_set.roughness.save(texture_dir / rough_name)
 
@@ -440,6 +444,7 @@ def _build_generation_context(
     debug_path: str | None,
     generation_mode_used: str,
     conservative_mode: bool,
+    warnings: list[str],
 ) -> dict[str, object]:
     return {
         "schema": MATERIALS_SCHEMA_VERSION,
@@ -476,6 +481,7 @@ def _build_generation_context(
             "sideMaskValid": side_mask_valid,
             "heuristics": heuristics,
             "scaleStats": scale_stats,
+            "warnings": warnings,
         },
         "debug": {
             "enabled": debug_path is not None,
@@ -792,9 +798,6 @@ def generate_stub_assets(request: GenerationRequest, generated_root: Path, base_
             pivot_mode=request.pivotMode,
         )
 
-    apply_uv_placeholder(high_geometry.scene, high_geometry.component_meshes)
-    apply_uv_placeholder(low_geometry.scene, low_geometry.component_meshes)
-
     high_dimensions_m = _mesh_extents_m(high_geometry.merged)
     final_scale_stats = dict(scale_stats)
     final_scale_stats["width_cm"] = high_dimensions_m[0] * 100.0
@@ -804,10 +807,67 @@ def generate_stub_assets(request: GenerationRequest, generated_root: Path, base_
     if axis_used not in {"width", "height", "depth"}:
         axis_used = request.scaleDimension
 
+    material_captures = _material_sources(captures)
+    material_capture_map = _build_material_capture_mapping(request, material_captures, preset)
+    component_material_map = _component_material_map(preset)
+
+    projection_front, projection_side, projection_back = _build_projection_inputs(
+        front_capture=front_capture,
+        side_capture=side_capture,
+        back_capture=back_capture,
+    )
+    neutral_color = border_median_color(projection_front.image)
+    view_textures_high = build_view_textures(
+        front=projection_front,
+        side=projection_side,
+        back=projection_back,
+        size=HIGH_TEXTURE_SIZE,
+        neutral_color=neutral_color,
+    )
+    view_textures_low = build_view_textures(
+        front=projection_front,
+        side=projection_side,
+        back=projection_back,
+        size=LOW_TEXTURE_SIZE,
+        neutral_color=neutral_color,
+    )
+    if material_captures:
+        neutral_source = _capture_original(material_captures[0])
+        view_textures_high["neutral"] = np.asarray(
+            Image.fromarray(neutral_source, mode="RGB").resize((HIGH_TEXTURE_SIZE, HIGH_TEXTURE_SIZE), Image.Resampling.LANCZOS),
+            dtype=np.uint8,
+        )
+        view_textures_low["neutral"] = np.asarray(
+            Image.fromarray(neutral_source, mode="RGB").resize((LOW_TEXTURE_SIZE, LOW_TEXTURE_SIZE), Image.Resampling.LANCZOS),
+            dtype=np.uint8,
+        )
+
+    high_scene, _ = build_projected_textured_scene(
+        component_meshes=high_geometry.component_meshes,
+        component_material=component_material_map,
+        view_textures=view_textures_high,
+        texture_dir=high_textures_dir,
+        quality_tag="high",
+    )
+    low_scene, _ = build_projected_textured_scene(
+        component_meshes=low_geometry.component_meshes,
+        component_material=component_material_map,
+        view_textures=view_textures_low,
+        texture_dir=low_textures_dir,
+        quality_tag="low",
+    )
+    if len(high_scene.geometry) == 0:
+        apply_uv_placeholder(high_geometry.scene, high_geometry.component_meshes)
+        high_scene = high_geometry.scene
+    if len(low_scene.geometry) == 0:
+        apply_uv_placeholder(low_geometry.scene, low_geometry.component_meshes)
+        low_scene = low_geometry.scene
+
     high_glb_path = high_dir / "model_high.glb"
     low_glb_path = low_dir / "model_low.glb"
-    _save_scene_glb(high_glb_path, high_geometry.scene)
-    _save_scene_glb(low_glb_path, low_geometry.scene)
+    _save_scene_glb(high_glb_path, high_scene)
+    _save_scene_glb(low_glb_path, low_scene)
+    _copy_projection_textures(high_textures_dir, projection_textures_dir)
 
     component_names = [component.name for component in preset.components]
     high_dae_path = high_dir / "model_high.dae"
@@ -820,22 +880,8 @@ def generate_stub_assets(request: GenerationRequest, generated_root: Path, base_
     _write_preview(preview_high_path, object_name, "high", high_dimensions_m, front_depth_source)
     _write_preview(preview_low_path, object_name, "low", high_dimensions_m, front_depth_source)
 
-    material_captures = _material_sources(captures)
-    material_capture_map = _build_material_capture_mapping(request, material_captures, preset)
-    projection_high = _projected_texture_source(
-        front_image=front_image,
-        front_mask=front_mask_obs.mask,
-        side_image=side_image if side_available else None,
-        side_mask=side_mask_obs.mask if side_mask_obs is not None else None,
-        size=HIGH_TEXTURE_SIZE,
-    )
-    projection_low = _projected_texture_source(
-        front_image=front_image,
-        front_mask=front_mask_obs.mask,
-        side_image=side_image if side_available else None,
-        side_mask=side_mask_obs.mask if side_mask_obs is not None else None,
-        size=LOW_TEXTURE_SIZE,
-    )
+    projection_high = view_textures_high["front"]
+    projection_low = view_textures_low["front"]
     generated_materials: list[GenerationMaterial] = []
     for index, material_template in enumerate(preset.materials):
         source_capture = material_capture_map.get(material_template.name)
@@ -843,20 +889,23 @@ def generate_stub_assets(request: GenerationRequest, generated_root: Path, base_
             source_capture = material_captures[index]
 
         if source_capture is not None:
+            source_image = _capture_original(source_capture)
             high_textures = extract_material_texture_set(
-                source_capture.image,
+                source_image,
                 material_name=material_template.name,
                 texture_size=HIGH_TEXTURE_SIZE,
                 roughness_hint=material_template.roughness,
                 normal_strength=material_template.normal_strength,
             )
             low_textures = extract_material_texture_set(
-                source_capture.image,
+                source_image,
                 material_name=material_template.name,
                 texture_size=LOW_TEXTURE_SIZE,
                 roughness_hint=material_template.roughness,
                 normal_strength=material_template.normal_strength,
             )
+            high_base = Image.fromarray(source_image, mode="RGB").resize((HIGH_TEXTURE_SIZE, HIGH_TEXTURE_SIZE), Image.Resampling.LANCZOS)
+            low_base = Image.fromarray(source_image, mode="RGB").resize((LOW_TEXTURE_SIZE, LOW_TEXTURE_SIZE), Image.Resampling.LANCZOS)
         else:
             high_textures = extract_material_texture_set(
                 projection_high,
@@ -872,9 +921,23 @@ def generate_stub_assets(request: GenerationRequest, generated_root: Path, base_
                 roughness_hint=material_template.roughness,
                 normal_strength=material_template.normal_strength,
             )
+            high_base = Image.fromarray(projection_high, mode="RGB")
+            low_base = Image.fromarray(projection_low, mode="RGB")
 
-        high_names = _save_texture_set(high_textures, material_template.name, high_textures_dir, include_optional=True)
-        low_names = _save_texture_set(low_textures, material_template.name, low_textures_dir, include_optional=True)
+        high_names = _save_texture_set(
+            high_textures,
+            material_template.name,
+            high_textures_dir,
+            include_optional=True,
+            base_color_override=high_base,
+        )
+        low_names = _save_texture_set(
+            low_textures,
+            material_template.name,
+            low_textures_dir,
+            include_optional=True,
+            base_color_override=low_base,
+        )
 
         generated_materials.append(
             GenerationMaterial(
@@ -932,6 +995,9 @@ def generate_stub_assets(request: GenerationRequest, generated_root: Path, base_
     )
 
     component_presence = {name: len(mesh.faces) > 0 for name, mesh in high_geometry.component_meshes.items()}
+    if conservative_mode and preset.id == "table-desk" and not component_presence.get("OBJ_Legs", False):
+        warnings.append("Legs not separable: not generated (avoiding hallucination)")
+
     components = _build_components_metadata(preset, request, heuristics, component_presence=component_presence)
     high_stats = StatsSummary(
         faces=int(len(high_geometry.merged.faces)),
@@ -960,6 +1026,7 @@ def generate_stub_assets(request: GenerationRequest, generated_root: Path, base_
         generationModeUsed=request.generationMode,
         conservativeMode=conservative_mode,
         multiObjectEnabled=bool(request.detectMultipleObjects),
+        warnings=warnings,
         notes=notes,
         artifacts=GenerationArtifacts(
             highGlb=_map_url(base_url, generation_id, f"HIGH/{high_glb_path.name}"),
@@ -986,6 +1053,7 @@ def generate_stub_assets(request: GenerationRequest, generated_root: Path, base_
         debug_path,
         generation_mode_used=request.generationMode,
         conservative_mode=conservative_mode,
+        warnings=warnings,
     )
 
     (generation_dir / "generation_context.json").write_text(json.dumps(context_payload, indent=2), encoding="utf-8")
@@ -999,6 +1067,7 @@ def generate_stub_assets(request: GenerationRequest, generated_root: Path, base_
             "preset": resolved_preset,
             "mode": request.reconstructionMode,
             "generationMode": request.generationMode,
+            "warnings": warnings,
             "units": "cm",
             "scale": {"dimension": request.scaleDimension, "valueCm": float(request.scaleValueCm)},
             "pivotMode": request.pivotMode,
@@ -1037,6 +1106,10 @@ def generate_stub_assets(request: GenerationRequest, generated_root: Path, base_
         ],
     }
     (generation_dir / "materials.schema.snapshot.json").write_text(
+        json.dumps(materials_snapshot, indent=2),
+        encoding="utf-8",
+    )
+    (generation_dir / "materials.json").write_text(
         json.dumps(materials_snapshot, indent=2),
         encoding="utf-8",
     )

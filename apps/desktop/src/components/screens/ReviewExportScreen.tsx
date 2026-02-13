@@ -36,11 +36,24 @@ export function ReviewExportScreen({ onOpenExport, onExportAll }: ReviewExportSc
 
   const qualityStats = activeObject.stats[previewQuality];
   const modelUrl = previewQuality === "high" ? activeObject.artifacts.highGlb : activeObject.artifacts.lowGlb;
+  const activeWarnings = activeObject.warnings ?? generationResult.warnings ?? [];
 
   return (
     <div className="screenWrap reviewScreen">
       <header className="reviewHeader cardSurface">
-        <h2>{t("review.title")}</h2>
+        <div>
+          <h2>{t("review.title")}</h2>
+          {activeWarnings.length > 0 ? (
+            <div className="reviewWarnings" role="status" aria-live="polite">
+              <small>{t("review.warningsTitle")}</small>
+              <ul>
+                {activeWarnings.map((warning) => (
+                  <li key={warning}>{warning}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </div>
         <div className="reviewHeaderActions">
           <Tabs
             className="qualityToggle"
@@ -69,7 +82,7 @@ export function ReviewExportScreen({ onOpenExport, onExportAll }: ReviewExportSc
             <div className="detectedObjectsList">
               <h4>{t("review.detectedObjects")}</h4>
               <ul>
-                {detectedObjects.map((item) => (
+                {detectedObjects.map((item, index) => (
                   <li key={item.id}>
                     <button
                       type="button"
@@ -77,7 +90,7 @@ export function ReviewExportScreen({ onOpenExport, onExportAll }: ReviewExportSc
                       onClick={() => setSelectedObjectId(item.id)}
                     >
                       <img src={item.artifacts.previewLow} alt={item.objectName} />
-                      <span>{item.objectName}</span>
+                      <span>{t("review.objectLabel", { index: index + 1 })}</span>
                     </button>
                   </li>
                 ))}

@@ -290,6 +290,11 @@ export function NewCaptureScreen({ onGenerate, generating }: NewCaptureScreenPro
                 {t("newCapture.modeAggressive")}
               </Button>
             </div>
+            <div className="generationModeHints" role="note" aria-label={t("newCapture.generationHintsLabel")}>
+              <small>{t("newCapture.generationHintOneView")}</small>
+              <small>{t("newCapture.generationHintTwoViews")}</small>
+              <small>{t("newCapture.generationHintThreeViews")}</small>
+            </div>
           </div>
 
           <div className="field switchRow">
