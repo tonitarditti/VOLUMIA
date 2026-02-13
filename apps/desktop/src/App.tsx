@@ -326,7 +326,7 @@ export default function App() {
 
         <div className="headerRight">
           <span className="tagline">{t("app.tagline")}</span>
-          <Chip>{import.meta.env.DEV ? t("app.env.dev") : t("app.env.prod")}</Chip>
+          <Chip className="envChip">{import.meta.env.DEV ? t("app.env.dev") : t("app.env.prod")}</Chip>
           <Chip active>{statusLabel}</Chip>
         </div>
       </header>
@@ -369,7 +369,7 @@ export default function App() {
             </Button>
           </div>
 
-          <div className="sidebarSection">
+          <div className="sidebarSection sidebarStatus">
             <h2>{t("app.sidebar.status")}</h2>
             <p>{hasImages ? t("app.status.imagesLoaded") : t("app.status.addCaptures")}</p>
             <p>{generationResult ? t("app.status.preset", { value: generationResult.resolvedPreset }) : t("app.status.noGeneratedModel")}</p>

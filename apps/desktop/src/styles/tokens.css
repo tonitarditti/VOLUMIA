@@ -103,9 +103,9 @@
 
   --button-primary-bg: #a1866f;
   --button-primary-border: #a1866f;
-  --button-primary-text: #ffffff;
-  --button-primary-hover-bg: #bca28b;
-  --button-primary-hover-border: #bca28b;
+  --button-primary-text: #161412;
+  --button-primary-hover-bg: #b89b82;
+  --button-primary-hover-border: #b89b82;
 
   --bg-app: var(--bg);
   --bg-panel: var(--panel);

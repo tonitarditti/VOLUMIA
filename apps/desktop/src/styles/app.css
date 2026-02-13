@@ -21,8 +21,7 @@ body {
 }
 
 button,
-input,
-select {
+input {
   font: inherit;
 }
 
@@ -81,6 +80,7 @@ select {
 .tagline {
   color: var(--text-secondary);
   font-size: var(--font-label);
+  letter-spacing: 0.01em;
 }
 
 .uiChip,
@@ -124,10 +124,16 @@ select {
 
 :root[data-theme="dark"] .appHeader .tagline {
   color: var(--interactive-muted-text);
+  opacity: 0.75;
+  letter-spacing: 0.005em;
 }
 
 :root[data-theme="dark"] .appHeader .tagline + .tagline {
   display: none;
+}
+
+:root[data-theme="dark"] .envChip {
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .menuButton {
@@ -187,6 +193,14 @@ select {
 .sidebarSection p {
   margin: 0;
   color: var(--text-secondary);
+}
+
+.sidebarStatus {
+  margin-top: 24px;
+}
+
+.sidebarStatus p {
+  font-size: 12px;
 }
 
 .uiButton--nav,
@@ -369,7 +383,7 @@ select {
 .dropzone {
   border: 1px dashed var(--border);
   border-radius: var(--radius-card);
-  background: color-mix(in srgb, var(--bg-panel) 66%, white);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.02));
   padding: var(--space-5);
   text-align: center;
   margin-bottom: var(--space-4);
@@ -385,9 +399,10 @@ select {
   color: var(--text-secondary);
 }
 
+.dropzone:hover,
 .dropzone.active {
   border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 8%, white);
+  background: rgba(161, 134, 111, 0.06);
 }
 
 .slotGrid {
@@ -405,6 +420,10 @@ select {
   flex-direction: column;
   gap: var(--space-2);
   min-height: 220px;
+}
+
+.slotCard:hover {
+  border-color: color-mix(in srgb, var(--accent) 36%, var(--border));
 }
 
 .slotCard header {
@@ -434,7 +453,7 @@ select {
   flex: 1;
   border: 1px solid var(--border);
   border-radius: var(--radius-input);
-  background: color-mix(in srgb, var(--bg-panel) 70%, white);
+  background: var(--surface);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -449,7 +468,7 @@ select {
 }
 
 .slotPreview span {
-  color: var(--text-secondary);
+  color: var(--text-muted);
   font-size: var(--font-label);
 }
 
@@ -476,9 +495,7 @@ select {
   font-weight: 600;
 }
 
-.uiSelect,
 .uiInput,
-select,
 input[type="number"],
 input[type="text"] {
   border: 1px solid var(--border);
@@ -492,9 +509,105 @@ input[type="range"] {
   accent-color: var(--accent);
 }
 
+.uiSelect {
+  position: relative;
+  width: 100%;
+}
+
+.uiSelectTrigger {
+  width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-input);
+  padding: 9px 10px;
+  background: var(--surface);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transition), border-color var(--transition), color var(--transition);
+}
+
+.uiSelectTrigger:hover:not(:disabled) {
+  background: var(--interactive-hover-bg);
+  border-color: var(--interactive-hover-border);
+}
+
+.uiSelectTrigger.is-open {
+  background: var(--interactive-active-bg);
+  border-color: var(--interactive-active-border);
+}
+
+.uiSelectTrigger:disabled {
+  opacity: var(--interactive-disabled-opacity);
+  color: var(--interactive-muted-text);
+  cursor: not-allowed;
+}
+
+.uiSelectTriggerLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.uiSelectCaret {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.uiSelectPanel {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 70;
+  max-height: 240px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-input);
+  background: var(--surface);
+  box-shadow: var(--shadow-soft);
+  padding: 4px;
+}
+
+.uiSelectGroupLabel {
+  padding: 7px 10px 4px;
+  color: var(--text-secondary);
+  font-size: var(--font-label);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.uiSelectOption {
+  border: 1px solid transparent;
+  border-radius: calc(var(--radius-input) - 2px);
+  padding: 8px 10px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.uiSelectOption:hover,
+.uiSelectOption.is-highlighted {
+  background: var(--interactive-hover-bg);
+}
+
+.uiSelectOption.is-selected {
+  background: var(--interactive-active-bg);
+  border-color: var(--interactive-active-border);
+  color: var(--text);
+}
+
+.uiSelectOption.is-disabled {
+  opacity: var(--interactive-disabled-opacity);
+  color: var(--interactive-muted-text);
+  cursor: not-allowed;
+}
+
 .uiInput:focus-visible,
-.uiSelect:focus-visible,
-select:focus-visible,
+.uiSelectTrigger:focus-visible,
 input:focus-visible,
 button:focus-visible {
   outline: 2px solid var(--focus-ring-strong);
@@ -559,7 +672,7 @@ button:focus-visible {
 .btnPrimary:disabled,
 .btnSecondary:disabled,
 .btnInline:disabled {
-  opacity: 0.56;
+  opacity: 0.5;
   cursor: not-allowed;
 }
 
