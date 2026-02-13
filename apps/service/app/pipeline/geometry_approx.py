@@ -29,37 +29,80 @@ def _profile_width(mask: np.ndarray) -> np.ndarray:
     return np.sum(binary, axis=1).astype(np.float32)
 
 
+def _band_mean(values: np.ndarray, start_ratio: float, end_ratio: float) -> float:
+    if values.size == 0:
+        return 0.0
+    length = values.size
+    start = int(np.clip(length * start_ratio, 0, length - 1))
+    end = int(np.clip(length * end_ratio, start + 1, length))
+    band = values[start:end]
+    if band.size == 0:
+        return float(np.mean(values))
+    return float(np.mean(band))
+
+
+def _lathe_profile_from_mask(mask_obs: MaskObservation) -> list[tuple[float, float]] | None:
+    x0, y0, x1, y1 = mask_obs.bbox
+    binary = mask_obs.mask > 0
+    crop = binary[y0:y1, x0:x1]
+    if crop.size == 0 or crop.shape[0] < 8:
+        return None
+
+    row_widths = np.sum(crop, axis=1).astype(np.float32)
+    max_width = float(np.max(row_widths)) if row_widths.size > 0 else 0.0
+    if max_width < 3.0:
+        return None
+
+    smooth = row_widths.copy()
+    if smooth.size >= 5:
+        kernel = np.array([1, 2, 3, 2, 1], dtype=np.float32)
+        kernel /= float(np.sum(kernel))
+        smooth = np.convolve(smooth, kernel, mode="same")
+
+    sample_count = 9
+    y_positions = np.linspace(0.0, float(smooth.size - 1), sample_count)
+    indices = np.arange(smooth.size, dtype=np.float32)
+    profile: list[tuple[float, float]] = []
+    for pos in y_positions:
+        width_at_y = float(np.interp(pos, indices, smooth))
+        radius_ratio = float(np.clip(width_at_y / max(max_width, 1e-6), 0.08, 1.0))
+        height_ratio = float(np.clip(pos / max(float(smooth.size - 1), 1.0), 0.0, 1.0))
+        profile.append((radius_ratio, height_ratio))
+    return profile
+
+
 def estimate_object_dimensions(
     request: GenerationRequest,
     front_mask: MaskObservation,
     side_mask: MaskObservation | None,
-) -> tuple[tuple[float, float, float], dict[str, float | bool]]:
+) -> tuple[tuple[float, float, float], dict[str, object], dict[str, float | str]]:
     front_w_px, front_h_px = _safe_bbox_width_height(front_mask)
-    width_to_height = float(np.clip(front_w_px / max(front_h_px, 1.0), 0.22, 3.8))
+    width_px = max(1.0, front_w_px)
+    height_px = max(1.0, front_h_px)
 
+    depth_source = "inferred_0.6_width"
     if side_mask is not None and side_mask.valid:
         side_w_px, side_h_px = _safe_bbox_width_height(side_mask)
-        depth_to_height = float(np.clip(side_w_px / max(side_h_px, 1.0), 0.12, 2.8))
+        _ = side_h_px
+        depth_px = max(1.0, side_w_px)
+        depth_source = "side_bbox"
     else:
-        depth_to_height = float(np.clip(width_to_height * 0.6, 0.12, 2.8))
+        depth_px = max(1.0, width_px * 0.6)
 
-    scale_m = max(0.12, float(request.scaleValueCm) / 100.0)
-    if request.scaleDimension == "width":
-        width_m = scale_m
-        height_m = width_m / max(width_to_height, 0.1)
-        depth_m = height_m * depth_to_height
-    elif request.scaleDimension == "depth":
-        depth_m = scale_m
-        height_m = depth_m / max(depth_to_height, 0.1)
-        width_m = height_m * width_to_height
-    else:
-        height_m = scale_m
-        width_m = height_m * width_to_height
-        depth_m = height_m * depth_to_height
+    axis_pixel = {
+        "width": width_px,
+        "height": height_px,
+        "depth": depth_px,
+    }[request.scaleDimension]
+    cm_per_pixel = max(float(request.scaleValueCm), 0.001) / max(axis_pixel, 1e-6)
 
-    width_m = float(np.clip(width_m, 0.12, 5.0))
-    height_m = float(np.clip(height_m, 0.12, 5.0))
-    depth_m = float(np.clip(depth_m, 0.1, 4.0))
+    width_cm = width_px * cm_per_pixel
+    height_cm = height_px * cm_per_pixel
+    depth_cm = depth_px * cm_per_pixel
+
+    width_m = width_cm / 100.0
+    height_m = height_cm / 100.0
+    depth_m = depth_cm / 100.0
 
     rows = _profile_width(front_mask.mask)
     h = len(rows)
@@ -73,17 +116,40 @@ def estimate_object_dimensions(
 
     top_slice = rows[: max(1, int(h * 0.25))]
     mid_slice = rows[int(h * 0.4) : int(h * 0.65)]
+    bottom_slice = rows[max(0, int(h * 0.75)) :]
     drawer_hint = bool(mid_slice.mean() > (top_slice.mean() * 1.08 if top_slice.size else 0.0))
 
     back_profile = float(np.clip((top_slice.mean() / max(rows.mean(), 1e-5)) if top_slice.size else 0.35, 0.18, 0.62))
+    peak_width = float(np.max(rows)) if rows.size > 0 else 1.0
+    top_width_ratio = float(np.clip(_band_mean(rows, 0.0, 0.22) / max(peak_width, 1e-6), 0.12, 1.0))
+    mid_width_ratio = float(np.clip(_band_mean(rows, 0.42, 0.64) / max(peak_width, 1e-6), 0.12, 1.0))
+    bottom_width_ratio = float(np.clip(np.mean(bottom_slice) / max(peak_width, 1e-6), 0.12, 1.0)) if bottom_slice.size > 0 else mid_width_ratio
+
+    bbox_area = max(1.0, (front_mask.bbox[2] - front_mask.bbox[0]) * (front_mask.bbox[3] - front_mask.bbox[1]))
+    silhouette_pixels = float(np.sum(front_mask.mask > 0))
+    silhouette_fill = float(np.clip(silhouette_pixels / bbox_area, 0.05, 1.0))
+    lathe_profile = _lathe_profile_from_mask(front_mask)
 
     heuristics = {
-        "depth_ratio": float(np.clip(depth_to_height / max(width_to_height, 0.1), 0.25, 1.35)),
+        "depth_ratio": float(np.clip(depth_px / max(width_px, 1.0), 0.25, 1.35)),
         "seat_height_ratio": seat_height_ratio,
         "drawer_hint": drawer_hint,
         "back_profile": back_profile,
+        "top_width_ratio": top_width_ratio,
+        "mid_width_ratio": mid_width_ratio,
+        "bottom_width_ratio": bottom_width_ratio,
+        "silhouette_fill": silhouette_fill,
+        "lathe_profile": lathe_profile,
     }
-    return (width_m, height_m, depth_m), heuristics
+    scale_stats = {
+        "width_cm": float(width_cm),
+        "height_cm": float(height_cm),
+        "depth_cm": float(depth_cm),
+        "scale_axis_used": request.scaleDimension,
+        "cm_per_pixel": float(cm_per_pixel),
+        "depth_source": depth_source,
+    }
+    return (float(width_m), float(height_m), float(depth_m)), heuristics, scale_stats
 
 
 def _bounds_to_box(
@@ -142,6 +208,31 @@ def _cone(
     return mesh
 
 
+def _truncated_cone(
+    dimensions: tuple[float, float, float],
+    base_radius_ratio: float,
+    top_radius_ratio: float,
+    height_ratio: float,
+    center_ratio: tuple[float, float, float],
+    sections: int,
+) -> trimesh.Trimesh:
+    width, height, depth = dimensions
+    base_radius = max(0.003, min(width, depth) * base_radius_ratio)
+    top_radius = max(0.002, min(width, depth) * top_radius_ratio)
+    mesh = trimesh.creation.cylinder(radius=base_radius, height=max(0.005, height * height_ratio), sections=max(6, sections))
+
+    scale_xy = float(np.clip(top_radius / max(base_radius, 1e-6), 0.08, 3.0))
+    z_coords = mesh.vertices[:, 2]
+    top_mask = z_coords > 0
+    mesh.vertices[top_mask, 0] *= scale_xy
+    mesh.vertices[top_mask, 1] *= scale_xy
+
+    align = trimesh.geometry.align_vectors(np.array([0.0, 0.0, 1.0]), np.array([0.0, 1.0, 0.0]))
+    mesh.apply_transform(align)
+    mesh.apply_translation((center_ratio[0] * width, center_ratio[1] * height, center_ratio[2] * depth))
+    return mesh
+
+
 def _sphere(
     dimensions: tuple[float, float, float],
     radius_ratio: float,
@@ -190,12 +281,59 @@ def _quality_parameters(quality: str, complexity: str) -> tuple[int, int, int]:
     return 1, 16, 13000
 
 
+def _axis_index(axis: str) -> int:
+    return {"width": 0, "height": 1, "depth": 2}.get(axis, 1)
+
+
+def _apply_uniform_scale_to_axis(
+    component_meshes: dict[str, trimesh.Trimesh],
+    target_dimensions: tuple[float, float, float],
+    scale_axis: str,
+) -> None:
+    merged = _concat(list(component_meshes.values()))
+    bounds = merged.bounds
+    extents = bounds[1] - bounds[0]
+    axis_idx = _axis_index(scale_axis)
+    current_axis = float(max(extents[axis_idx], 1e-6))
+    target_axis = float(max(target_dimensions[axis_idx], 1e-6))
+    scale_factor = target_axis / current_axis
+
+    for mesh in component_meshes.values():
+        mesh.apply_scale(scale_factor)
+
+
+def _apply_pivot(
+    component_meshes: dict[str, trimesh.Trimesh],
+    pivot_mode: str,
+) -> None:
+    merged = _concat(list(component_meshes.values()))
+    bounds_min = merged.bounds[0]
+    bounds_max = merged.bounds[1]
+
+    if pivot_mode == "center":
+        offset = -(bounds_min + bounds_max) * 0.5
+    else:
+        offset = np.array(
+            [
+                -((bounds_min[0] + bounds_max[0]) * 0.5),
+                -bounds_min[1],
+                -((bounds_min[2] + bounds_max[2]) * 0.5),
+            ],
+            dtype=np.float64,
+        )
+
+    for mesh in component_meshes.values():
+        mesh.apply_translation(offset)
+
+
 def recipe_to_component_meshes(
     preset: PresetDefinition,
     dimensions: tuple[float, float, float],
     quality: str,
     complexity: str,
     recipes: dict[str, list[dict[str, object]]],
+    scale_axis: str = "height",
+    pivot_mode: str = "floor-center",
 ) -> GeometryBuildResult:
     subdivisions, sections, face_budget = _quality_parameters(quality, complexity)
     component_meshes: dict[str, trimesh.Trimesh] = {}
@@ -227,6 +365,17 @@ def recipe_to_component_meshes(
                         max(8, sections),
                     )
                 )
+            elif primitive_type == "truncated_cone":
+                meshes.append(
+                    _truncated_cone(
+                        dimensions,
+                        float(primitive["baseRadiusRatio"]),
+                        float(primitive["topRadiusRatio"]),
+                        float(primitive["heightRatio"]),
+                        tuple(primitive["centerRatio"]),  # type: ignore[arg-type]
+                        max(8, sections),
+                    )
+                )
             elif primitive_type == "sphere":
                 meshes.append(
                     _sphere(
@@ -253,7 +402,9 @@ def recipe_to_component_meshes(
                     component_meshes[component_name] = mesh.simplify_quadric_decimation(max(200, face_budget // len(component_meshes)))
                 except Exception:
                     component_meshes[component_name] = mesh
-        merged = _concat(list(component_meshes.values()))
+    _apply_uniform_scale_to_axis(component_meshes, dimensions, scale_axis=scale_axis)
+    _apply_pivot(component_meshes, pivot_mode=pivot_mode)
+    merged = _concat(list(component_meshes.values()))
 
     scene = trimesh.Scene()
     for component in preset.components:
@@ -267,9 +418,19 @@ def fallback_component_meshes(
     preset: PresetDefinition,
     dimensions: tuple[float, float, float],
     quality: str,
+    scale_axis: str = "height",
+    pivot_mode: str = "floor-center",
 ) -> GeometryBuildResult:
     minimal_recipes = {
         component.name: [{"type": "box", "bounds": (0.24, 0.76, 0.14 + idx * 0.05, 0.22 + idx * 0.05, 0.2, 0.8)}]
         for idx, component in enumerate(preset.components)
     }
-    return recipe_to_component_meshes(preset, dimensions, quality=quality, complexity="low", recipes=minimal_recipes)
+    return recipe_to_component_meshes(
+        preset,
+        dimensions,
+        quality=quality,
+        complexity="low",
+        recipes=minimal_recipes,
+        scale_axis=scale_axis,
+        pivot_mode=pivot_mode,
+    )

@@ -298,7 +298,9 @@ export default function App() {
           serviceOnline={serviceStatus.ok}
         />
         <main className="appContent">
-          <UiKitScreen />
+          <div className="screenHost">
+            <UiKitScreen />
+          </div>
         </main>
       </div>
     );
@@ -410,10 +412,12 @@ export default function App() {
             </div>
           ) : null}
 
-          {screen === "newCapture" ? <NewCaptureScreen onGenerate={handleGenerate} generating={false} /> : null}
-          {screen === "processing" ? <ProcessingScreen /> : null}
-          {screen === "reviewExport" ? <ReviewExportScreen onOpenExport={openExportModal} /> : null}
-          {screen === "settings" ? <SettingsScreen /> : null}
+          <div className="screenHost">
+            {screen === "newCapture" ? <NewCaptureScreen onGenerate={handleGenerate} generating={false} /> : null}
+            {screen === "processing" ? <ProcessingScreen /> : null}
+            {screen === "reviewExport" ? <ReviewExportScreen onOpenExport={openExportModal} /> : null}
+            {screen === "settings" ? <SettingsScreen /> : null}
+          </div>
         </main>
       </div>
 

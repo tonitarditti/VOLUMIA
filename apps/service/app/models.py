@@ -74,6 +74,7 @@ class GenerationRequest(BaseModel):
     includeLightweight: bool = True
     scaleDimension: ScaleDimension
     scaleValueCm: float = Field(gt=0)
+    pivotMode: PivotMode = "floor-center"
     images: list[CaptureImageInput]
 
 
@@ -122,6 +123,10 @@ class GenerationResult(BaseModel):
     components: list[GenerationComponent]
     materials: list[GenerationMaterial]
     stats: dict[PreviewQuality, StatsSummary]
+    width_cm: float | None = None
+    height_cm: float | None = None
+    depth_cm: float | None = None
+    scale_axis_used: ScaleDimension | None = None
     artifacts: GenerationArtifacts
     suggestedExportName: str
 

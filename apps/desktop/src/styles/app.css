@@ -9,6 +9,7 @@ body,
 #root {
   width: 100%;
   height: 100%;
+  overflow: hidden;
   margin: 0;
 }
 
@@ -30,6 +31,8 @@ input {
   flex-direction: column;
   width: 100%;
   height: 100%;
+  min-height: 0;
+  overflow: hidden;
   background: var(--bg-app);
 }
 
@@ -336,19 +339,22 @@ input {
 .appLayout {
   flex: 1;
   min-height: 0;
-  display: grid;
-  grid-template-columns: 260px minmax(0, 1fr);
+  display: flex;
+  min-width: 0;
+  overflow: hidden;
   position: relative;
 }
 
 .appSidebar {
+  flex: 0 0 260px;
   border-right: 1px solid var(--border);
   background: var(--bg-panel);
   padding: var(--space-4);
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
-  overflow: auto;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .sidebarSection {
@@ -450,10 +456,22 @@ input {
 }
 
 .appContent {
+  flex: 1;
   min-width: 0;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
   padding: var(--space-4);
-  overflow: auto;
+  overflow: hidden;
+}
+
+.screenHost {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
 }
 
 .errorBanner {
@@ -491,7 +509,10 @@ input {
 }
 
 .screenWrap {
-  min-height: 100%;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
 }
 
 .uiCard,
@@ -531,7 +552,7 @@ input {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 360px;
   gap: var(--space-4);
-  min-height: calc(100vh - 170px);
+  min-height: 0;
 }
 
 .capturePanel,
@@ -949,7 +970,7 @@ button:focus-visible {
 }
 
 .processingScreen {
-  min-height: calc(100vh - 170px);
+  min-height: 0;
 }
 
 .processingScreen p,
@@ -1018,6 +1039,11 @@ button:focus-visible {
 }
 
 .reviewScreen {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
@@ -1104,10 +1130,12 @@ button:focus-visible {
 }
 
 .reviewGrid {
-  display: grid;
-  grid-template-columns: 280px minmax(0, 1fr) 340px;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
   gap: var(--space-3);
-  min-height: calc(100vh - 220px);
 }
 
 .structurePanel,
@@ -1120,6 +1148,28 @@ button:focus-visible {
   min-height: 0;
 }
 
+.structurePanel,
+.materialsPanel {
+  flex: 0 0 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.structurePanel {
+  width: 280px;
+}
+
+.materialsPanel {
+  width: 340px;
+}
+
+.viewportPanel {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .structureTree {
   list-style: none;
   margin: 0;
@@ -1127,7 +1177,6 @@ button:focus-visible {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  overflow: auto;
 }
 
 .structureTree li {
@@ -1141,10 +1190,6 @@ button:focus-visible {
 
 .structureTree small {
   color: var(--text-secondary);
-}
-
-.viewportPanel {
-  min-width: 0;
 }
 
 .viewportMeta {
@@ -1166,8 +1211,9 @@ button:focus-visible {
 
 .reviewViewportCanvas {
   flex: 1;
-  min-height: 360px;
+  min-height: 0;
   min-width: 0;
+  width: 100%;
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
   overflow: hidden;
@@ -1191,7 +1237,6 @@ button:focus-visible {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
-  overflow: auto;
 }
 
 .materialCard {
@@ -1336,6 +1381,13 @@ button:focus-visible {
   gap: var(--space-3);
 }
 
+.newCaptureScreen,
+.settingsScreen,
+.uiKitScreen,
+.processingScreen {
+  overflow: auto;
+}
+
 .uiKitGrid {
   display: grid;
   gap: var(--space-3);
@@ -1400,24 +1452,11 @@ button:focus-visible {
 }
 
 @media (max-width: 1320px) {
-  .reviewGrid {
-    grid-template-columns: 260px minmax(0, 1fr);
-    grid-template-areas:
-      "structure viewport"
-      "materials viewport";
-  }
-
   .structurePanel {
-    grid-area: structure;
+    width: 260px;
   }
-
-  .viewportPanel {
-    grid-area: viewport;
-  }
-
   .materialsPanel {
-    grid-area: materials;
-    max-height: 360px;
+    width: 300px;
   }
 
   .settingsGrid {
@@ -1449,7 +1488,7 @@ button:focus-visible {
   }
 
   .appLayout {
-    grid-template-columns: minmax(0, 1fr);
+    display: flex;
   }
 
   .appSidebar {
@@ -1477,15 +1516,14 @@ button:focus-visible {
   }
 
   .reviewGrid {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-areas:
-      "viewport"
-      "structure"
-      "materials";
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
   }
 
-  .reviewViewportCanvas {
-    min-height: 300px;
+  .structurePanel,
+  .materialsPanel {
+    width: 100%;
   }
 
   .headerRight {

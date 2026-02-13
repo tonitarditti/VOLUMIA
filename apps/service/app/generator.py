@@ -30,6 +30,7 @@ from .pipeline import (
     extract_mask_observation,
     extract_material_texture_set,
     fallback_component_meshes,
+    infer_material_category,
     load_capture_images,
     recipe_to_component_meshes,
     save_debug_image,
@@ -174,11 +175,17 @@ def _depth_cues(depth_map: np.ndarray, mask: np.ndarray) -> tuple[float, float]:
     return float(np.mean(focus)), float(np.std(focus))
 
 
+def _mesh_extents_m(mesh: trimesh.Trimesh) -> tuple[float, float, float]:
+    bounds = mesh.bounds
+    extents = bounds[1] - bounds[0]
+    return float(extents[0]), float(extents[1]), float(extents[2])
+
+
 def _component_present(
     preset_id: str,
     component_name: str,
     required: bool,
-    heuristics: dict[str, float | bool],
+    heuristics: dict[str, object],
     request: GenerationRequest,
 ) -> bool:
     if required:
@@ -235,6 +242,60 @@ def _material_sources(captures: list) -> list:
     return choose_material_captures(captures)
 
 
+def _capture_keyword_category(text: str) -> str:
+    normalized = text.lower()
+    if any(token in normalized for token in ("fabric", "textile", "cloth", "leather", "weave", "rug", "curtain")):
+        return "fabric"
+    if any(token in normalized for token in ("wood", "oak", "walnut", "ash", "teak")):
+        return "wood"
+    if any(token in normalized for token in ("metal", "steel", "iron", "brass", "aluminum", "aluminium", "chrome")):
+        return "metal"
+    if any(token in normalized for token in ("stone", "marble", "granite", "concrete", "terrazzo")):
+        return "stone"
+    if any(token in normalized for token in ("glass", "crystal")):
+        return "glass"
+    if any(token in normalized for token in ("emissive", "light", "lamp")):
+        return "emissive"
+    return "generic"
+
+
+def _build_material_capture_mapping(request: GenerationRequest, captures: list, preset: PresetDefinition) -> dict[str, object]:
+    if not captures:
+        return {}
+
+    request_hint_by_slot = {
+        item.slotId: f"{item.fileName} {item.userHint or ''}".strip().lower() for item in request.images
+    }
+    capture_items = []
+    for index, capture in enumerate(captures):
+        hint_text = request_hint_by_slot.get(capture.slot_id, capture.file_name.lower())
+        category = _capture_keyword_category(f"{capture.file_name} {hint_text}")
+        capture_items.append({"index": index, "capture": capture, "category": category})
+
+    assigned_indices: set[int] = set()
+    mapping: dict[str, object] = {}
+    for material in preset.materials:
+        target_category = infer_material_category(material.name)
+        candidate = None
+        if target_category != "generic":
+            for item in capture_items:
+                if item["index"] in assigned_indices:
+                    continue
+                if item["category"] == target_category:
+                    candidate = item
+                    break
+        if candidate is None:
+            for item in capture_items:
+                if item["index"] not in assigned_indices:
+                    candidate = item
+                    break
+        if candidate is None:
+            continue
+        assigned_indices.add(int(candidate["index"]))
+        mapping[material.name] = candidate["capture"]
+    return mapping
+
+
 def _save_generation_debug(
     generation_id: str,
     front_image: np.ndarray,
@@ -271,7 +332,8 @@ def _build_generation_context(
     generation_id: str,
     preset_id: str,
     dimensions: tuple[float, float, float],
-    heuristics: dict[str, float | bool],
+    heuristics: dict[str, object],
+    scale_stats: dict[str, float | str],
     front_mask_valid: bool,
     side_mask_valid: bool,
     depth_source_front: str,
@@ -291,6 +353,7 @@ def _build_generation_context(
             "preset": preset_id,
             "mode": request.reconstructionMode,
             "units": "cm",
+            "pivotMode": request.pivotMode,
             "scale": {
                 "dimension": request.scaleDimension,
                 "valueCm": float(request.scaleValueCm),
@@ -309,6 +372,7 @@ def _build_generation_context(
             "frontMaskValid": front_mask_valid,
             "sideMaskValid": side_mask_valid,
             "heuristics": heuristics,
+            "scaleStats": scale_stats,
         },
         "debug": {
             "enabled": debug_path is not None,
@@ -320,7 +384,7 @@ def _build_generation_context(
 def _build_components_metadata(
     preset: PresetDefinition,
     request: GenerationRequest,
-    heuristics: dict[str, float | bool],
+    heuristics: dict[str, object],
 ) -> list[GenerationComponent]:
     components: list[GenerationComponent] = []
     for index, component in enumerate(preset.components, start=1):
@@ -364,7 +428,7 @@ def generate_stub_assets(request: GenerationRequest, generated_root: Path, base_
     front_mask_obs = extract_mask_observation(front_image)
     side_mask_obs = extract_mask_observation(side_image) if side_capture is not None else None
 
-    dimensions, heuristics = estimate_object_dimensions(
+    dimensions, heuristics, scale_stats = estimate_object_dimensions(
         request,
         front_mask=front_mask_obs,
         side_mask=side_mask_obs,
@@ -396,8 +460,20 @@ def generate_stub_assets(request: GenerationRequest, generated_root: Path, base_
         print("[pipeline] Front silhouette extraction failed. Using fallback component primitives.")
 
     if failed_front_mask:
-        high_geometry = fallback_component_meshes(preset, dimensions, quality="high")
-        low_geometry = fallback_component_meshes(preset, dimensions, quality="low")
+        high_geometry = fallback_component_meshes(
+            preset,
+            dimensions,
+            quality="high",
+            scale_axis=request.scaleDimension,
+            pivot_mode=request.pivotMode,
+        )
+        low_geometry = fallback_component_meshes(
+            preset,
+            dimensions,
+            quality="low",
+            scale_axis=request.scaleDimension,
+            pivot_mode=request.pivotMode,
+        )
     else:
         high_recipes = build_component_recipes(
             preset.id,
@@ -417,6 +493,8 @@ def generate_stub_assets(request: GenerationRequest, generated_root: Path, base_
             quality="high",
             complexity=request.complexity,
             recipes=high_recipes,
+            scale_axis=request.scaleDimension,
+            pivot_mode=request.pivotMode,
         )
         low_geometry = recipe_to_component_meshes(
             preset,
@@ -424,10 +502,19 @@ def generate_stub_assets(request: GenerationRequest, generated_root: Path, base_
             quality="low",
             complexity=request.complexity,
             recipes=low_recipes,
+            scale_axis=request.scaleDimension,
+            pivot_mode=request.pivotMode,
         )
 
     apply_uv_placeholder(high_geometry.scene, high_geometry.component_meshes)
     apply_uv_placeholder(low_geometry.scene, low_geometry.component_meshes)
+
+    high_dimensions_m = _mesh_extents_m(high_geometry.merged)
+    final_scale_stats = dict(scale_stats)
+    final_scale_stats["width_cm"] = high_dimensions_m[0] * 100.0
+    final_scale_stats["height_cm"] = high_dimensions_m[1] * 100.0
+    final_scale_stats["depth_cm"] = high_dimensions_m[2] * 100.0
+    final_scale_stats["scale_axis_used"] = request.scaleDimension
 
     high_glb_path = high_dir / "model_high.glb"
     low_glb_path = low_dir / "model_low.glb"
@@ -442,13 +529,16 @@ def generate_stub_assets(request: GenerationRequest, generated_root: Path, base_
 
     preview_high_path = generation_dir / "preview_high.png"
     preview_low_path = generation_dir / "preview_low.png"
-    _write_preview(preview_high_path, object_name, "high", dimensions, front_depth_source)
-    _write_preview(preview_low_path, object_name, "low", dimensions, front_depth_source)
+    _write_preview(preview_high_path, object_name, "high", high_dimensions_m, front_depth_source)
+    _write_preview(preview_low_path, object_name, "low", high_dimensions_m, front_depth_source)
 
     material_captures = _material_sources(captures)
+    material_capture_map = _build_material_capture_mapping(request, material_captures, preset)
     generated_materials: list[GenerationMaterial] = []
     for index, material_template in enumerate(preset.materials):
-        source_capture = material_captures[index] if index < len(material_captures) else None
+        source_capture = material_capture_map.get(material_template.name)
+        if source_capture is None and index < len(material_captures):
+            source_capture = material_captures[index]
 
         if source_capture is not None:
             high_textures = extract_material_texture_set(
@@ -556,6 +646,10 @@ def generate_stub_assets(request: GenerationRequest, generated_root: Path, base_
         components=components,
         materials=generated_materials,
         stats={"high": high_stats, "low": low_stats},
+        width_cm=float(final_scale_stats["width_cm"]),
+        height_cm=float(final_scale_stats["height_cm"]),
+        depth_cm=float(final_scale_stats["depth_cm"]),
+        scale_axis_used=request.scaleDimension,
         artifacts=GenerationArtifacts(
             highGlb=_map_url(base_url, generation_id, f"HIGH/{high_glb_path.name}"),
             lowGlb=_map_url(base_url, generation_id, f"LOW/{low_glb_path.name}"),
@@ -571,8 +665,9 @@ def generate_stub_assets(request: GenerationRequest, generated_root: Path, base_
         request,
         generation_id,
         resolved_preset,
-        dimensions,
+        high_dimensions_m,
         heuristics,
+        final_scale_stats,
         front_mask_obs.valid,
         side_mask_obs.valid if side_mask_obs is not None else False,
         front_depth_source,
@@ -592,7 +687,12 @@ def generate_stub_assets(request: GenerationRequest, generated_root: Path, base_
             "mode": request.reconstructionMode,
             "units": "cm",
             "scale": {"dimension": request.scaleDimension, "valueCm": float(request.scaleValueCm)},
-            "dimensionsMeters": context_payload["object"]["dimensionsMeters"],
+            "pivotMode": request.pivotMode,
+            "dimensionsMeters": {
+                "width": round(high_dimensions_m[0], 5),
+                "height": round(high_dimensions_m[1], 5),
+                "depth": round(high_dimensions_m[2], 5),
+            },
             "qualityTargets": {
                 "highFaces": high_stats.faces,
                 "lowFaces": low_stats.faces,
