@@ -1,28 +1,21 @@
 {
+  "name": "volumia",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@9.0.0",
+  "workspaces": ["apps/*", "packages/*"],
   "scripts": {
-    "dev": "npm --prefix desktop run dev",
-    "react": "npm --prefix desktop run react",
-    "electron": "npm --prefix desktop run electron",
-    "web:dev": "vite",
-    "web:build": "vite build",
-    "web:preview": "vite preview"
-  },
-  "dependencies": {
-    "idb-keyval": "^6.2.2",
-    "lucide-react": "^0.469.0",
-    "react": "^19.2.4",
-    "react-dom": "^19.2.4",
-    "three": "^0.180.0",
-    "zustand": "^5.0.11"
+    "dev": "node scripts/dev.cjs",
+    "dev:service": "node apps/service/run-service.cjs",
+    "dev:desktop": "cross-env VOLUMIA_SERVICE_MANAGED_EXTERNALLY=1 npm --workspace @volumia/desktop run dev",
+    "build": "npm --workspace @volumia/shared run build && npm --workspace @volumia/desktop run build",
+    "lint": "npm --workspace @volumia/shared run lint && npm --workspace @volumia/desktop run lint",
+    "format": "prettier --write \"apps/**/*.{ts,tsx,css,json,md,py}\" \"packages/**/*.{ts,json,md}\""
   },
   "devDependencies": {
-    "@types/react": "^19.0.0",
-    "@types/react-dom": "^19.0.0",
-    "@types/three": "^0.182.0",
-    "@vitejs/plugin-react": "^4.3.4",
     "concurrently": "^9.2.1",
-    "typescript": "^5.7.0",
-    "vite": "^5.4.21",
-    "wait-on": "^9.0.3"
+    "cross-env": "^7.0.3",
+    "prettier": "^3.4.2",
+    "typescript": "^5.7.3"
   }
 }

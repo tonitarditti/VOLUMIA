@@ -1,0 +1,231 @@
+{
+  "common": {
+    "add": "Add",
+    "apply": "Apply",
+    "close": "Close",
+    "dismiss": "Dismiss",
+    "optional": "Optional",
+    "pending": "Pending",
+    "present": "Present",
+    "remove": "Remove",
+    "replace": "Replace",
+    "save": "Save",
+    "selectImages": "Select Images"
+  },
+  "app": {
+    "title": "VOLUMIA Objects Studio",
+    "projectUntitled": "Project: Untitled",
+    "tagline": "Precision in Form. Intelligence in Material.",
+    "menuAria": "Toggle navigation",
+    "statusIdle": "Idle",
+    "statusRunning": "Running",
+    "statusProcessing": "Processing",
+    "statusError": "Error",
+    "env": {
+      "dev": "Dev",
+      "prod": "Prod"
+    },
+    "version": "App v{{value}}",
+    "sidebar": {
+      "workspace": "Workspace",
+      "status": "Status"
+    },
+    "status": {
+      "imagesLoaded": "Images loaded and ready.",
+      "addCaptures": "Add captures to begin.",
+      "noGeneratedModel": "No generated model yet.",
+      "preset": "Preset: {{value}}"
+    },
+    "error": {
+      "needOneImage": "Add at least one image before generating.",
+      "generationFailed": "Generation failed unexpectedly.",
+      "serviceUnavailable": "Service is not running. Start/restart the local service from Settings > Diagnostics.",
+      "timeout": "The request timed out. Check service health and try again.",
+      "validation": "The request payload is invalid. Review inputs and try again."
+    },
+    "savedPath": "Package saved: {{path}}"
+  },
+  "nav": {
+    "newCapture": "New Capture",
+    "processing": "Processing",
+    "reviewExport": "Review & Export",
+    "settings": "Settings"
+  },
+  "newCapture": {
+    "title": "New Capture",
+    "dropTitle": "Drop reference images",
+    "dropDescription": "Front + Side are recommended. Additional detail and material references improve reconstruction quality.",
+    "emptySlot": "Empty slot",
+    "setup": "Setup",
+    "objectType": "Object Type",
+    "autoDetect": "Auto-detect",
+    "studioPresetsGroup": "Studio presets",
+    "noStudioPresets": "No studio presets yet",
+    "saveStudioPreset": "Save Studio Preset",
+    "presetNamePlaceholder": "Preset name",
+    "reconstructionMode": "Reconstruction Mode",
+    "modeAuto": "Auto (recommended)",
+    "modeRigid": "Rigid (hard surface)",
+    "modeOrganic": "Organic (soft/curved)",
+    "targetSketchup": "Target: SketchUp Optimized",
+    "includeLow": "Include lightweight version",
+    "complexity": "Complexity",
+    "complexityLow": "Low",
+    "complexityMedium": "Medium",
+    "complexityHigh": "High",
+    "scaleRequired": "Scale (required)",
+    "width": "Width",
+    "height": "Height",
+    "depth": "Depth",
+    "generate": "Generate 3D",
+    "generating": "Generating...",
+    "improveAccuracy": "Improve accuracy (30s)",
+    "guidedTitle": "Guided Accuracy Mode",
+    "guidedStep1": "Step 1: Mark width + height on Front image.",
+    "guidedStep2": "Step 2: Draw 1-4 rectangles for main components.",
+    "guidedPlaceholder": "Guided annotation canvas placeholder",
+    "guidedApply": "Apply Guidance",
+    "slotRecommended": "Recommended",
+    "slotLabels": {
+      "front": "Front",
+      "side": "Side",
+      "back": "Back",
+      "top": "Top",
+      "detail_1": "Detail 1",
+      "detail_2": "Detail 2",
+      "detail_3": "Detail 3",
+      "detail_4": "Detail 4",
+      "material_1": "Material Close-up 1",
+      "material_2": "Material Close-up 2",
+      "material_3": "Material Close-up 3",
+      "material_4": "Material Close-up 4"
+    }
+  },
+  "slotStatus": {
+    "Ready": "Ready",
+    "Low detail": "Low detail",
+    "Reflections": "Reflections",
+    "Too dark": "Too dark"
+  },
+  "processing": {
+    "title": "Generating SketchUp-ready model...",
+    "elapsed": "Elapsed: {{seconds}}s",
+    "steps": {
+      "analyze": "Analyzing captures",
+      "reconstruct": "Reconstructing geometry",
+      "optimize": "Applying SketchUp optimization",
+      "package": "Preparing HIGH/LOW package"
+    },
+    "stepStatus": {
+      "pending": "PENDING",
+      "active": "ACTIVE",
+      "done": "DONE",
+      "error": "ERROR"
+    },
+    "message": {
+      "waiting": "Waiting to start",
+      "generating": "Generating SketchUp-ready model...",
+      "ready": "Model ready for review",
+      "failed": "Generation failed"
+    }
+  },
+  "review": {
+    "title": "Review & Export",
+    "emptyTitle": "No generated model yet",
+    "emptyDescription": "Run generation from New Capture to review and export.",
+    "high": "High",
+    "low": "Low",
+    "exportForSketchup": "Export for SketchUp",
+    "structure": "Structure",
+    "materialsTitle": "Materials",
+    "orbitOn": "Orbit: ON",
+    "faces": "Faces: {{value}}",
+    "materials": "Materials: {{value}}",
+    "components": "Components: {{value}}",
+    "tiling": "Tiling",
+    "rotation": "Rotation",
+    "roughness": "Roughness",
+    "normalStrength": "Normal Strength",
+    "replaceBaseColor": "Replace BaseColor",
+    "replacePbr": "Replace Full PBR Set",
+    "makeSeamless": "Make Seamless"
+  },
+  "exportModal": {
+    "title": "Export for SketchUp",
+    "units": "Units",
+    "pivot": "Pivot",
+    "pivotFloorCenter": "floor center",
+    "pivotCenter": "center",
+    "smoothing": "Smoothing",
+    "fixBackfaces": "Fix backfaces",
+    "keepMaterialsSeparated": "Keep materials separated",
+    "keepComponentsSeparated": "Keep components separated",
+    "includePbrMaps": "Include PBR maps",
+    "includeLow": "Include lightweight version",
+    "textureSize": "Texture size",
+    "exporting": "Exporting...",
+    "exportPackage": "Export Package",
+    "validationMissingGeneration": "No valid generation is available for export.",
+    "validationMissingArtifacts": "Export assets are incomplete. Generate again before exporting.",
+    "exportCanceled": "Export canceled.",
+    "exportFailed": "Export failed."
+  },
+  "settings": {
+    "title": "Settings",
+    "subtitle": "Configure language, theme, workspace and defaults.",
+    "sections": {
+      "appearance": "Appearance",
+      "workspace": "Workspace",
+      "exportDefaults": "Export Defaults",
+      "performance": "Performance",
+      "diagnostics": "Diagnostics"
+    },
+    "language": "Language",
+    "theme": "Theme",
+    "languageOptions": {
+      "system": "System",
+      "en": "English",
+      "es": "Español"
+    },
+    "themeOptions": {
+      "system": "System",
+      "light": "Light (Beige)",
+      "dark": "Dark (Charcoal)"
+    },
+    "windowSizePreset": "Window size preset",
+    "windowSize": {
+      "small": "Small",
+      "medium": "Medium",
+      "large": "Large"
+    },
+    "rememberBounds": "Remember last window bounds",
+    "alwaysOnTop": "Always on top",
+    "uiScale": "UI scale",
+    "startMaximized": "Start maximized",
+    "exportUnits": "Units",
+    "textureResolution": "Texture resolution",
+    "includeLow": "Include LOW package",
+    "lowTextureDownscale": "LOW texture downscale",
+    "maxFacesHigh": "Max faces (HIGH)",
+    "maxFacesLow": "Max faces (LOW)",
+    "appVersion": "App version",
+    "gpuInfo": "GPU info",
+    "serviceStatus": "Service status",
+    "serviceOnline": "Online",
+    "serviceOffline": "Offline",
+    "refreshServiceStatus": "Refresh service status",
+    "openLogs": "Open logs folder",
+    "restartService": "Restart Python service",
+    "restartSuccess": "Python service restarted.",
+    "restartFailed": "Failed to restart Python service."
+  },
+  "preset": {
+    "chair-stool": "Chair/Stool",
+    "table-desk": "Table/Desk",
+    "sofa-textile": "Sofa/Textile",
+    "lighting": "Lighting",
+    "decor": "Decor",
+    "rug-curtain": "Rug/Curtain",
+    "divider": "Divider"
+  }
+}

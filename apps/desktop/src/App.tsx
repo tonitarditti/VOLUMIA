@@ -1,0 +1,396 @@
+﻿import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
+import type { ExportOptions, GenerationRequest, ObjectTypeOption, StudioPresetDefinition } from "@volumia/shared";
+import { resolveLanguage } from "@/i18n";
+import { desktopApi } from "@/api/desktopApi";
+import { ExportModal } from "@/components/ExportModal";
+import { NewCaptureScreen } from "@/components/screens/NewCaptureScreen";
+import { ProcessingScreen } from "@/components/screens/ProcessingScreen";
+import { ReviewExportScreen } from "@/components/screens/ReviewExportScreen";
+import { SettingsScreen } from "@/components/screens/SettingsScreen";
+import { UiKitScreen } from "@/components/screens/UiKitScreen";
+import { Button, Chip } from "@/components/ui";
+import { useCaptureStore } from "@/state/capture.store";
+import { usePresetsStore } from "@/state/presets.store";
+import { useProcessingStore } from "@/state/processing.store";
+import { useReviewStore } from "@/state/review.store";
+import { useSettingsStore } from "@/state/settings.store";
+import { useUiStore } from "@/state/ui.store";
+
+type BuiltinPresetId = Exclude<ObjectTypeOption, "auto-detect" | `studio:${string}`>;
+
+const MOBILE_BREAKPOINT = 980;
+
+function toBuiltinPreset(objectType: ObjectTypeOption, studioPresets: StudioPresetDefinition[]) {
+  if (!objectType.startsWith("studio:")) {
+    return objectType === "auto-detect" ? null : (objectType as BuiltinPresetId);
+  }
+
+  const studioId = objectType.replace("studio:", "");
+  const preset = studioPresets.find((item) => item.id === studioId);
+  return preset?.basePreset ?? "decor";
+}
+
+function sanitizeObjectName(raw: string | undefined) {
+  if (!raw) return "Object_Capture";
+  const withoutExtension = raw.replace(/\.[^/.]+$/, "");
+  const normalized = withoutExtension.replace(/[^a-zA-Z0-9_-]+/g, "_").replace(/^_+|_+$/g, "");
+  return normalized.length > 0 ? normalized : "Object_Capture";
+}
+
+function normalizeUiErrorMessage(error: unknown, fallback: string, t: (key: string) => string) {
+  const raw = error instanceof Error ? error.message : String(error ?? "");
+  if (!raw) return fallback;
+  if (raw.includes("[SERVICE_UNAVAILABLE]")) return t("app.error.serviceUnavailable");
+  if (raw.includes("[SERVICE_TIMEOUT]")) return t("app.error.timeout");
+  if (raw.includes("[VALIDATION_ERROR]")) return t("app.error.validation");
+  if (raw.includes("[SERVICE_ERROR]")) {
+    return raw.replace("[SERVICE_ERROR]", "").trim() || fallback;
+  }
+  return raw;
+}
+
+export default function App() {
+  const { t, i18n } = useTranslation();
+
+  const screen = useUiStore((state) => state.screen);
+  const exportModalOpen = useUiStore((state) => state.exportModalOpen);
+  const errorMessage = useUiStore((state) => state.errorMessage);
+  const setScreen = useUiStore((state) => state.setScreen);
+  const openExportModal = useUiStore((state) => state.openExportModal);
+  const closeExportModal = useUiStore((state) => state.closeExportModal);
+  const setErrorMessage = useUiStore((state) => state.setErrorMessage);
+
+  const slots = useCaptureStore((state) => state.slots);
+  const objectType = useCaptureStore((state) => state.objectType);
+  const reconstructionMode = useCaptureStore((state) => state.reconstructionMode);
+  const complexity = useCaptureStore((state) => state.complexity);
+  const includeLightweight = useCaptureStore((state) => state.includeLightweight);
+  const scaleDimension = useCaptureStore((state) => state.scaleDimension);
+  const scaleValueCm = useCaptureStore((state) => state.scaleValueCm);
+  const toCaptureImageInputs = useCaptureStore((state) => state.toCaptureImageInputs);
+  const setSlotStatus = useCaptureStore((state) => state.setSlotStatus);
+
+  const processingProgress = useProcessingStore((state) => state.progress);
+  const processingFailed = useProcessingStore((state) => state.failed);
+  const startProcessing = useProcessingStore((state) => state.start);
+  const advanceProcessing = useProcessingStore((state) => state.advance);
+  const completeProcessing = useProcessingStore((state) => state.complete);
+  const failProcessing = useProcessingStore((state) => state.fail);
+  const resetProcessing = useProcessingStore((state) => state.reset);
+
+  const generationResult = useReviewStore((state) => state.generationResult);
+  const setGenerationResult = useReviewStore((state) => state.setGenerationResult);
+
+  const studioPresets = usePresetsStore((state) => state.studioPresets);
+  const loadStudioPresets = usePresetsStore((state) => state.loadStudioPresets);
+
+  const settings = useSettingsStore((state) => state.settings);
+  const appVersion = useSettingsStore((state) => state.appVersion);
+  const loadSettings = useSettingsStore((state) => state.load);
+
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
+  const [exportBusy, setExportBusy] = useState(false);
+  const [exportMessage, setExportMessage] = useState<string | null>(null);
+
+  const hasImages = useMemo(() => slots.some((slot) => slot.image), [slots]);
+
+  const statusLabel = useMemo(() => {
+    if (processingFailed) return t("app.statusError");
+    if (screen === "processing") return t("app.statusProcessing");
+    if (generationResult) return t("app.statusRunning");
+    return t("app.statusIdle");
+  }, [generationResult, processingFailed, screen, t]);
+
+  const initialExportOptions = useMemo<ExportOptions>(
+    () => ({
+      units: settings.exportDefaults.units,
+      pivot: "floor-center",
+      smoothing: true,
+      fixBackfaces: true,
+      keepMaterialsSeparated: true,
+      keepComponentsSeparated: true,
+      includePbrMaps: true,
+      textureSize: settings.exportDefaults.textureResolution,
+      includeLightweight: settings.exportDefaults.includeLow,
+    }),
+    [settings.exportDefaults]
+  );
+
+  useEffect(() => {
+    void Promise.all([loadStudioPresets(), loadSettings()]);
+  }, [loadStudioPresets, loadSettings]);
+
+  useEffect(() => {
+    void i18n.changeLanguage(resolveLanguage(settings.language));
+  }, [i18n, settings.language]);
+
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+
+    const applyTheme = () => {
+      const resolved =
+        settings.theme === "system" ? (media.matches ? "dark" : "light") : settings.theme;
+      document.documentElement.setAttribute("data-theme", resolved);
+    };
+
+    applyTheme();
+
+    if (settings.theme !== "system") {
+      return;
+    }
+
+    const onChange = () => applyTheme();
+    media.addEventListener("change", onChange);
+    return () => media.removeEventListener("change", onChange);
+  }, [settings.theme]);
+
+  useEffect(() => {
+    const updateMobile = () => {
+      const mobile = window.innerWidth <= MOBILE_BREAKPOINT;
+      setIsMobile(mobile);
+      if (!mobile) {
+        setSidebarOpen(false);
+      }
+    };
+
+    updateMobile();
+    window.addEventListener("resize", updateMobile);
+    return () => window.removeEventListener("resize", updateMobile);
+  }, []);
+
+  useEffect(() => {
+    setSidebarOpen(false);
+  }, [screen]);
+
+  const handleGenerate = async () => {
+    const images = toCaptureImageInputs();
+    if (images.length === 0) {
+      setErrorMessage(t("app.error.needOneImage"));
+      return;
+    }
+
+    setErrorMessage(null);
+    setExportMessage(null);
+    resetProcessing();
+    startProcessing();
+    setScreen("processing");
+
+    const progressTimer = window.setInterval(() => {
+      advanceProcessing(4);
+    }, 320);
+
+    try {
+      const basePreset = toBuiltinPreset(objectType, studioPresets);
+      const analyzeObjectType = (basePreset ?? "auto-detect") as ObjectTypeOption;
+
+      const analyzeResponse = await desktopApi.analyzeImages({
+        objectType: analyzeObjectType,
+        reconstructionMode,
+        images,
+      });
+
+      analyzeResponse.slotResults.forEach((slotResult) => {
+        setSlotStatus(slotResult.slotId, slotResult.status, slotResult.note);
+      });
+
+      advanceProcessing(15);
+
+      const sourceName =
+        slots.find((slot) => slot.id === "front")?.image?.fileName ??
+        slots.find((slot) => slot.image)?.image?.fileName ??
+        "Object_Capture";
+
+      const payload: GenerationRequest = {
+        objectName: sanitizeObjectName(sourceName),
+        objectType,
+        studioBasePreset: basePreset ?? undefined,
+        reconstructionMode,
+        complexity,
+        includeLightweight,
+        scaleDimension,
+        scaleValueCm,
+        images,
+      };
+
+      const generated = await desktopApi.generateModel(payload);
+      setGenerationResult(generated);
+      completeProcessing();
+      setScreen("reviewExport");
+    } catch (error) {
+      const message = normalizeUiErrorMessage(error, t("app.error.generationFailed"), t);
+      failProcessing(message);
+      setErrorMessage(message);
+      setScreen("newCapture");
+    } finally {
+      window.clearInterval(progressTimer);
+    }
+  };
+
+  const handleExport = async (options: ExportOptions) => {
+    if (!generationResult) {
+      setExportMessage(t("exportModal.validationMissingGeneration"));
+      return;
+    }
+
+    if (!generationResult.generationId || !generationResult.objectName) {
+      setExportMessage(t("exportModal.validationMissingGeneration"));
+      return;
+    }
+
+    if (!generationResult.artifacts.highGlb || !generationResult.artifacts.lowGlb) {
+      setExportMessage(t("exportModal.validationMissingArtifacts"));
+      return;
+    }
+
+    setExportBusy(true);
+    setExportMessage(null);
+
+    try {
+      const result = await desktopApi.exportPackage({
+        generationId: generationResult.generationId,
+        objectName: generationResult.objectName,
+        options,
+      });
+
+      const saveResult = await desktopApi.saveExportDialog({
+        suggestedFileName: result.fileName,
+        sourceZipPath: result.zipPath,
+      });
+
+      if (saveResult.canceled) {
+        setExportMessage(t("exportModal.exportCanceled"));
+        return;
+      }
+
+      setExportMessage(saveResult.savedPath ? t("app.savedPath", { path: saveResult.savedPath }) : result.message);
+    } catch (error) {
+      setExportMessage(normalizeUiErrorMessage(error, t("exportModal.exportFailed"), t));
+    } finally {
+      setExportBusy(false);
+    }
+  };
+
+  const showBackdrop = sidebarOpen && isMobile;
+  const canOpenReview = Boolean(generationResult);
+  const canOpenProcessing = processingProgress > 0 && !processingFailed;
+  const isUiKitRoute =
+    window.location.pathname.toLowerCase() === "/ui-kit" ||
+    window.location.hash.toLowerCase() === "#/ui-kit" ||
+    window.location.hash.toLowerCase() === "#ui-kit";
+
+  if (isUiKitRoute) {
+    return (
+      <div className="appRoot">
+        <main className="appContent">
+          <UiKitScreen />
+        </main>
+      </div>
+    );
+  }
+
+  return (
+    <div className="appRoot">
+      <header className="appHeader">
+        <div className="headerLeft">
+          <button
+            type="button"
+            className="menuButton"
+            onClick={() => setSidebarOpen((value) => !value)}
+            aria-label={t("app.menuAria")}
+          >
+            <span />
+            <span />
+            <span />
+          </button>
+          <img src="/assets/logo.svg" alt="VOLUMIA" className="logoMark" />
+          <div className="projectMeta">
+            <strong>{t("app.title")}</strong>
+            <span>{t("app.projectUntitled")}</span>
+          </div>
+        </div>
+
+        <div className="headerRight">
+          <span className="tagline">{t("app.tagline")}</span>
+          <Chip>{import.meta.env.DEV ? t("app.env.dev") : t("app.env.prod")}</Chip>
+          <Chip active>{statusLabel}</Chip>
+        </div>
+      </header>
+
+      <div className="appLayout">
+        <aside className={showBackdrop ? "appSidebar open" : "appSidebar"}>
+          <div className="sidebarSection">
+            <h2>{t("app.sidebar.workspace")}</h2>
+            <Button type="button" variant="nav" active={screen === "newCapture"} className={screen === "newCapture" ? "navItem active" : "navItem"} onClick={() => setScreen("newCapture")}>
+              {t("nav.newCapture")}
+            </Button>
+            <Button
+              type="button"
+              variant="nav"
+              active={screen === "processing"}
+              className={screen === "processing" ? "navItem active" : "navItem"}
+              onClick={() => canOpenProcessing && setScreen("processing")}
+              disabled={!canOpenProcessing}
+            >
+              {t("nav.processing")}
+            </Button>
+            <Button
+              type="button"
+              variant="nav"
+              active={screen === "reviewExport"}
+              className={screen === "reviewExport" ? "navItem active" : "navItem"}
+              onClick={() => canOpenReview && setScreen("reviewExport")}
+              disabled={!canOpenReview}
+            >
+              {t("nav.reviewExport")}
+            </Button>
+            <Button
+              type="button"
+              variant="nav"
+              active={screen === "settings"}
+              className={screen === "settings" ? "navItem active" : "navItem"}
+              onClick={() => setScreen("settings")}
+            >
+              {t("nav.settings")}
+            </Button>
+          </div>
+
+          <div className="sidebarSection">
+            <h2>{t("app.sidebar.status")}</h2>
+            <p>{hasImages ? t("app.status.imagesLoaded") : t("app.status.addCaptures")}</p>
+            <p>{generationResult ? t("app.status.preset", { value: generationResult.resolvedPreset }) : t("app.status.noGeneratedModel")}</p>
+            <p>{t("app.version", { value: appVersion })}</p>
+          </div>
+        </aside>
+
+        {showBackdrop ? <button type="button" className="sidebarBackdrop" onClick={() => setSidebarOpen(false)} /> : null}
+
+        <main className="appContent">
+          {errorMessage ? (
+            <div className="errorBanner">
+              <span>{errorMessage}</span>
+              <Button type="button" variant="ghost" size="sm" onClick={() => setErrorMessage(null)}>
+                {t("common.dismiss")}
+              </Button>
+            </div>
+          ) : null}
+
+          {screen === "newCapture" ? <NewCaptureScreen onGenerate={handleGenerate} generating={false} /> : null}
+          {screen === "processing" ? <ProcessingScreen /> : null}
+          {screen === "reviewExport" ? <ReviewExportScreen onOpenExport={openExportModal} /> : null}
+          {screen === "settings" ? <SettingsScreen /> : null}
+        </main>
+      </div>
+
+      <ExportModal
+        open={exportModalOpen}
+        busy={exportBusy}
+        message={exportMessage}
+        initialOptions={initialExportOptions}
+        onClose={closeExportModal}
+        onExport={handleExport}
+      />
+    </div>
+  );
+}

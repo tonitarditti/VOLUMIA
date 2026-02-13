@@ -1,0 +1,231 @@
+﻿{
+    "common":  {
+                   "add":  "Agregar",
+                   "apply":  "Aplicar",
+                   "close":  "Cerrar",
+                   "dismiss":  "Descartar",
+                   "optional":  "Opcional",
+                   "pending":  "Pendiente",
+                   "present":  "Presente",
+                   "remove":  "Quitar",
+                   "replace":  "Reemplazar",
+                   "save":  "Guardar",
+                   "selectImages":  "Seleccionar imÃ¡genes"
+               },
+    "app":  {
+                "title":  "VOLUMIA Objects Studio",
+                "projectUntitled":  "Proyecto: Sin tÃ­tulo",
+                "tagline":  "PrecisiÃ³n en la forma. Inteligencia en el material.",
+                "menuAria":  "Alternar navegaciÃ³n",
+                "statusIdle":  "Inactivo",
+                "statusRunning":  "Activo",
+                "statusProcessing":  "Procesando",
+                "statusError":  "Error",
+                "env":  {
+                            "dev":  "Dev",
+                            "prod":  "Prod"
+                        },
+                "version":  "App v{{value}}",
+                "sidebar":  {
+                                "workspace":  "Espacio de trabajo",
+                                "status":  "Estado"
+                            },
+                "status":  {
+                               "imagesLoaded":  "ImÃ¡genes cargadas y listas.",
+                               "addCaptures":  "Agrega capturas para comenzar.",
+                               "noGeneratedModel":  "AÃºn no hay un modelo generado.",
+                               "preset":  "Preset: {{value}}"
+                           },
+                "error":  {
+                              "needOneImage":  "Agrega al menos una imagen antes de generar.",
+                              "generationFailed":  "La generaciÃ³n fallÃ³ inesperadamente.",
+                              "serviceUnavailable":  "El servicio no esta activo. Reinicialo desde Configuracion \u003e Diagnostico.",
+                              "timeout":  "La solicitud excedio el tiempo limite. Revisa el servicio e intenta de nuevo.",
+                              "validation":  "Los datos enviados no son validos. Revisa la entrada e intenta de nuevo."
+                          },
+                "savedPath":  "Paquete guardado: {{path}}"
+            },
+    "nav":  {
+                "newCapture":  "Nueva Captura",
+                "processing":  "Procesamiento",
+                "reviewExport":  "Revisar y Exportar",
+                "settings":  "ConfiguraciÃ³n"
+            },
+    "newCapture":  {
+                       "title":  "Nueva Captura",
+                       "dropTitle":  "Suelta imÃ¡genes de referencia",
+                       "dropDescription":  "Se recomiendan Frontal + Lateral. Las referencias de detalle y materiales mejoran la calidad de reconstrucciÃ³n.",
+                       "emptySlot":  "Slot vacÃ­o",
+                       "setup":  "Ajustes",
+                       "objectType":  "Tipo de objeto",
+                       "autoDetect":  "Autodetectar",
+                       "studioPresetsGroup":  "Presets de estudio",
+                       "noStudioPresets":  "AÃºn no hay presets de estudio",
+                       "saveStudioPreset":  "Guardar preset de estudio",
+                       "presetNamePlaceholder":  "Nombre del preset",
+                       "reconstructionMode":  "Modo de reconstrucciÃ³n",
+                       "modeAuto":  "Auto (recomendado)",
+                       "modeRigid":  "RÃ­gido (superficie dura)",
+                       "modeOrganic":  "OrgÃ¡nico (suave/curvo)",
+                       "targetSketchup":  "Objetivo: Optimizado para SketchUp",
+                       "includeLow":  "Incluir versiÃ³n liviana",
+                       "complexity":  "Complejidad",
+                       "complexityLow":  "Baja",
+                       "complexityMedium":  "Media",
+                       "complexityHigh":  "Alta",
+                       "scaleRequired":  "Escala (obligatoria)",
+                       "width":  "Ancho",
+                       "height":  "Alto",
+                       "depth":  "Profundidad",
+                       "generate":  "Generar 3D",
+                       "generating":  "Generando...",
+                       "improveAccuracy":  "Mejorar precisiÃ³n (30s)",
+                       "guidedTitle":  "Modo guiado de precisiÃ³n",
+                       "guidedStep1":  "Paso 1: Marca ancho + alto en la imagen frontal.",
+                       "guidedStep2":  "Paso 2: Dibuja 1-4 rectÃ¡ngulos para los componentes principales.",
+                       "guidedPlaceholder":  "Placeholder de anotaciÃ³n guiada",
+                       "guidedApply":  "Aplicar guÃ­a",
+                       "slotRecommended":  "Recomendado",
+                       "slotLabels":  {
+                                          "front":  "Frontal",
+                                          "side":  "Lateral",
+                                          "back":  "Trasera",
+                                          "top":  "Superior",
+                                          "detail_1":  "Detalle 1",
+                                          "detail_2":  "Detalle 2",
+                                          "detail_3":  "Detalle 3",
+                                          "detail_4":  "Detalle 4",
+                                          "material_1":  "Material Close-up 1",
+                                          "material_2":  "Material Close-up 2",
+                                          "material_3":  "Material Close-up 3",
+                                          "material_4":  "Material Close-up 4"
+                                      }
+                   },
+    "slotStatus":  {
+                       "Ready":  "Listo",
+                       "Low detail":  "Poco detalle",
+                       "Reflections":  "Reflejos",
+                       "Too dark":  "Muy oscuro"
+                   },
+    "processing":  {
+                       "title":  "Generando modelo listo para SketchUp...",
+                       "elapsed":  "Transcurrido: {{seconds}}s",
+                       "steps":  {
+                                     "analyze":  "Analizando capturas",
+                                     "reconstruct":  "Reconstruyendo geometrÃ­a",
+                                     "optimize":  "Aplicando optimizaciÃ³n para SketchUp",
+                                     "package":  "Preparando paquete HIGH/LOW"
+                                 },
+                       "stepStatus":  {
+                                          "pending":  "PENDIENTE",
+                                          "active":  "ACTIVO",
+                                          "done":  "COMPLETO",
+                                          "error":  "ERROR"
+                                      },
+                       "message":  {
+                                       "waiting":  "Esperando para iniciar",
+                                       "generating":  "Generando modelo listo para SketchUp...",
+                                       "ready":  "Modelo listo para revisiÃ³n",
+                                       "failed":  "La generaciÃ³n fallÃ³"
+                                   }
+                   },
+    "review":  {
+                   "title":  "Revisar y Exportar",
+                   "emptyTitle":  "AÃºn no hay un modelo generado",
+                   "emptyDescription":  "Ejecuta la generaciÃ³n desde Nueva Captura para revisar y exportar.",
+                   "high":  "Alta",
+                   "low":  "Baja",
+                   "exportForSketchup":  "Exportar para SketchUp",
+                   "structure":  "Estructura",
+                   "materialsTitle":  "Materiales",
+                   "orbitOn":  "Ã“rbita: ON",
+                   "faces":  "Caras: {{value}}",
+                   "materials":  "Materiales: {{value}}",
+                   "components":  "Componentes: {{value}}",
+                   "tiling":  "RepeticiÃ³n",
+                   "rotation":  "RotaciÃ³n",
+                   "roughness":  "Rugosidad",
+                   "normalStrength":  "Intensidad Normal",
+                   "replaceBaseColor":  "Reemplazar BaseColor",
+                   "replacePbr":  "Reemplazar set PBR completo",
+                   "makeSeamless":  "Hacer Seamless"
+               },
+    "exportModal":  {
+                        "title":  "Exportar para SketchUp",
+                        "units":  "Unidades",
+                        "pivot":  "Pivote",
+                        "pivotFloorCenter":  "centro del piso",
+                        "pivotCenter":  "centro",
+                        "smoothing":  "Suavizado",
+                        "fixBackfaces":  "Corregir backfaces",
+                        "keepMaterialsSeparated":  "Mantener materiales separados",
+                        "keepComponentsSeparated":  "Mantener componentes separados",
+                        "includePbrMaps":  "Incluir mapas PBR",
+                        "includeLow":  "Incluir versiÃ³n liviana",
+                        "textureSize":  "TamaÃ±o de textura",
+                        "exporting":  "Exportando...",
+                        "exportPackage":  "Exportar Paquete",
+                        "exportCanceled":  "ExportaciÃ³n cancelada.",
+                        "exportFailed":  "La exportaciÃ³n fallÃ³.",
+                        "validationMissingGeneration":  "No hay una generacion valida para exportar.",
+                        "validationMissingArtifacts":  "Los archivos de exportacion estan incompletos. Genera de nuevo antes de exportar."
+                    },
+    "settings":  {
+                     "title":  "ConfiguraciÃ³n",
+                     "subtitle":  "Configura idioma, tema, espacio de trabajo y valores por defecto.",
+                     "sections":  {
+                                      "appearance":  "Apariencia",
+                                      "workspace":  "Espacio de trabajo",
+                                      "exportDefaults":  "ExportaciÃ³n por defecto",
+                                      "performance":  "Rendimiento",
+                                      "diagnostics":  "DiagnÃ³stico"
+                                  },
+                     "language":  "Idioma",
+                     "theme":  "Tema",
+                     "languageOptions":  {
+                                             "system":  "Sistema",
+                                             "en":  "English",
+                                             "es":  "EspaÃ±ol"
+                                         },
+                     "themeOptions":  {
+                                          "system":  "Sistema",
+                                          "light":  "Claro (Beige)",
+                                          "dark":  "Oscuro (CarbÃ³n)"
+                                      },
+                     "windowSizePreset":  "TamaÃ±o de ventana",
+                     "windowSize":  {
+                                        "small":  "PequeÃ±a",
+                                        "medium":  "Mediana",
+                                        "large":  "Grande"
+                                    },
+                     "rememberBounds":  "Recordar Ãºltimo tamaÃ±o y posiciÃ³n",
+                     "alwaysOnTop":  "Siempre visible",
+                     "uiScale":  "Escala de UI",
+                     "startMaximized":  "Iniciar maximizada",
+                     "exportUnits":  "Unidades",
+                     "textureResolution":  "ResoluciÃ³n de textura",
+                     "includeLow":  "Incluir paquete LOW",
+                     "lowTextureDownscale":  "ReducciÃ³n de textura LOW",
+                     "maxFacesHigh":  "Caras mÃ¡ximas (HIGH)",
+                     "maxFacesLow":  "Caras mÃ¡ximas (LOW)",
+                     "appVersion":  "VersiÃ³n de app",
+                     "gpuInfo":  "Info GPU",
+                     "openLogs":  "Abrir carpeta de logs",
+                     "restartService":  "Reiniciar servicio Python",
+                     "restartSuccess":  "Servicio Python reiniciado.",
+                     "restartFailed":  "No se pudo reiniciar el servicio Python.",
+                     "serviceStatus":  "Estado del servicio",
+                     "serviceOnline":  "Activo",
+                     "serviceOffline":  "Inactivo",
+                     "refreshServiceStatus":  "Actualizar estado del servicio"
+                 },
+    "preset":  {
+                   "chair-stool":  "Silla/Banqueta",
+                   "table-desk":  "Mesa/Escritorio",
+                   "sofa-textile":  "SofÃ¡/Textil",
+                   "lighting":  "IluminaciÃ³n",
+                   "decor":  "DecoraciÃ³n",
+                   "rug-curtain":  "Alfombra/Cortina",
+                   "divider":  "Divisor"
+               }
+}

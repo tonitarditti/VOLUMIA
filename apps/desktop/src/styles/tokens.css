@@ -1,0 +1,117 @@
+:root {
+  color-scheme: light;
+
+  --bg: #f2efea;
+  --panel: #e6e1d9;
+  --surface: #ffffff;
+  --border: #d6d0c7;
+  --text: #2e2b27;
+  --text-muted: #6f6a62;
+  --accent: #a1866f;
+
+  --control-bg: #f7f3ed;
+  --control-hover-bg: #efe7dd;
+  --control-selected-bg: #e9dece;
+  --control-selected-border: #a58a72;
+  --primary-text-on-accent: #ffffff;
+
+  --accent-hover: #b89b82;
+  --focus-ring: rgba(161, 134, 111, 0.42);
+  --focus-ring-strong: rgba(161, 134, 111, 0.55);
+
+  --interactive-bg: #f7f3ed;
+  --interactive-border: #d6d0c7;
+  --interactive-hover-bg: #efe7dd;
+  --interactive-hover-border: #c9b9a8;
+  --interactive-active-bg: #e9dece;
+  --interactive-active-border: #a58a72;
+  --interactive-text: #2e2b27;
+  --interactive-muted-text: #6f6a62;
+  --interactive-disabled-opacity: 0.45;
+
+  --button-primary-bg: var(--accent);
+  --button-primary-border: var(--accent);
+  --button-primary-text: #ffffff;
+  --button-primary-hover-bg: var(--accent-hover);
+  --button-primary-hover-border: var(--accent-hover);
+
+  /* Backward-compatible aliases for existing styles */
+  --bg-app: var(--bg);
+  --bg-panel: var(--panel);
+  --bg-surface: var(--surface);
+  --text-main: var(--text);
+  --text-secondary: var(--text-muted);
+
+  --radius-btn: 8px;
+  --radius-input: 6px;
+  --radius-card: 12px;
+  --radius-floating: 14px;
+
+  --font-base: 14px;
+  --font-label: 12px;
+  --font-title: 18px;
+  --font-stack:
+    "Inter",
+    "Segoe UI",
+    -apple-system,
+    BlinkMacSystemFont,
+    sans-serif;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  --shadow-soft: 0 4px 14px rgba(46, 43, 39, 0.08);
+  --shadow-elevated: 0 12px 28px rgba(46, 43, 39, 0.14);
+  --transition: 160ms ease-in-out;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --bg: #15181f;
+  --panel: #1c212a;
+  --surface: #202631;
+  --border: #3a4250;
+  --text: #ece7de;
+  --text-muted: #c4bbaf;
+  --accent: #a1866f;
+
+  --control-bg: #262d38;
+  --control-hover-bg: #2f3744;
+  --control-selected-bg: #39332c;
+  --control-selected-border: #a1866f;
+  --primary-text-on-accent: #161412;
+
+  --accent-hover: #bca28b;
+  --focus-ring: rgba(161, 134, 111, 0.56);
+  --focus-ring-strong: rgba(161, 134, 111, 0.55);
+
+  --interactive-bg: #24201c;
+  --interactive-border: #3a332c;
+  --interactive-hover-bg: #2a2520;
+  --interactive-hover-border: #4a4137;
+  --interactive-active-bg: rgba(161, 134, 111, 0.18);
+  --interactive-active-border: rgba(161, 134, 111, 0.55);
+  --interactive-text: #efeae3;
+  --interactive-muted-text: #b8b0a7;
+  --interactive-disabled-opacity: 0.45;
+
+  --button-primary-bg: #a1866f;
+  --button-primary-border: #a1866f;
+  --button-primary-text: #ffffff;
+  --button-primary-hover-bg: #bca28b;
+  --button-primary-hover-border: #bca28b;
+
+  --bg-app: var(--bg);
+  --bg-panel: var(--panel);
+  --bg-surface: var(--surface);
+  --text-main: var(--text);
+  --text-secondary: var(--text-muted);
+  --shadow-soft: 0 4px 14px rgba(0, 0, 0, 0.35);
+  --shadow-elevated: 0 12px 28px rgba(0, 0, 0, 0.5);
+}

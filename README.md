@@ -1,102 +1,182 @@
-# VOLUMIA — Your Creative 3D Assistant
+﻿# VOLUMIA Objects Studio (MVP)
 
-A production-grade architecture and interior design tool that generates editable 3D base models from images, optimized for SketchUp. Local-first with optional self-hosted server support.
+VOLUMIA is a desktop-first MVP for interior designers and architects.
+It ships a complete local stub flow:
 
-## Overview
+1. New Capture (images + setup)
+2. Processing
+3. Review & Export (3D viewport + structure + materials + SketchUp package)
 
-**VOLUMIA** is a hybrid web + desktop application with:
-- **Desktop App** (Electron + React): Guided and pro-level user experience
-- **Engine** (FastAPI): Local-first processing with background job queue
-- **Design**: Bone/beige premium aesthetic with modern clean UI
+The app is built as a monorepo with Electron + React + TypeScript for desktop and FastAPI for the local service.
 
-## Quick Start
+## Monorepo Structure
 
-### Before You Begin
-- **Node.js** 16+ (for desktop)
-- **Python** 3.9+ (for engine)
-
-### Running the Engine
-
-```bash
-cd engine
-python -m venv venv
-# On Windows:
-venv\Scripts\activate
-# On macOS/Linux:
-source venv/bin/activate
-
-pip install -r requirements.txt
-python run_engine.py
+```text
+volumia/
+  apps/
+    desktop/          # Electron + React + Vite renderer
+    service/          # FastAPI local stub service
+  packages/
+    shared/           # Shared TS DTOs, presets, materials schema
+  .env.example
+  package.json
+  pnpm-workspace.yaml
 ```
 
-The engine will start at `http://127.0.0.1:7860`
+## Tech Stack
 
-### Running the Desktop App
+- Desktop: Electron, React, TypeScript, Vite
+- Viewport: Three.js via `@react-three/fiber` + `@react-three/drei`
+- State: Zustand
+- Service: Python FastAPI
+- Shared contracts: `packages/shared`
+
+## Prerequisites
+
+- Node.js 20+
+- npm 10+ (or pnpm)
+- Python 3.10+
+
+## Setup
+
+### 1) Install Node dependencies
 
 ```bash
-cd desktop
 npm install
+```
+
+### 2) Create Python virtual environment and install service dependencies
+
+Windows (PowerShell):
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r apps/service/requirements.txt
+```
+
+macOS/Linux:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r apps/service/requirements.txt
+```
+
+## Run (One Command)
+
+```bash
 npm run dev
 ```
 
-The Electron app will launch with the dev server.
+This starts:
 
-## Architecture
+- FastAPI service on `http://127.0.0.1:7860`
+- Vite renderer on `http://127.0.0.1:5173`
+- Electron desktop app
 
+Notes:
+
+- `apps/service/run-service.cjs` auto-resolves Python from:
+  1. `VOLUMIA_PYTHON_BIN`
+  2. repo `.venv`
+  3. `python` in PATH
+- Desktop dev host is fixed to `127.0.0.1` to avoid host mismatch issues.
+
+## Build and Lint
+
+```bash
+npm run lint
+npm run build
 ```
-VOLUMIA/
-├── desktop/           # Electron + React + TypeScript UI
-│   ├── src/
-│   ├── public/
-│   └── package.json
-├── engine/            # Python FastAPI backend
-│   ├── volumina_engine/
-│   ├── run_engine.py
-│   └── requirements.txt
-├── docs/              # Usage documentation
-└── README.md
+
+## MVP Flow
+
+### Screen 1: New Capture
+
+- Capture slot grid:
+  - Front, Side, Back, Top
+  - Detail 1-4
+  - Material Close-up 1-4
+- Setup panel:
+  - Object Type
+  - Reconstruction Mode
+  - SketchUp optimized target (locked ON)
+  - Lightweight version toggle
+  - Complexity
+  - Scale dimension + value (cm)
+- Guided accuracy modal placeholder
+- Studio presets can be saved locally
+
+### Screen 2: Processing
+
+- Progress bar
+- Step list
+- Elapsed timer
+
+### Screen 3: Review & Export
+
+- Left: strict `OBJ_*` component tree
+- Center: 3D viewport (grid, neutral light, orbit controls)
+- Right: `MAT_*` materials with controls (tiling/rotation/roughness/normal strength)
+- High/Low preview quality toggle
+- Stats for faces/materials/components
+- Export modal with SketchUp packaging options
+
+## FastAPI Endpoints
+
+- `GET /health`
+- `POST /analyze-images`
+- `POST /generate-model`
+- `POST /export-package`
+
+Generated artifacts are exposed from:
+
+- `/generated/<generation_id>/...`
+
+## SketchUp Package Output
+
+The export stub builds a real ZIP with this structure:
+
+```text
+Object_Name_SketchUp_Package.zip
+  HIGH/model_high.dae
+  HIGH/model_high.glb
+  HIGH/textures/*
+  LOW/model_low.dae
+  LOW/model_low.glb
+  LOW/textures/*
+  preview_high.png
+  preview_low.png
+  materials.json
+  README.txt
 ```
 
-## Workflow
+Conventions enforced:
 
-1. **Open Desktop App** → Select an image from your device
-2. **Configure** → Choose preset, detail level, output formats
-3. **Generate** → Engine processes in background, shows real-time updates
-4. **Export** → Download OBJ/GLB, compatible with SketchUp
-5. **Edit** → Import into SketchUp with all geometry and textures preserved
+- Components: `OBJ_*`
+- Materials: `MAT_*`
+- Texture naming: `MAT_Name_BaseColor.png`, `MAT_Name_Normal.png`, `MAT_Name_Roughness.png`
+- Shared schema version: `volumia.materials.v1`
 
-## Engine API
+## Studio Presets
 
-- `GET /health` — System info (CUDA/CPU status)
-- `POST /jobs` — Create a new job with image and parameters
-- `GET /jobs/{id}` — Fetch job status and metadata
-- `POST /jobs/{id}/cancel` — Cancel an in-progress job
-- `GET /jobs/{id}/download` — Download job outputs as ZIP
+Studio presets are persisted in Electron user data:
 
-## Job States
+- `<userData>/presets/*.json`
 
-- `created` — Job initialized
-- `preprocessing` — Preparing input
-- `reconstructing` — Main processing
-- `postprocessing` — Refining geometry
-- `exporting` — Creating OBJ/GLB
-- `done` — Success
-- `warning` — Completed with issues
-- `failed` — Processing error
+Each preset stores:
 
-## Design System
+- `presetName`
+- `basePreset`
+- `structureLocked`
+- material defaults
+- export defaults
 
-Uses CSS variables for a cohesive, on-brand aesthetic:
-- **Background**: `#f0ede7` (bone)
-- **Panel**: `#ffffff` (white)
-- **Accent**: `#9c7c5a` (beige/taupe)
-- **Text**: `#2e2e2e` (dark)
-- **Text Secondary**: `#6b6b6b` (medium gray)
+## Environment
 
-## Development
+Copy `.env.example` if needed and set:
 
-See [docs/quickstart.md](docs/quickstart.md) for detailed developer setup.
-
-## License
-
-TBD
+- `VOLUMIA_SERVICE_PORT` (default `7860`)
+- `VOLUMIA_SERVICE_MANAGED_EXTERNALLY` (set `1` if you run service manually)
+- `VOLUMIA_PYTHON_BIN` (optional explicit Python binary)

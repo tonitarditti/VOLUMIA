@@ -1,0 +1,42 @@
+{
+  "name": "@volumia/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "main": "electron-dist/main.js",
+  "scripts": {
+    "dev": "node scripts/dev.cjs",
+    "react": "vite --host 127.0.0.1",
+    "electron:build": "tsc -p tsconfig.electron.json",
+    "electron:dev": "npm run electron:build && node scripts/run-electron-dev.cjs",
+    "build": "vite build && npm run electron:build",
+    "lint": "eslint src electron --ext .ts,.tsx"
+  },
+  "dependencies": {
+    "@react-three/drei": "^9.120.4",
+    "@react-three/fiber": "^8.17.14",
+    "@volumia/shared": "file:../../packages/shared",
+    "axios": "^1.7.9",
+    "i18next": "^25.6.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-i18next": "^16.0.1",
+    "three": "^0.172.0",
+    "zustand": "^5.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@typescript-eslint/eslint-plugin": "^8.19.0",
+    "@typescript-eslint/parser": "^8.19.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.2.1",
+    "cross-env": "^7.0.3",
+    "electron": "^33.2.1",
+    "eslint": "^9.17.0",
+    "eslint-plugin-react-hooks": "^5.1.0",
+    "typescript": "^5.7.3",
+    "vite": "^6.0.5",
+    "wait-on": "^8.0.1"
+  }
+}
