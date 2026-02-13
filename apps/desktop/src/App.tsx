@@ -67,6 +67,8 @@ export default function App() {
   const reconstructionMode = useCaptureStore((state) => state.reconstructionMode);
   const complexity = useCaptureStore((state) => state.complexity);
   const includeLightweight = useCaptureStore((state) => state.includeLightweight);
+  const detectMultipleObjects = useCaptureStore((state) => state.detectMultipleObjects);
+  const generationMode = useCaptureStore((state) => state.generationMode);
   const scaleDimension = useCaptureStore((state) => state.scaleDimension);
   const scaleValueCm = useCaptureStore((state) => state.scaleValueCm);
   const toCaptureImageInputs = useCaptureStore((state) => state.toCaptureImageInputs);
@@ -81,6 +83,7 @@ export default function App() {
   const resetProcessing = useProcessingStore((state) => state.reset);
 
   const generationResult = useReviewStore((state) => state.generationResult);
+  const selectedObjectId = useReviewStore((state) => state.selectedObjectId);
   const setGenerationResult = useReviewStore((state) => state.setGenerationResult);
 
   const studioPresets = usePresetsStore((state) => state.studioPresets);
@@ -194,6 +197,7 @@ export default function App() {
       const analyzeResponse = await desktopApi.analyzeImages({
         objectType: analyzeObjectType,
         reconstructionMode,
+        detectMultipleObjects,
         images,
       });
 
@@ -213,10 +217,13 @@ export default function App() {
         objectType,
         studioBasePreset: basePreset ?? undefined,
         reconstructionMode,
+        generationMode,
+        detectMultipleObjects,
         complexity,
         includeLightweight,
         scaleDimension,
         scaleValueCm,
+        pivotMode: "floor-center",
         images,
       };
 
@@ -240,12 +247,17 @@ export default function App() {
       return;
     }
 
-    if (!generationResult.generationId || !generationResult.objectName) {
+    const activeObject =
+      generationResult.detectedObjects?.find((item) => item.id === selectedObjectId) ??
+      generationResult.detectedObjects?.[0] ??
+      generationResult;
+
+    if (!activeObject.generationId || !activeObject.objectName) {
       setExportMessage(t("exportModal.validationMissingGeneration"));
       return;
     }
 
-    if (!generationResult.artifacts.highGlb || !generationResult.artifacts.lowGlb) {
+    if (!activeObject.artifacts.highGlb || !activeObject.artifacts.lowGlb) {
       setExportMessage(t("exportModal.validationMissingArtifacts"));
       return;
     }
@@ -255,8 +267,8 @@ export default function App() {
 
     try {
       const result = await desktopApi.exportPackage({
-        generationId: generationResult.generationId,
-        objectName: generationResult.objectName,
+        generationId: activeObject.generationId,
+        objectName: activeObject.objectName,
         options,
       });
 
@@ -274,6 +286,31 @@ export default function App() {
     } catch (error) {
       const baseMessage = normalizeUiErrorMessage(error, t("exportModal.exportFailed"), t);
       setExportMessage(`${baseMessage} ${t("exportModal.recoverHint")}`.trim());
+    } finally {
+      setExportBusy(false);
+    }
+  };
+
+  const handleExportAll = async () => {
+    if (!generationResult?.detectedObjects || generationResult.detectedObjects.length <= 1) {
+      return;
+    }
+    setExportBusy(true);
+    setExportMessage(null);
+    try {
+      let success = 0;
+      for (const item of generationResult.detectedObjects) {
+        await desktopApi.exportPackage({
+          generationId: item.generationId,
+          objectName: item.objectName,
+          options: initialExportOptions,
+        });
+        success += 1;
+      }
+      setExportMessage(t("review.exportAllSuccess", { value: success }));
+    } catch (error) {
+      const message = normalizeUiErrorMessage(error, t("exportModal.exportFailed"), t);
+      setExportMessage(message);
     } finally {
       setExportBusy(false);
     }
@@ -415,7 +452,7 @@ export default function App() {
           <div className="screenHost">
             {screen === "newCapture" ? <NewCaptureScreen onGenerate={handleGenerate} generating={false} /> : null}
             {screen === "processing" ? <ProcessingScreen /> : null}
-            {screen === "reviewExport" ? <ReviewExportScreen onOpenExport={openExportModal} /> : null}
+            {screen === "reviewExport" ? <ReviewExportScreen onOpenExport={openExportModal} onExportAll={handleExportAll} /> : null}
             {screen === "settings" ? <SettingsScreen /> : null}
           </div>
         </main>

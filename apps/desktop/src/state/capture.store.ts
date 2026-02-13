@@ -3,6 +3,7 @@ import type {
   CaptureImageInput,
   CaptureSlotId,
   ComplexityLevel,
+  GenerationMode,
   ObjectTypeOption,
   ReconstructionMode,
   ScaleDimension,
@@ -80,6 +81,8 @@ type CaptureState = {
   reconstructionMode: ReconstructionMode;
   complexity: ComplexityLevel;
   includeLightweight: boolean;
+  detectMultipleObjects: boolean;
+  generationMode: GenerationMode;
   scaleDimension: ScaleDimension;
   scaleValueCm: number;
   guidedOpen: boolean;
@@ -88,6 +91,8 @@ type CaptureState = {
   setReconstructionMode: (value: ReconstructionMode) => void;
   setComplexity: (value: ComplexityLevel) => void;
   setIncludeLightweight: (value: boolean) => void;
+  setDetectMultipleObjects: (value: boolean) => void;
+  setGenerationMode: (value: GenerationMode) => void;
   setScaleDimension: (value: ScaleDimension) => void;
   setScaleValueCm: (value: number) => void;
   setGuidedOpen: (value: boolean) => void;
@@ -108,6 +113,8 @@ export const useCaptureStore = create<CaptureState>((set, get) => ({
   reconstructionMode: "auto",
   complexity: "medium",
   includeLightweight: true,
+  detectMultipleObjects: false,
+  generationMode: "conservative",
   scaleDimension: "width",
   scaleValueCm: 100,
   guidedOpen: false,
@@ -121,6 +128,8 @@ export const useCaptureStore = create<CaptureState>((set, get) => ({
   setReconstructionMode: (reconstructionMode) => set({ reconstructionMode }),
   setComplexity: (complexity) => set({ complexity }),
   setIncludeLightweight: (includeLightweight) => set({ includeLightweight }),
+  setDetectMultipleObjects: (detectMultipleObjects) => set({ detectMultipleObjects }),
+  setGenerationMode: (generationMode) => set({ generationMode }),
   setScaleDimension: (scaleDimension) => set({ scaleDimension }),
   setScaleValueCm: (scaleValueCm) => set({ scaleValueCm }),
   setGuidedOpen: (guidedOpen) => set({ guidedOpen }),

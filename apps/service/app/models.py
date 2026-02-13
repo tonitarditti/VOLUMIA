@@ -32,6 +32,7 @@ ObjectTypeOption = Literal[
     "divider",
 ]
 ReconstructionMode = Literal["auto", "rigid", "organic"]
+GenerationMode = Literal["conservative", "aggressive"]
 Complexity = Literal["low", "medium", "high"]
 ScaleDimension = Literal["width", "height", "depth"]
 PreviewQuality = Literal["high", "low"]
@@ -50,6 +51,7 @@ class CaptureImageInput(BaseModel):
 class AnalyzeImagesRequest(BaseModel):
     objectType: str
     reconstructionMode: ReconstructionMode
+    detectMultipleObjects: bool = False
     images: list[CaptureImageInput]
 
 
@@ -63,6 +65,13 @@ class AnalyzeImagesResponse(BaseModel):
     recommendedPreset: ObjectTypeOption
     slotResults: list[AnalyzeImageResult]
     notes: list[str]
+    detectedObjects: list["AnalyzeDetectedObject"] | None = None
+
+
+class AnalyzeDetectedObject(BaseModel):
+    id: str
+    bbox: tuple[int, int, int, int]
+    areaRatio: float
 
 
 class GenerationRequest(BaseModel):
@@ -70,6 +79,8 @@ class GenerationRequest(BaseModel):
     objectType: str
     studioBasePreset: ObjectTypeOption | None = None
     reconstructionMode: ReconstructionMode
+    generationMode: GenerationMode = "conservative"
+    detectMultipleObjects: bool = False
     complexity: Complexity
     includeLightweight: bool = True
     scaleDimension: ScaleDimension
@@ -117,6 +128,31 @@ class GenerationArtifacts(BaseModel):
 
 
 class GenerationResult(BaseModel):
+    generationId: str
+    objectId: str | None = None
+    objectBoundingBox: tuple[int, int, int, int] | None = None
+    multiObjectGroupId: str | None = None
+    objectName: str
+    resolvedPreset: ObjectTypeOption
+    components: list[GenerationComponent]
+    materials: list[GenerationMaterial]
+    stats: dict[PreviewQuality, StatsSummary]
+    width_cm: float | None = None
+    height_cm: float | None = None
+    depth_cm: float | None = None
+    scale_axis_used: ScaleDimension | None = None
+    generationModeUsed: GenerationMode | None = None
+    conservativeMode: bool | None = None
+    multiObjectEnabled: bool = False
+    detectedObjects: list["DetectedObjectResult"] | None = None
+    notes: list[str] = Field(default_factory=list)
+    artifacts: GenerationArtifacts
+    suggestedExportName: str
+
+
+class DetectedObjectResult(BaseModel):
+    id: str
+    bbox: tuple[int, int, int, int]
     generationId: str
     objectName: str
     resolvedPreset: ObjectTypeOption
@@ -171,3 +207,7 @@ class StudioPresetDefinition(BaseModel):
     exportDefaults: dict[str, str | bool]
     createdAt: str
     updatedAt: str
+
+
+AnalyzeImagesResponse.model_rebuild()
+GenerationResult.model_rebuild()

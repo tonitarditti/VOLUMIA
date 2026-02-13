@@ -19,6 +19,7 @@ export type ComplexityLevel = "low" | "medium" | "high";
 export type ScaleDimension = "width" | "height" | "depth";
 export type Units = "cm" | "m";
 export type PreviewQuality = "high" | "low";
+export type GenerationMode = "conservative" | "aggressive";
 
 export type ObjectTypeOption =
   | "auto-detect"
@@ -41,6 +42,7 @@ export type CaptureImageInput = {
 export type AnalyzeImagesRequest = {
   objectType: ObjectTypeOption;
   reconstructionMode: ReconstructionMode;
+  detectMultipleObjects?: boolean;
   images: CaptureImageInput[];
 };
 
@@ -54,6 +56,11 @@ export type AnalyzeImagesResponse = {
   recommendedPreset: Exclude<ObjectTypeOption, `studio:${string}`>;
   slotResults: AnalyzeImageResult[];
   notes: string[];
+  detectedObjects?: Array<{
+    id: string;
+    bbox: [number, number, number, number];
+    areaRatio: number;
+  }>;
 };
 
 export type MaterialSlotRef = {
@@ -66,10 +73,13 @@ export type GenerationRequest = {
   objectType: ObjectTypeOption;
   studioBasePreset?: Exclude<ObjectTypeOption, "auto-detect" | `studio:${string}`>;
   reconstructionMode: ReconstructionMode;
+  generationMode?: GenerationMode;
+  detectMultipleObjects?: boolean;
   complexity: ComplexityLevel;
   includeLightweight: boolean;
   scaleDimension: ScaleDimension;
   scaleValueCm: number;
+  pivotMode?: "floor-center" | "center";
   images: CaptureImageInput[];
 };
 
@@ -113,6 +123,9 @@ export type GenerationArtifacts = {
 
 export type GenerationResult = {
   generationId: string;
+  objectId?: string;
+  objectBoundingBox?: [number, number, number, number];
+  multiObjectGroupId?: string;
   objectName: string;
   resolvedPreset: Exclude<ObjectTypeOption, "auto-detect" | `studio:${string}`>;
   components: GenerationComponent[];
@@ -121,6 +134,33 @@ export type GenerationResult = {
     high: StatsSummary;
     low: StatsSummary;
   };
+  width_cm?: number;
+  height_cm?: number;
+  depth_cm?: number;
+  scale_axis_used?: ScaleDimension;
+  generationModeUsed?: GenerationMode;
+  conservativeMode?: boolean;
+  multiObjectEnabled?: boolean;
+  detectedObjects?: Array<{
+    id: string;
+    bbox: [number, number, number, number];
+    generationId: string;
+    objectName: string;
+    resolvedPreset: Exclude<ObjectTypeOption, "auto-detect" | `studio:${string}`>;
+    components: GenerationComponent[];
+    materials: GenerationMaterial[];
+    stats: {
+      high: StatsSummary;
+      low: StatsSummary;
+    };
+    width_cm?: number;
+    height_cm?: number;
+    depth_cm?: number;
+    scale_axis_used?: ScaleDimension;
+    artifacts: GenerationArtifacts;
+    suggestedExportName: string;
+  }>;
+  notes?: string[];
   artifacts: GenerationArtifacts;
   suggestedExportName: string;
 };

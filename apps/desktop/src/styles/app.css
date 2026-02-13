@@ -959,6 +959,12 @@ button:focus-visible {
   gap: var(--space-2);
 }
 
+.modeToggleRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2);
+}
+
 .centered {
   display: flex;
   flex-direction: column;
@@ -1177,6 +1183,49 @@ button:focus-visible {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
+}
+
+.detectedObjectsList h4 {
+  margin: 0;
+  font-size: var(--font-label);
+  color: var(--text-secondary);
+}
+
+.detectedObjectsList ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.detectedObjectBtn {
+  width: 100%;
+  border: 1px solid var(--interactive-border);
+  border-radius: var(--radius-btn);
+  background: var(--interactive-bg);
+  color: var(--interactive-text);
+  padding: 6px;
+  display: grid;
+  grid-template-columns: 48px 1fr;
+  gap: var(--space-2);
+  align-items: center;
+  text-align: left;
+  cursor: pointer;
+}
+
+.detectedObjectBtn img {
+  width: 48px;
+  height: 36px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+
+.detectedObjectBtn.active {
+  background: var(--interactive-active-bg);
+  border-color: var(--interactive-active-border);
 }
 
 .structureTree li {

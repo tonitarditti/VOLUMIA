@@ -5,11 +5,14 @@ import { useReviewStore } from "@/state/review.store";
 
 type ReviewExportScreenProps = {
   onOpenExport: () => void;
+  onExportAll: () => void;
 };
 
-export function ReviewExportScreen({ onOpenExport }: ReviewExportScreenProps) {
+export function ReviewExportScreen({ onOpenExport, onExportAll }: ReviewExportScreenProps) {
   const { t } = useTranslation();
   const generationResult = useReviewStore((state) => state.generationResult);
+  const selectedObjectId = useReviewStore((state) => state.selectedObjectId);
+  const setSelectedObjectId = useReviewStore((state) => state.setSelectedObjectId);
   const previewQuality = useReviewStore((state) => state.previewQuality);
   const setPreviewQuality = useReviewStore((state) => state.setPreviewQuality);
   const materialControls = useReviewStore((state) => state.materialControls);
@@ -24,8 +27,15 @@ export function ReviewExportScreen({ onOpenExport }: ReviewExportScreenProps) {
     );
   }
 
-  const qualityStats = generationResult.stats[previewQuality];
-  const modelUrl = previewQuality === "high" ? generationResult.artifacts.highGlb : generationResult.artifacts.lowGlb;
+  const detectedObjects = generationResult.detectedObjects ?? [];
+  const hasMultipleObjects = detectedObjects.length > 1;
+  const activeObjectId = hasMultipleObjects ? selectedObjectId ?? detectedObjects[0]?.id ?? null : generationResult.objectId ?? null;
+  const activeObject = hasMultipleObjects
+    ? detectedObjects.find((item) => item.id === activeObjectId) ?? detectedObjects[0]
+    : generationResult;
+
+  const qualityStats = activeObject.stats[previewQuality];
+  const modelUrl = previewQuality === "high" ? activeObject.artifacts.highGlb : activeObject.artifacts.lowGlb;
 
   return (
     <div className="screenWrap reviewScreen">
@@ -45,14 +55,38 @@ export function ReviewExportScreen({ onOpenExport }: ReviewExportScreenProps) {
           <Button type="button" variant="primary" onClick={onOpenExport}>
             {t("review.exportForSketchup")}
           </Button>
+          {hasMultipleObjects ? (
+            <Button type="button" variant="secondary" onClick={onExportAll}>
+              {t("review.exportAllPackages")}
+            </Button>
+          ) : null}
         </div>
       </header>
 
       <div className="reviewGrid">
         <Card className="structurePanel">
+          {hasMultipleObjects ? (
+            <div className="detectedObjectsList">
+              <h4>{t("review.detectedObjects")}</h4>
+              <ul>
+                {detectedObjects.map((item) => (
+                  <li key={item.id}>
+                    <button
+                      type="button"
+                      className={item.id === activeObjectId ? "detectedObjectBtn active" : "detectedObjectBtn"}
+                      onClick={() => setSelectedObjectId(item.id)}
+                    >
+                      <img src={item.artifacts.previewLow} alt={item.objectName} />
+                      <span>{item.objectName}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
           <h3>{t("review.structure")}</h3>
           <ul className="structureTree">
-            {generationResult.components.map((component) => (
+            {activeObject.components.map((component) => (
               <li key={component.name}>
                 <span>{component.name}</span>
                 <small>{component.present ? t("common.present") : t("common.optional")}</small>
@@ -63,7 +97,7 @@ export function ReviewExportScreen({ onOpenExport }: ReviewExportScreenProps) {
 
         <Card className="viewportPanel">
           <div className="viewportMeta">
-            <span>{generationResult.objectName}</span>
+            <span>{activeObject.objectName}</span>
             <span className="orbitBadge">{t("review.orbitOn")}</span>
           </div>
           <ReviewViewport modelUrl={modelUrl} />
@@ -77,7 +111,7 @@ export function ReviewExportScreen({ onOpenExport }: ReviewExportScreenProps) {
         <Card className="materialsPanel">
           <h3>{t("review.materialsTitle")}</h3>
           <div className="materialsList">
-            {generationResult.materials.map((material) => {
+            {activeObject.materials.map((material) => {
               const control = materialControls[material.name];
               const previewMap = previewQuality === "high" ? material.mapsHigh.baseColor : material.mapsLow.baseColor;
               return (

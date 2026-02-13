@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
@@ -10,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from .exporter import create_export_package
 from .generator import generate_stub_assets
 from .models import (
+    AnalyzeDetectedObject,
     AnalyzeImageResult,
     AnalyzeImagesRequest,
     AnalyzeImagesResponse,
@@ -18,10 +20,11 @@ from .models import (
     GenerationRequest,
     GenerationResult,
 )
+from .pipeline import choose_capture_by_slot, detect_object_masks, load_capture_images
 from .presets import resolve_auto_preset
 
 APP_ROOT = Path(__file__).resolve().parent.parent
-GENERATED_ROOT = APP_ROOT / "generated"
+GENERATED_ROOT = Path(os.getenv("VOLUMIA_GENERATED_ROOT", str(APP_ROOT / "generated")))
 GENERATED_ROOT.mkdir(parents=True, exist_ok=True)
 
 app = FastAPI(title="VOLUMIA Service", version="0.1.0")
@@ -85,7 +88,26 @@ def analyze_images(payload: AnalyzeImagesRequest) -> AnalyzeImagesResponse:
     if len(payload.images) < 3:
         notes.append("Add more references for improved component separation.")
 
-    return AnalyzeImagesResponse(recommendedPreset=preset, slotResults=slot_results, notes=notes)
+    detected_objects = None
+    if payload.detectMultipleObjects:
+        captures = load_capture_images(payload.images)
+        front_capture = choose_capture_by_slot(captures, "front") or (captures[0] if captures else None)
+        if front_capture is not None:
+            masks = [obs for obs in detect_object_masks(front_capture.image, max_objects=4) if obs.valid]
+            if len(masks) > 0:
+                detected_objects = [
+                    AnalyzeDetectedObject(id=f"obj_{index + 1}", bbox=obs.bbox, areaRatio=obs.area_ratio)
+                    for index, obs in enumerate(masks)
+                ]
+                if len(masks) > 1:
+                    notes.append(f"Detected {len(masks)} objects in front image.")
+
+    return AnalyzeImagesResponse(
+        recommendedPreset=preset,
+        slotResults=slot_results,
+        notes=notes,
+        detectedObjects=detected_objects,
+    )
 
 
 @app.post("/generate-model", response_model=GenerationResult)

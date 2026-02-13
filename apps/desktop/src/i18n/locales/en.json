@@ -70,6 +70,10 @@
     "modeAuto": "Auto (recommended)",
     "modeRigid": "Rigid (hard surface)",
     "modeOrganic": "Organic (soft/curved)",
+    "detectMultipleObjects": "Detect multiple objects",
+    "generationMode": "Quick mode",
+    "modeConservative": "Conservative (no hallucination)",
+    "modeAggressive": "Aggressive (best estimate)",
     "targetSketchup": "Target: SketchUp Optimized",
     "includeLow": "Include lightweight version",
     "complexity": "Complexity",
@@ -141,6 +145,7 @@
     "exportForSketchup": "Export for SketchUp",
     "structure": "Structure",
     "materialsTitle": "Materials",
+    "detectedObjects": "Detected objects",
     "orbitOn": "Orbit: ON",
     "faces": "Faces: {{value}}",
     "materials": "Materials: {{value}}",
@@ -151,7 +156,9 @@
     "normalStrength": "Normal Strength",
     "replaceBaseColor": "Replace BaseColor",
     "replacePbr": "Replace Full PBR Set",
-    "makeSeamless": "Make Seamless"
+    "makeSeamless": "Make Seamless",
+    "exportAllPackages": "Export all packages",
+    "exportAllSuccess": "{{value}} packages exported to the generation exports folder."
   },
   "exportModal": {
     "title": "Export for SketchUp",

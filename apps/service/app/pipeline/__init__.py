@@ -1,5 +1,6 @@
 from .geometry_approx import (
     GeometryBuildResult,
+    conservative_component_meshes,
     estimate_object_dimensions,
     fallback_component_meshes,
     recipe_to_component_meshes,
@@ -20,7 +21,7 @@ from .preprocess import (
     save_debug_image,
 )
 from .segmentation_rules import build_component_recipes
-from .silhouette import MaskObservation, extract_mask_observation
+from .silhouette import MaskObservation, detect_object_masks, extract_mask_observation
 from .uv_pack import apply_uv_placeholder
 
 __all__ = [
@@ -33,9 +34,11 @@ __all__ = [
     "build_neutral_material_texture_set",
     "choose_capture_by_slot",
     "choose_material_captures",
+    "conservative_component_meshes",
     "debug_enabled",
     "debug_output_dir",
     "estimate_object_dimensions",
+    "detect_object_masks",
     "extract_mask_observation",
     "extract_material_texture_set",
     "fallback_component_meshes",

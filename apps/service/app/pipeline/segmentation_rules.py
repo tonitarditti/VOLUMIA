@@ -175,8 +175,8 @@ def build_component_recipes(
                 _cylinder(0.03, top_y0, (0.4, top_y0 * 0.5, 0.35)),
             ]
         recipes["OBJ_Frame"] = [_box((0.1, 0.9, 0.46, 0.52, 0.14, 0.86))]
-        recipes["OBJ_Drawers"] = [_box((0.26, 0.74, 0.56, 0.76, 0.1, 0.26))] if drawer_hint else [_box((0.4, 0.6, 0.57, 0.7, 0.12, 0.22))]
-        recipes["OBJ_Hardware"] = [_box((0.46, 0.54, 0.62, 0.67, 0.08, 0.12))]
+        recipes["OBJ_Drawers"] = [_box((0.26, 0.74, 0.56, 0.76, 0.1, 0.26))] if drawer_hint else []
+        recipes["OBJ_Hardware"] = [_box((0.46, 0.54, 0.62, 0.67, 0.08, 0.12))] if drawer_hint else []
 
     elif preset_id == "sofa-textile":
         cushion_count = 3 if (quality == "high" and mid_width_ratio > 0.65) else 2

@@ -21,6 +21,8 @@ export function NewCaptureScreen({ onGenerate, generating }: NewCaptureScreenPro
   const reconstructionMode = useCaptureStore((state) => state.reconstructionMode);
   const complexity = useCaptureStore((state) => state.complexity);
   const includeLightweight = useCaptureStore((state) => state.includeLightweight);
+  const detectMultipleObjects = useCaptureStore((state) => state.detectMultipleObjects);
+  const generationMode = useCaptureStore((state) => state.generationMode);
   const scaleDimension = useCaptureStore((state) => state.scaleDimension);
   const scaleValueCm = useCaptureStore((state) => state.scaleValueCm);
   const guidedOpen = useCaptureStore((state) => state.guidedOpen);
@@ -30,6 +32,8 @@ export function NewCaptureScreen({ onGenerate, generating }: NewCaptureScreenPro
   const setReconstructionMode = useCaptureStore((state) => state.setReconstructionMode);
   const setComplexity = useCaptureStore((state) => state.setComplexity);
   const setIncludeLightweight = useCaptureStore((state) => state.setIncludeLightweight);
+  const setDetectMultipleObjects = useCaptureStore((state) => state.setDetectMultipleObjects);
+  const setGenerationMode = useCaptureStore((state) => state.setGenerationMode);
   const setScaleDimension = useCaptureStore((state) => state.setScaleDimension);
   const setScaleValueCm = useCaptureStore((state) => state.setScaleValueCm);
   const setGuidedOpen = useCaptureStore((state) => state.setGuidedOpen);
@@ -260,6 +264,33 @@ export function NewCaptureScreen({ onGenerate, generating }: NewCaptureScreenPro
               <option value="organic">{t("newCapture.modeOrganic")}</option>
             </Select>
           </label>
+
+          <label className="field switchRow">
+            <span>{t("newCapture.detectMultipleObjects")}</span>
+            <input type="checkbox" checked={detectMultipleObjects} onChange={(event) => setDetectMultipleObjects(event.target.checked)} />
+          </label>
+
+          <div className="field">
+            <span>{t("newCapture.generationMode")}</span>
+            <div className="modeToggleRow">
+              <Button
+                type="button"
+                variant="secondary"
+                active={generationMode === "conservative"}
+                onClick={() => setGenerationMode("conservative")}
+              >
+                {t("newCapture.modeConservative")}
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                active={generationMode === "aggressive"}
+                onClick={() => setGenerationMode("aggressive")}
+              >
+                {t("newCapture.modeAggressive")}
+              </Button>
+            </div>
+          </div>
 
           <div className="field switchRow">
             <span>{t("newCapture.targetSketchup")}</span>

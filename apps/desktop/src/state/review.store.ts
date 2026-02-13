@@ -10,9 +10,11 @@ export type MaterialControlState = {
 
 type ReviewState = {
   generationResult: GenerationResult | null;
+  selectedObjectId: string | null;
   previewQuality: PreviewQuality;
   materialControls: Record<string, MaterialControlState>;
   setGenerationResult: (result: GenerationResult) => void;
+  setSelectedObjectId: (objectId: string | null) => void;
   setPreviewQuality: (quality: PreviewQuality) => void;
   updateMaterialControl: (materialName: string, patch: Partial<MaterialControlState>) => void;
   clear: () => void;
@@ -20,12 +22,14 @@ type ReviewState = {
 
 export const useReviewStore = create<ReviewState>((set) => ({
   generationResult: null,
+  selectedObjectId: null,
   previewQuality: "high",
   materialControls: {},
 
   setGenerationResult: (generationResult) =>
     set({
       generationResult,
+      selectedObjectId: generationResult.detectedObjects?.[0]?.id ?? generationResult.objectId ?? null,
       previewQuality: "high",
       materialControls: generationResult.materials.reduce<Record<string, MaterialControlState>>((acc, material) => {
         acc[material.name] = {
@@ -37,6 +41,8 @@ export const useReviewStore = create<ReviewState>((set) => ({
         return acc;
       }, {}),
     }),
+
+  setSelectedObjectId: (selectedObjectId) => set({ selectedObjectId }),
 
   setPreviewQuality: (previewQuality) => set({ previewQuality }),
 
@@ -51,5 +57,5 @@ export const useReviewStore = create<ReviewState>((set) => ({
       },
     })),
 
-  clear: () => set({ generationResult: null, previewQuality: "high", materialControls: {} }),
+  clear: () => set({ generationResult: null, selectedObjectId: null, previewQuality: "high", materialControls: {} }),
 }));
