@@ -446,7 +446,7 @@ def _build_generation_context(
         "generationId": generation_id,
         "pipeline": {
             "geometry": "quick-conservative-v1" if conservative_mode else "quick-aggressive-v1",
-            "materials": "pbr-extract-v1",
+            "materials": "view-projection-v1",
             "depthSourceFront": depth_source_front,
             "depthSourceSide": depth_source_side,
             "generationMode": generation_mode_used,
@@ -526,7 +526,7 @@ def _object_request_from_bbox(
     object_dir.mkdir(parents=True, exist_ok=True)
 
     src_h, src_w = front_shape
-    padded_bbox = _expand_bbox(bbox, src_w, src_h, pad_ratio=0.06)
+    padded_bbox = _expand_bbox(bbox, src_w, src_h, pad_ratio=0.10)
 
     remapped_images: list[CaptureImageInput] = []
     for capture in captures:
@@ -576,6 +576,7 @@ def _to_detected_object(
         height_cm=result.height_cm,
         depth_cm=result.depth_cm,
         scale_axis_used=result.scale_axis_used,
+        warnings=result.warnings,
         artifacts=result.artifacts,
         suggestedExportName=result.suggestedExportName,
     )
@@ -641,10 +642,12 @@ def generate_stub_assets(request: GenerationRequest, generated_root: Path, base_
     low_dir = generation_dir / "LOW"
     high_textures_dir = high_dir / "textures"
     low_textures_dir = low_dir / "textures"
-    for directory in (generation_dir, high_dir, low_dir, high_textures_dir, low_textures_dir):
+    projection_textures_dir = generation_dir / "textures"
+    for directory in (generation_dir, high_dir, low_dir, high_textures_dir, low_textures_dir, projection_textures_dir):
         directory.mkdir(parents=True, exist_ok=True)
 
     side_capture = choose_capture_by_slot(captures, "side")
+    back_capture = choose_capture_by_slot(captures, "back")
     front_image = front_capture.image
     side_image = side_capture.image if side_capture is not None else front_image
     side_available = side_capture is not None
@@ -658,6 +661,10 @@ def generate_stub_assets(request: GenerationRequest, generated_root: Path, base_
         front_mask=front_mask_obs,
         side_mask=side_mask_obs,
     )
+
+    warnings: list[str] = []
+    if conservative_mode and not (side_mask_obs is not None and side_mask_obs.valid):
+        warnings.append("Side view missing: depth is estimated")
 
     if conservative_mode and not (side_mask_obs is not None and side_mask_obs.valid):
         front_w_px = max(1.0, float(front_mask_obs.bbox[2] - front_mask_obs.bbox[0]))
@@ -713,6 +720,7 @@ def generate_stub_assets(request: GenerationRequest, generated_root: Path, base_
     if failed_front_mask:
         print("[pipeline] Front silhouette extraction failed. Using fallback component primitives.")
         notes.append("Front silhouette extraction failed; fallback geometry used.")
+        warnings.append("Front silhouette unstable: fallback proxy was used")
 
     if failed_front_mask:
         high_geometry = fallback_component_meshes(
