@@ -157,9 +157,11 @@ export type GenerationResult = {
     height_cm?: number;
     depth_cm?: number;
     scale_axis_used?: ScaleDimension;
+    warnings?: string[];
     artifacts: GenerationArtifacts;
     suggestedExportName: string;
   }>;
+  warnings?: string[];
   notes?: string[];
   artifacts: GenerationArtifacts;
   suggestedExportName: string;

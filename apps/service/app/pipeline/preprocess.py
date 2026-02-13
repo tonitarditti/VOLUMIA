@@ -16,7 +16,8 @@ class LoadedCapture:
     slot_id: str
     file_name: str
     source_path: str | None
-    image: np.ndarray  # RGB uint8
+    image: np.ndarray  # RGB uint8 processing image (normalized max side)
+    original_image: np.ndarray  # RGB uint8 original resolution image
 
 
 def debug_enabled() -> bool:
@@ -43,7 +44,7 @@ def save_debug_image(path: Path, image: np.ndarray) -> None:
     Image.fromarray(arr, mode=mode).save(path)
 
 
-def _safe_open_image(image_input: CaptureImageInput, max_side: int) -> np.ndarray:
+def _safe_open_image(image_input: CaptureImageInput, max_side: int) -> tuple[np.ndarray, np.ndarray]:
     candidates: list[Path] = []
     if image_input.filePath:
         candidates.append(Path(image_input.filePath))
@@ -54,13 +55,17 @@ def _safe_open_image(image_input: CaptureImageInput, max_side: int) -> np.ndarra
             if not candidate.exists() or not candidate.is_file():
                 continue
             with Image.open(candidate) as source:
-                image = source.convert("RGB")
-                image.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
-                return np.asarray(image, dtype=np.uint8)
+                original = source.convert("RGB")
+                original_np = np.asarray(original, dtype=np.uint8)
+                process_image = original.copy()
+                process_image.thumbnail((max_side, max_side), Image.Resampling.LANCZOS)
+                process_np = np.asarray(process_image, dtype=np.uint8)
+                return process_np, original_np
         except Exception:
             continue
 
-    return _synthetic_image(f"{image_input.slotId}:{image_input.fileName}", max_side)
+    synthetic = _synthetic_image(f"{image_input.slotId}:{image_input.fileName}", max_side)
+    return synthetic, synthetic.copy()
 
 
 def _synthetic_image(seed_text: str, size: int) -> np.ndarray:
@@ -82,12 +87,14 @@ def _synthetic_image(seed_text: str, size: int) -> np.ndarray:
 def load_capture_images(images: list[CaptureImageInput], max_side: int = 1024) -> list[LoadedCapture]:
     loaded: list[LoadedCapture] = []
     for image_input in images:
+        process_image, original_image = _safe_open_image(image_input, max_side=max_side)
         loaded.append(
             LoadedCapture(
                 slot_id=image_input.slotId,
                 file_name=image_input.fileName,
                 source_path=image_input.filePath,
-                image=_safe_open_image(image_input, max_side=max_side),
+                image=process_image,
+                original_image=original_image,
             )
         )
     return loaded

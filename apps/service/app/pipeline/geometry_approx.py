@@ -614,53 +614,255 @@ def _mask_band_bounds(mask_obs: MaskObservation, y0_ratio: float, y1_ratio: floa
     return min_x / max(1.0, float(w)), max_x / max(1.0, float(w))
 
 
+def _polygon_area(points: np.ndarray) -> float:
+    if len(points) < 3:
+        return 0.0
+    x = points[:, 0]
+    y = points[:, 1]
+    return 0.5 * float(np.sum((x * np.roll(y, -1)) - (np.roll(x, -1) * y)))
+
+
+def _cross2d(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> float:
+    ab = b - a
+    ac = c - a
+    return float((ab[0] * ac[1]) - (ab[1] * ac[0]))
+
+
+def _point_in_triangle(point: np.ndarray, a: np.ndarray, b: np.ndarray, c: np.ndarray) -> bool:
+    c1 = _cross2d(a, b, point)
+    c2 = _cross2d(b, c, point)
+    c3 = _cross2d(c, a, point)
+    has_neg = (c1 < 0) or (c2 < 0) or (c3 < 0)
+    has_pos = (c1 > 0) or (c2 > 0) or (c3 > 0)
+    return not (has_neg and has_pos)
+
+
+def _triangulate_ear_clip(points: np.ndarray) -> list[tuple[int, int, int]]:
+    if len(points) < 3:
+        return []
+
+    indices = list(range(len(points)))
+    triangles: list[tuple[int, int, int]] = []
+    max_steps = len(points) * len(points)
+    steps = 0
+    while len(indices) > 3 and steps < max_steps:
+        ear_found = False
+        for position, idx_curr in enumerate(indices):
+            idx_prev = indices[position - 1]
+            idx_next = indices[(position + 1) % len(indices)]
+            a = points[idx_prev]
+            b = points[idx_curr]
+            c = points[idx_next]
+
+            if _cross2d(a, b, c) <= 1e-10:
+                continue
+
+            blocked = False
+            for idx_test in indices:
+                if idx_test in (idx_prev, idx_curr, idx_next):
+                    continue
+                if _point_in_triangle(points[idx_test], a, b, c):
+                    blocked = True
+                    break
+            if blocked:
+                continue
+
+            triangles.append((idx_prev, idx_curr, idx_next))
+            del indices[position]
+            ear_found = True
+            break
+
+        if not ear_found:
+            break
+        steps += 1
+
+    if len(indices) == 3:
+        triangles.append((indices[0], indices[1], indices[2]))
+    return triangles
+
+
+def _extract_simplified_contour(mask_binary: np.ndarray, epsilon_ratio: float = 0.006) -> np.ndarray | None:
+    binary = np.where(mask_binary > 0, 255, 0).astype(np.uint8)
+    if np.sum(binary) <= 0:
+        return None
+
+    if cv2 is not None:
+        contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+        if not contours:
+            return None
+        contour = max(contours, key=cv2.contourArea)
+        perimeter = float(cv2.arcLength(contour, True))
+        epsilon = float(max(1.0, perimeter * epsilon_ratio))
+        simplified = cv2.approxPolyDP(contour, epsilon, True).reshape(-1, 2).astype(np.float64)
+        if len(simplified) < 3:
+            simplified = contour.reshape(-1, 2).astype(np.float64)
+        return simplified
+
+    ys, xs = np.nonzero(binary > 0)
+    if len(xs) < 3:
+        return None
+    points = np.stack((xs.astype(np.float64), ys.astype(np.float64)), axis=1)
+    centroid = np.mean(points, axis=0)
+    angles = np.arctan2(points[:, 1] - centroid[1], points[:, 0] - centroid[0])
+    order = np.argsort(angles)
+    return points[order]
+
+
+def _extrude_contour_to_mesh(
+    contour_xy: np.ndarray,
+    image_shape: tuple[int, int],
+    dimensions: tuple[float, float, float],
+    depth_scale: float = 1.0,
+) -> trimesh.Trimesh:
+    h, w = image_shape
+    width, height, depth = dimensions
+    if contour_xy is None or len(contour_xy) < 3 or h <= 1 or w <= 1:
+        return _empty_mesh()
+
+    contour = contour_xy.copy().astype(np.float64)
+    if np.allclose(contour[0], contour[-1]):
+        contour = contour[:-1]
+    if len(contour) < 3:
+        return _empty_mesh()
+
+    x_norm = contour[:, 0] / max(1.0, float(w - 1))
+    y_norm = contour[:, 1] / max(1.0, float(h - 1))
+    points_xy = np.stack(
+        (
+            (x_norm - 0.5) * width,
+            (1.0 - y_norm) * height,
+        ),
+        axis=1,
+    )
+    if _polygon_area(points_xy) < 0:
+        points_xy = points_xy[::-1]
+
+    cap_triangles = _triangulate_ear_clip(points_xy)
+    if not cap_triangles:
+        return _empty_mesh()
+
+    half_depth = max(0.002, depth * depth_scale * 0.5)
+    n = len(points_xy)
+    vertices_front = np.column_stack((points_xy, np.full(n, half_depth, dtype=np.float64)))
+    vertices_back = np.column_stack((points_xy, np.full(n, -half_depth, dtype=np.float64)))
+    vertices = np.vstack((vertices_front, vertices_back))
+
+    faces: list[tuple[int, int, int]] = []
+    for a, b, c in cap_triangles:
+        faces.append((a, b, c))
+    for a, b, c in cap_triangles:
+        faces.append((c + n, b + n, a + n))
+
+    for idx in range(n):
+        nxt = (idx + 1) % n
+        faces.append((idx, nxt, idx + n))
+        faces.append((nxt, nxt + n, idx + n))
+
+    mesh = trimesh.Trimesh(vertices=vertices, faces=np.asarray(faces, dtype=np.int64), process=False)
+    try:
+        mesh.remove_duplicate_faces()
+        mesh.remove_unreferenced_vertices()
+        mesh.fix_normals()
+    except Exception:
+        pass
+    return mesh
+
+
+def _proxy_mesh_from_binary(
+    mask_binary: np.ndarray,
+    dimensions: tuple[float, float, float],
+    quality: str,
+    depth_scale: float = 1.0,
+) -> trimesh.Trimesh:
+    if np.sum(mask_binary > 0) <= 0:
+        return _empty_mesh()
+    epsilon = 0.012 if quality == "low" else 0.006
+    contour = _extract_simplified_contour(mask_binary, epsilon_ratio=epsilon)
+    mesh = _extrude_contour_to_mesh(
+        contour_xy=contour if contour is not None else np.zeros((0, 2), dtype=np.float64),
+        image_shape=mask_binary.shape[:2],
+        dimensions=dimensions,
+        depth_scale=depth_scale,
+    )
+    if len(mesh.faces) > 0:
+        return mesh
+    width, height, depth = dimensions
+    return _box_world((max(0.01, width), max(0.01, height), max(0.01, depth)), (0.0, height * 0.5, 0.0))
+
+
 def _proxy_mesh_from_mask(
     mask_obs: MaskObservation,
     dimensions: tuple[float, float, float],
-    depth_scale: float,
-    bands: int,
+    quality: str,
+    depth_scale: float = 1.0,
 ) -> trimesh.Trimesh:
     crop = _mask_crop(mask_obs)
+    return _proxy_mesh_from_binary(crop, dimensions, quality=quality, depth_scale=depth_scale)
+
+
+def _table_leg_components(mask_obs: MaskObservation) -> list[tuple[int, int, int, int]]:
+    crop = _mask_crop(mask_obs)
     if crop.size == 0:
-        return _empty_mesh()
+        return []
 
     h, w = crop.shape
-    width, height, depth = dimensions
-    band_count = max(6, int(bands))
-    band_step = max(1, h // band_count)
-    meshes: list[trimesh.Trimesh] = []
+    y_start = int(h * 0.58)
+    lower = crop[y_start:, :]
+    if lower.size == 0:
+        return []
 
-    for y0 in range(0, h, band_step):
-        y1 = min(h, y0 + band_step)
-        if y1 <= y0:
+    binary = np.where(lower > 0, 255, 0).astype(np.uint8)
+    if cv2 is not None:
+        eroded = cv2.erode(binary, np.ones((3, 3), dtype=np.uint8), iterations=1)
+        contours, _ = cv2.findContours(eroded, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        components: list[tuple[int, int, int, int]] = []
+        min_area = max(4, int(lower.shape[0] * lower.shape[1] * 0.01))
+        for contour in contours:
+            area = float(cv2.contourArea(contour))
+            if area < min_area:
+                continue
+            x, y, cw, ch = cv2.boundingRect(contour)
+            if ch <= 0:
+                continue
+            thin = (float(cw) / float(ch)) <= 0.55 and ch >= int(lower.shape[0] * 0.3)
+            if not thin:
+                continue
+            components.append((int(x), int(y + y_start), int(cw), int(ch)))
+        components.sort(key=lambda item: item[0])
+        return components
+
+    cols = np.sum(binary > 0, axis=0)
+    active = cols > max(1, int(lower.shape[0] * 0.12))
+    transitions = np.diff(active.astype(np.int8), prepend=0, append=0)
+    starts = np.where(transitions == 1)[0]
+    ends = np.where(transitions == -1)[0]
+    components: list[tuple[int, int, int, int]] = []
+    for start, end in zip(starts, ends):
+        cw = max(1, int(end - start))
+        if cw > int(w * 0.18):
             continue
-        band = crop[y0:y1, :] > 0
-        if np.sum(band) <= 0:
+        components.append((int(start), int(y_start), cw, int(lower.shape[0])))
+    return components
+
+
+def _enforce_face_budget(component_meshes: dict[str, trimesh.Trimesh], budget_total: int) -> None:
+    merged = _concat(list(component_meshes.values()))
+    total_faces = int(len(merged.faces))
+    if total_faces <= budget_total or budget_total <= 0:
+        return
+
+    valid = [(name, mesh) for name, mesh in component_meshes.items() if len(mesh.faces) > 0]
+    if not valid:
+        return
+
+    per_component_budget = max(60, budget_total // len(valid))
+    for name, mesh in valid:
+        if len(mesh.faces) <= per_component_budget:
             continue
-        cols = np.where(np.any(band, axis=0))[0]
-        if cols.size <= 0:
-            continue
-
-        x0 = int(cols.min())
-        x1 = int(cols.max() + 1)
-        width_ratio = max(1e-3, float(x1 - x0) / max(1.0, float(w)))
-        center_x_ratio = ((float(x0 + x1) * 0.5) / max(1.0, float(w))) - 0.5
-        band_h_ratio = max(1e-3, float(y1 - y0) / max(1.0, float(h)))
-        center_y_ratio = (float(y0 + y1) * 0.5) / max(1.0, float(h))
-
-        extents = (
-            max(0.01, width * width_ratio),
-            max(0.01, height * band_h_ratio),
-            max(0.01, depth * depth_scale),
-        )
-        center = (
-            center_x_ratio * width,
-            center_y_ratio * height,
-            0.0,
-        )
-        meshes.append(_box_world(extents, center))
-
-    return _concat(meshes) if meshes else _empty_mesh()
+        try:
+            component_meshes[name] = mesh.simplify_quadric_decimation(per_component_budget)
+        except Exception:
+            component_meshes[name] = mesh
 
 
 def conservative_component_meshes(
@@ -676,42 +878,44 @@ def conservative_component_meshes(
     component_meshes: dict[str, trimesh.Trimesh] = {component.name: _empty_mesh() for component in preset.components}
 
     width, height, depth = dimensions
-    proxy_bands = 14 if quality == "low" else 24
-    proxy_mesh = _proxy_mesh_from_mask(front_mask, dimensions, depth_scale=1.0, bands=proxy_bands)
+    proxy_mesh = _proxy_mesh_from_mask(front_mask, dimensions, quality=quality, depth_scale=1.0)
 
     if preset.id == "table-desk":
-        thickness = _clamp(height * 0.04, 0.02, 0.06)
-        top_band = _mask_band_bounds(front_mask, 0.0, 0.24)
-        if top_band is None:
-            top_width = width * 0.8
-            center_x = 0.0
+        crop = _mask_crop(front_mask)
+        h, w = crop.shape
+        top_band_height = int(max(1, h * 0.26))
+        top_band = crop[:top_band_height, :] > 0
+        top_exists = np.mean(top_band) >= 0.08 and np.sum(np.any(top_band, axis=0)) >= int(w * 0.45)
+
+        if top_exists:
+            cols = np.where(np.any(top_band, axis=0))[0]
+            top_left = float(cols.min()) / max(1.0, float(w))
+            top_right = float(cols.max() + 1) / max(1.0, float(w))
+            top_width = max(0.05, width * (top_right - top_left))
+            center_x = ((top_left + top_right) * 0.5 - 0.5) * width
+            top_thickness = _clamp(height * 0.08, 0.02, 0.08)
+            top_center_y = max(top_thickness * 0.5, height - top_thickness * 0.5)
+            component_meshes["OBJ_Top"] = _box_world((top_width, top_thickness, depth), (center_x, top_center_y, 0.0))
+
+            frame_mask = crop.copy()
+            frame_mask[:top_band_height, :] = 0
+            frame_proxy = _proxy_mesh_from_binary(frame_mask, dimensions, quality=quality, depth_scale=1.0)
+            component_meshes["OBJ_Frame"] = frame_proxy if len(frame_proxy.faces) > 0 else proxy_mesh
         else:
-            left_ratio, right_ratio = top_band
-            top_width = max(0.05, width * (right_ratio - left_ratio))
-            center_x = (((left_ratio + right_ratio) * 0.5) - 0.5) * width
-        top_center_y = max(thickness * 0.5, height - thickness * 0.5)
-        component_meshes["OBJ_Top"] = _box_world((top_width, thickness, depth), (center_x, top_center_y, 0.0))
+            component_meshes["OBJ_Top"] = _empty_mesh()
+            component_meshes["OBJ_Frame"] = proxy_mesh
 
-        lower_proxy = _proxy_mesh_from_mask(front_mask, (width, height * 0.62, depth * 0.85), depth_scale=1.0, bands=max(6, proxy_bands // 2))
-        lower_proxy.apply_translation((0.0, (height * 0.62) * 0.5, 0.0))
-        component_meshes["OBJ_Frame"] = lower_proxy
-
-        support_mode = str(heuristics.get("table_support_mode", "continuous_frame"))
-        thin_count = int(heuristics.get("table_lower_thin_components", 0))
-        if support_mode == "four_legs" and thin_count >= 4:
-            leg_h = max(0.03, height - thickness)
-            leg_w = _clamp(width * 0.06, 0.03, 0.08)
-            leg_d = _clamp(depth * 0.06, 0.03, 0.08)
-            inset_x = _clamp(width * 0.08, 0.04, 0.12)
-            inset_z = _clamp(depth * 0.08, 0.04, 0.12)
-            leg_centers = [
-                (-width * 0.5 + inset_x, leg_h * 0.5, -depth * 0.5 + inset_z),
-                (width * 0.5 - inset_x, leg_h * 0.5, -depth * 0.5 + inset_z),
-                (-width * 0.5 + inset_x, leg_h * 0.5, depth * 0.5 - inset_z),
-                (width * 0.5 - inset_x, leg_h * 0.5, depth * 0.5 - inset_z),
-            ]
-            legs = [_box_world((leg_w, leg_h, leg_d), center) for center in leg_centers]
-            component_meshes["OBJ_Legs"] = _concat(legs)
+        leg_components = _table_leg_components(front_mask)
+        if len(leg_components) >= 4:
+            legs: list[trimesh.Trimesh] = []
+            leg_depth = _clamp(depth * 0.14, 0.02, max(0.05, depth * 0.28))
+            for x, y, cw, ch in leg_components[:4]:
+                leg_w = max(0.015, width * (float(cw) / max(1.0, float(w))))
+                leg_h = max(0.03, height * (float(ch) / max(1.0, float(h))))
+                center_x = ((float(x) + float(cw) * 0.5) / max(1.0, float(w)) - 0.5) * width
+                center_y = (1.0 - (float(y) + float(ch) * 0.5) / max(1.0, float(h))) * height
+                legs.append(_box_world((leg_w, leg_h, leg_depth), (center_x, center_y, 0.0)))
+            component_meshes["OBJ_Legs"] = _concat(legs) if legs else _empty_mesh()
         else:
             component_meshes["OBJ_Legs"] = _empty_mesh()
         component_meshes["OBJ_Drawers"] = _empty_mesh()
@@ -726,6 +930,8 @@ def conservative_component_meshes(
             primary_target = preset.components[0].name
         if primary_target is not None:
             component_meshes[primary_target] = proxy_mesh
+
+    _enforce_face_budget(component_meshes, 1000 if quality == "low" else 10000)
 
     for component_name, mesh in component_meshes.items():
         if len(mesh.faces) > 0:

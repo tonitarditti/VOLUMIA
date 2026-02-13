@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import uuid
 from pathlib import Path
 
@@ -20,8 +21,12 @@ from .models import (
     StatsSummary,
 )
 from .pipeline import (
+    ViewProjectionInput,
     apply_uv_placeholder,
+    border_median_color,
     build_component_recipes,
+    build_projected_textured_scene,
+    build_view_textures,
     choose_capture_by_slot,
     choose_material_captures,
     conservative_component_meshes,
@@ -43,9 +48,6 @@ MATERIALS_SCHEMA_VERSION = "volumia.materials.v1"
 MAX_CAPTURE_SIDE = 1024
 HIGH_TEXTURE_SIZE = 1024
 LOW_TEXTURE_SIZE = 512
-
-_MIDAS_RUNTIME: dict[str, object] | None = None
-_MIDAS_LOAD_FAILED = False
 
 
 def _safe_name(value: str) -> str:
@@ -78,56 +80,11 @@ def _normalize(values: np.ndarray) -> np.ndarray:
     return (values.astype(np.float32) - minimum) / span
 
 
-def _load_midas_runtime() -> dict[str, object] | None:
-    global _MIDAS_RUNTIME, _MIDAS_LOAD_FAILED
-    if _MIDAS_RUNTIME is not None:
-        return _MIDAS_RUNTIME
-    if _MIDAS_LOAD_FAILED:
-        return None
-
-    try:
-        import torch
-
-        model = torch.hub.load("intel-isl/MiDaS", "MiDaS_small", trust_repo=True)
-        transforms = torch.hub.load("intel-isl/MiDaS", "transforms", trust_repo=True)
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        model.to(device)
-        model.eval()
-        _MIDAS_RUNTIME = {
-            "torch": torch,
-            "device": device,
-            "model": model,
-            "transform": transforms.small_transform,
-        }
-        return _MIDAS_RUNTIME
-    except Exception as error:
-        print(f"[pipeline] MiDaS unavailable, using gradient fallback depth: {error}")
-        _MIDAS_LOAD_FAILED = True
-        return None
-
-
 def _estimate_depth_map(image_rgb: np.ndarray) -> tuple[np.ndarray, str]:
-    runtime = _load_midas_runtime()
-    if runtime is not None:
-        try:
-            torch = runtime["torch"]
-            input_batch = runtime["transform"](image_rgb).to(runtime["device"])
-            with torch.no_grad():
-                prediction = runtime["model"](input_batch)
-                prediction = torch.nn.functional.interpolate(
-                    prediction.unsqueeze(1),
-                    size=image_rgb.shape[:2],
-                    mode="bicubic",
-                    align_corners=False,
-                ).squeeze(1)
-            return _normalize(prediction.squeeze(0).cpu().numpy()), "midas-small"
-        except Exception as error:
-            print(f"[pipeline] MiDaS inference failed, using gradient fallback depth: {error}")
-
     gray = np.asarray(Image.fromarray(image_rgb, mode="RGB").convert("L"), dtype=np.float32) / 255.0
     grad_y, grad_x = np.gradient(gray)
     depth = _normalize((1.0 - gray) * 0.7 + np.sqrt(grad_x * grad_x + grad_y * grad_y) * 0.3)
-    return depth, "gradient-fallback"
+    return depth, "gradient-stable"
 
 
 def _write_collada_placeholder(path: Path, object_name: str, quality: str, components: list[str]) -> None:
@@ -391,6 +348,51 @@ def _build_material_capture_mapping(request: GenerationRequest, captures: list, 
         assigned_indices.add(int(candidate["index"]))
         mapping[material.name] = candidate["capture"]
     return mapping
+
+
+def _component_material_map(preset: PresetDefinition) -> dict[str, str]:
+    mapping: dict[str, str] = {}
+    for component in preset.components:
+        preferred = next((slot for slot in component.material_slots if slot.startswith("MAT_")), None)
+        mapping[component.name] = preferred or "MAT_Main_Surface"
+    return mapping
+
+
+def _capture_original(capture) -> np.ndarray:
+    original = getattr(capture, "original_image", None)
+    if isinstance(original, np.ndarray) and original.size > 0:
+        return original
+    return capture.image
+
+
+def _build_projection_inputs(
+    front_capture,
+    side_capture,
+    back_capture,
+) -> tuple[ViewProjectionInput, ViewProjectionInput | None, ViewProjectionInput | None]:
+    front_image = _capture_original(front_capture)
+    front_mask = extract_mask_observation(front_image).mask
+    front_input = ViewProjectionInput(image=front_image, mask=front_mask)
+
+    side_input: ViewProjectionInput | None = None
+    if side_capture is not None:
+        side_image = _capture_original(side_capture)
+        side_mask = extract_mask_observation(side_image).mask
+        side_input = ViewProjectionInput(image=side_image, mask=side_mask)
+
+    back_input: ViewProjectionInput | None = None
+    if back_capture is not None:
+        back_image = _capture_original(back_capture)
+        back_mask = extract_mask_observation(back_image).mask
+        back_input = ViewProjectionInput(image=back_image, mask=back_mask)
+
+    return front_input, side_input, back_input
+
+
+def _copy_projection_textures(texture_dir: Path, projection_root: Path) -> None:
+    projection_root.mkdir(parents=True, exist_ok=True)
+    for texture_file in texture_dir.glob("OBJ_*_*.png"):
+        shutil.copy2(texture_file, projection_root / texture_file.name)
 
 
 def _save_generation_debug(

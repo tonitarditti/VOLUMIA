@@ -145,6 +145,7 @@ class GenerationResult(BaseModel):
     conservativeMode: bool | None = None
     multiObjectEnabled: bool = False
     detectedObjects: list["DetectedObjectResult"] | None = None
+    warnings: list[str] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list)
     artifacts: GenerationArtifacts
     suggestedExportName: str
@@ -163,6 +164,7 @@ class DetectedObjectResult(BaseModel):
     height_cm: float | None = None
     depth_cm: float | None = None
     scale_axis_used: ScaleDimension | None = None
+    warnings: list[str] = Field(default_factory=list)
     artifacts: GenerationArtifacts
     suggestedExportName: str
 

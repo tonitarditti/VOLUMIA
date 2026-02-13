@@ -11,6 +11,12 @@ from .pbr_extract import (
     extract_material_texture_set,
     infer_material_category,
 )
+from .projection import (
+    ViewProjectionInput,
+    border_median_color,
+    build_projected_textured_scene,
+    build_view_textures,
+)
 from .preprocess import (
     LoadedCapture,
     choose_capture_by_slot,
@@ -31,6 +37,9 @@ __all__ = [
     "MaterialTextureSet",
     "apply_uv_placeholder",
     "build_component_recipes",
+    "build_projected_textured_scene",
+    "build_view_textures",
+    "border_median_color",
     "build_neutral_material_texture_set",
     "choose_capture_by_slot",
     "choose_material_captures",
@@ -46,4 +55,5 @@ __all__ = [
     "load_capture_images",
     "recipe_to_component_meshes",
     "save_debug_image",
+    "ViewProjectionInput",
 ]
