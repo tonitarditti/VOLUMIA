@@ -51,4 +51,15 @@ export type ServiceStatus = {
   managed: boolean;
   url: string;
   detail: string;
+  status: ServiceRuntimeStatus;
+};
+
+export type ServiceRuntimeStatus = "STARTING" | "RUNNING" | "DOWN";
+
+export type ServiceInfo = {
+  pythonPathUsed: string;
+  serviceDir: string;
+  port: number;
+  status: ServiceRuntimeStatus;
+  note: string;
 };

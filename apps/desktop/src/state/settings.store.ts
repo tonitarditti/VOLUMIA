@@ -5,6 +5,7 @@ import type {
   AppTheme,
   ExportDefaults,
   PerformanceDefaults,
+  ServiceInfo,
   ServiceStatus,
   StoredAppSettings,
   UiScale,
@@ -52,6 +53,7 @@ type SettingsState = {
   appVersion: string;
   gpuInfo: string;
   serviceStatus: ServiceStatus;
+  serviceInfo: ServiceInfo;
   settings: StoredAppSettings;
   load: () => Promise<void>;
   setLanguage: (value: AppLanguage) => Promise<void>;
@@ -64,6 +66,7 @@ type SettingsState = {
   setExportDefaults: (patch: Partial<ExportDefaults>) => Promise<void>;
   setPerformanceDefaults: (patch: Partial<PerformanceDefaults>) => Promise<void>;
   openLogsFolder: () => Promise<void>;
+  openServiceFolder: () => Promise<boolean>;
   restartService: () => Promise<boolean>;
   refreshServiceStatus: () => Promise<void>;
 };
@@ -84,6 +87,14 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     managed: true,
     url: "http://127.0.0.1:7860",
     detail: "Unknown",
+    status: "DOWN",
+  },
+  serviceInfo: {
+    pythonPathUsed: "",
+    serviceDir: "",
+    port: 7860,
+    status: "DOWN",
+    note: "Service not initialized.",
   },
   settings: defaultSettings,
 
@@ -91,7 +102,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     if (get().loading) return;
     set({ loading: true, error: null });
     try {
-      const [stored, appVersion, gpuInfo, serviceStatus] = await Promise.all([
+      const [stored, appVersion, gpuInfo, serviceStatus, serviceInfo] = await Promise.all([
         desktopApi.getSettings(),
         desktopApi.getAppVersion().catch(() => "-"),
         desktopApi.getGpuInfo().catch(() => "GPU info unavailable"),
@@ -100,6 +111,14 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
           managed: true,
           url: "http://127.0.0.1:7860",
           detail: "Service status unavailable",
+          status: "DOWN" as const,
+        })),
+        desktopApi.getServiceInfo().catch(() => ({
+          pythonPathUsed: "",
+          serviceDir: "",
+          port: 7860,
+          status: "DOWN" as const,
+          note: "Service info unavailable.",
         })),
       ]);
 
@@ -108,6 +127,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
         appVersion,
         gpuInfo,
         serviceStatus,
+        serviceInfo,
         loading: false,
         initialized: true,
       });
@@ -235,6 +255,10 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     await desktopApi.openLogsFolder();
   },
 
+  openServiceFolder: async () => {
+    return desktopApi.openServiceFolder();
+  },
+
   restartService: async () => {
     const ok = await desktopApi.restartPythonService();
     await get().refreshServiceStatus();
@@ -242,12 +266,22 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   },
 
   refreshServiceStatus: async () => {
-    const serviceStatus = await desktopApi.getServiceStatus().catch(() => ({
-      ok: false,
-      managed: true,
-      url: "http://127.0.0.1:7860",
-      detail: "Service status unavailable",
-    }));
-    set({ serviceStatus });
+    const [serviceStatus, serviceInfo] = await Promise.all([
+      desktopApi.getServiceStatus().catch(() => ({
+        ok: false,
+        managed: true,
+        url: "http://127.0.0.1:7860",
+        detail: "Service status unavailable",
+        status: "DOWN" as const,
+      })),
+      desktopApi.getServiceInfo().catch(() => ({
+        pythonPathUsed: "",
+        serviceDir: "",
+        port: 7860,
+        status: "DOWN" as const,
+        note: "Service info unavailable.",
+      })),
+    ]);
+    set({ serviceStatus, serviceInfo });
   },
 }));

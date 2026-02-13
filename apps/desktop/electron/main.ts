@@ -1,14 +1,22 @@
 ﻿import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import axios from "axios";
-import { constants as fsConstants } from "fs";
+import { constants as fsConstants, existsSync } from "fs";
 import { access, copyFile, mkdir, readdir, readFile, writeFile } from "fs/promises";
 import path from "path";
-import { spawn, type ChildProcessWithoutNullStreams } from "child_process";
+import { spawn, type ChildProcess } from "child_process";
 
 type AppLanguage = "system" | "en" | "es";
 type AppTheme = "system" | "light" | "dark";
 type WindowSizePreset = "small" | "medium" | "large";
 type UiScale = 90 | 100 | 110 | 125;
+type ServiceRuntimeStatus = "STARTING" | "RUNNING" | "DOWN";
+type ServiceInfo = {
+  pythonPathUsed: string;
+  serviceDir: string;
+  port: number;
+  status: ServiceRuntimeStatus;
+  note: string;
+};
 
 type AppSettings = {
   language: AppLanguage;
@@ -79,9 +87,18 @@ const defaultSettings: AppSettings = {
 };
 
 let mainWindow: BrowserWindow | null = null;
-let serviceProcess: ChildProcessWithoutNullStreams | null = null;
-let serviceReadyPromise: Promise<void> | null = null;
+let serviceProcess: ChildProcess | null = null;
+let serviceReadyPromise: Promise<boolean> | null = null;
 let settingsCache: AppSettings | null = null;
+let serviceRuntimeStatus: ServiceRuntimeStatus = "DOWN";
+let serviceStatusDetail = "Service has not started.";
+let serviceInfoCache: ServiceInfo = {
+  pythonPathUsed: "",
+  serviceDir: "",
+  port: servicePort,
+  status: "DOWN",
+  note: "Service not initialized.",
+};
 
 const serviceHttp = axios.create({
   baseURL: serviceBaseUrl,
@@ -89,6 +106,14 @@ const serviceHttp = axios.create({
 });
 
 app.disableHardwareAcceleration();
+
+process.on("uncaughtException", (err: NodeJS.ErrnoException) => {
+  if (err?.code === "EPIPE") {
+    console.warn("Ignored EPIPE from closed child process.");
+    return;
+  }
+  console.error(err);
+});
 
 function getSettingsPath() {
   return path.join(app.getPath("userData"), "settings.json");
@@ -166,84 +191,220 @@ async function patchSettings(patch: DeepPartial<AppSettings>) {
   return next;
 }
 
-function resolveServiceEntry() {
+function hasServiceApp(serviceDir: string) {
+  return existsSync(path.join(serviceDir, "app", "main.py"));
+}
+
+function getServiceDirCandidates() {
+  if (app.isPackaged) {
+    return [
+      path.resolve(process.resourcesPath, "service"),
+      path.resolve(process.resourcesPath, "apps", "service"),
+      path.resolve(process.resourcesPath, "app.asar.unpacked", "service"),
+      path.resolve(process.resourcesPath, "app.asar.unpacked", "apps", "service"),
+    ];
+  }
+
   return [
-    path.resolve(process.resourcesPath, "service/main.py"),
-    path.resolve(process.resourcesPath, "apps/service/main.py"),
-    path.resolve(process.cwd(), "apps/service/main.py"),
-    path.resolve(process.cwd(), "../service/main.py"),
-    path.resolve(__dirname, "../../service/main.py"),
-    path.resolve(__dirname, "../../../apps/service/main.py"),
+    path.resolve(__dirname, "../../service"),
+    path.resolve(__dirname, "../../../apps/service"),
+    path.resolve(process.cwd(), "apps/service"),
+    path.resolve(process.cwd(), "../service"),
+    path.resolve(app.getAppPath(), "../../apps/service"),
   ];
 }
 
-async function resolvePythonBinary() {
-  const candidates = [
-    process.env.VOLUMIA_PYTHON_BIN,
-    path.resolve(process.cwd(), ".venv/Scripts/python.exe"),
-    path.resolve(__dirname, "../../../.venv/Scripts/python.exe"),
-    "python",
-  ].filter((value): value is string => Boolean(value));
-
-  for (const candidate of candidates) {
-    if (candidate === "python") return candidate;
-    if (await fileExists(candidate)) return candidate;
+function resolveServiceDir() {
+  const seen = new Set<string>();
+  for (const candidate of getServiceDirCandidates()) {
+    if (!candidate || seen.has(candidate)) continue;
+    seen.add(candidate);
+    if (hasServiceApp(candidate)) {
+      return candidate;
+    }
   }
-
-  return "python";
+  return "";
 }
 
-async function waitForServiceReady() {
-  const maxAttempts = 36;
-  let delayMs = 250;
+function resolveServicePython(serviceDir: string) {
+  const venvPython =
+    process.platform === "win32"
+      ? path.join(serviceDir, ".venv", "Scripts", "python.exe")
+      : path.join(serviceDir, ".venv", "bin", "python");
 
-  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-    try {
-      const response = await serviceHttp.get("/health");
-      if (response.status === 200 && response.data?.ok) {
-        return;
-      }
-    } catch {
-      // keep retrying
-    }
-
-    await new Promise((resolve) => setTimeout(resolve, delayMs));
-    delayMs = Math.min(1200, Math.round(delayMs * 1.2));
+  if (existsSync(venvPython)) {
+    return {
+      pythonPath: venvPython,
+      note: "Using service virtual environment Python.",
+    };
   }
 
-  throw new Error(`Service did not become ready at ${serviceBaseUrl}`);
+  const fallback = process.platform === "win32" ? "python" : "python3";
+  return {
+    pythonPath: fallback,
+    note: `WARNING: .venv Python not found at ${venvPython}. Falling back to system Python (${fallback}).`,
+  };
+}
+
+function updateServiceInfoStatus(status: ServiceRuntimeStatus, detail?: string) {
+  serviceRuntimeStatus = status;
+  serviceStatusDetail = detail ?? serviceStatusDetail;
+  serviceInfoCache = {
+    ...serviceInfoCache,
+    status,
+    note: serviceStatusDetail,
+  };
+}
+
+function isBrokenPipe(error: unknown) {
+  return (error as NodeJS.ErrnoException | undefined)?.code === "EPIPE";
+}
+
+function isServiceAlive(child: ChildProcess | null) {
+  return Boolean(child && !child.killed && child.exitCode === null);
+}
+
+function wireServiceProcessEvents(child: ChildProcess) {
+  child.stdout?.on("data", (chunk) => {
+    console.log(`[service] ${String(chunk).trimEnd()}`);
+  });
+
+  child.stderr?.on("data", (chunk) => {
+    console.warn(`[service] ${String(chunk).trimEnd()}`);
+  });
+
+  child.on("close", (code, signal) => {
+    console.warn(`[service] closed (code: ${code ?? "null"}, signal: ${signal ?? "none"})`);
+    if (serviceProcess === child) {
+      serviceProcess = null;
+    }
+    updateServiceInfoStatus("DOWN", "Service process closed.");
+    serviceReadyPromise = null;
+  });
+
+  child.on("error", (error) => {
+    if (isBrokenPipe(error)) {
+      console.warn("Ignored EPIPE from closed child process.");
+    } else {
+      console.error("[service] child process error", error);
+    }
+
+    if (serviceProcess === child) {
+      serviceProcess = null;
+    }
+    updateServiceInfoStatus("DOWN", "Service process error.");
+    serviceReadyPromise = null;
+  });
+}
+
+async function spawnManagedService() {
+  const serviceDir = resolveServiceDir();
+  if (!serviceDir) {
+    const detail = app.isPackaged ? "Service not bundled." : "Service directory was not found.";
+    console.warn(`[service] ${detail}`);
+    serviceInfoCache = {
+      ...serviceInfoCache,
+      serviceDir: "",
+      pythonPathUsed: "",
+      port: servicePort,
+    };
+    updateServiceInfoStatus("DOWN", detail);
+    return false;
+  }
+
+  const pythonRuntime = resolveServicePython(serviceDir);
+  const usingFallback = pythonRuntime.pythonPath !== (process.platform === "win32"
+    ? path.join(serviceDir, ".venv", "Scripts", "python.exe")
+    : path.join(serviceDir, ".venv", "bin", "python"));
+  if (usingFallback) {
+    console.warn(`[service] ${pythonRuntime.note}`);
+  }
+
+  serviceInfoCache = {
+    ...serviceInfoCache,
+    serviceDir,
+    pythonPathUsed: pythonRuntime.pythonPath,
+    port: servicePort,
+    note: pythonRuntime.note,
+  };
+  updateServiceInfoStatus("STARTING", pythonRuntime.note);
+  console.log(`[service] Python executable: ${pythonRuntime.pythonPath}`);
+  console.log(`[service] Working directory: ${serviceDir}`);
+  console.log(`[service] Port: ${servicePort}`);
+
+  let child: ChildProcess;
+  try {
+    child = spawn(pythonRuntime.pythonPath, ["-m", "app.main"], {
+      cwd: serviceDir,
+      env: {
+        ...process.env,
+        VOLUMIA_SERVICE_PORT: String(servicePort),
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+      shell: false,
+    });
+  } catch (error) {
+    console.error("[service] Failed to spawn FastAPI process.", error);
+    serviceProcess = null;
+    updateServiceInfoStatus("DOWN", "Failed to spawn local service.");
+    return false;
+  }
+
+  serviceProcess = child;
+  wireServiceProcessEvents(child);
+
+  const health = await fetchServiceHealthWithRetry(10, 500);
+  if (!health.ok) {
+    const warning = `[service] Health check failed after spawn: ${health.detail}`;
+    console.warn(warning);
+    updateServiceInfoStatus("DOWN", health.detail);
+    return false;
+  }
+
+  updateServiceInfoStatus("RUNNING", "Service healthy.");
+  return true;
 }
 
 async function stopManagedService() {
   if (!serviceProcess) {
     serviceReadyPromise = null;
+    updateServiceInfoStatus("DOWN", "Service stopped.");
     return;
   }
 
   const child = serviceProcess;
   serviceProcess = null;
   serviceReadyPromise = null;
+  updateServiceInfoStatus("DOWN", "Stopping service process...");
+
+  if (!isServiceAlive(child)) {
+    return;
+  }
 
   await new Promise<void>((resolve) => {
     const timeout = setTimeout(() => {
-      try {
-        child.kill();
-      } catch {
-        // ignore
+      if (isServiceAlive(child)) {
+        try {
+          child.kill();
+        } catch {
+          // ignore
+        }
       }
       resolve();
     }, 2500);
 
-    child.once("exit", () => {
+    const settle = () => {
       clearTimeout(timeout);
       resolve();
-    });
+    };
+
+    child.once("close", settle);
+    child.once("error", settle);
 
     try {
       child.kill();
     } catch {
-      clearTimeout(timeout);
-      resolve();
+      settle();
     }
   });
 }
@@ -253,46 +414,43 @@ async function startServiceIfNeeded() {
 
   serviceReadyPromise = (async () => {
     if (serviceExternallyManaged) {
-      await waitForServiceReady();
-      return;
+      updateServiceInfoStatus("STARTING", "Waiting for externally managed service...");
+      const health = await fetchServiceHealthWithRetry(10, 500);
+      if (!health.ok) {
+        console.warn(`[service] External service not ready: ${health.detail}`);
+        updateServiceInfoStatus("DOWN", health.detail);
+      } else {
+        updateServiceInfoStatus("RUNNING", "External service healthy.");
+      }
+      return health.ok;
     }
 
-    const entries = resolveServiceEntry();
-    const serviceEntry = (await Promise.all(entries.map(async (entry) => ((await fileExists(entry)) ? entry : null)))).find(
-      (entry): entry is string => Boolean(entry)
-    );
-
-    if (!serviceEntry) {
-      throw new Error("FastAPI service entrypoint was not found.");
+    if (isServiceAlive(serviceProcess)) {
+      const health = await fetchServiceHealthWithRetry(10, 500);
+      if (!health.ok) {
+        console.warn(`[service] Managed process is running but health-check failed: ${health.detail}`);
+        updateServiceInfoStatus("DOWN", health.detail);
+      } else {
+        updateServiceInfoStatus("RUNNING", "Service healthy.");
+      }
+      return health.ok;
     }
 
-    const pythonBin = await resolvePythonBinary();
+    return spawnManagedService();
+  })()
+    .catch((error) => {
+      if (isBrokenPipe(error)) {
+        console.warn("Ignored EPIPE from closed child process.");
+        return false;
+      }
 
-    serviceProcess = spawn(pythonBin, [serviceEntry], {
-      cwd: path.dirname(serviceEntry),
-      env: {
-        ...process.env,
-        VOLUMIA_SERVICE_PORT: String(servicePort),
-      },
-      stdio: "pipe",
-    });
-
-    serviceProcess.stdout.on("data", (chunk) => {
-      console.log(`[service] ${String(chunk).trimEnd()}`);
-    });
-
-    serviceProcess.stderr.on("data", (chunk) => {
-      console.warn(`[service] ${String(chunk).trimEnd()}`);
-    });
-
-    serviceProcess.on("exit", (code) => {
-      console.warn(`[service] exited with code ${code}`);
-      serviceProcess = null;
+      console.error("[service] Failed during startup.", error);
+      updateServiceInfoStatus("DOWN", "Service failed during startup.");
+      return false;
+    })
+    .finally(() => {
       serviceReadyPromise = null;
     });
-
-    await waitForServiceReady();
-  })();
 
   return serviceReadyPromise;
 }
@@ -300,13 +458,25 @@ async function startServiceIfNeeded() {
 async function restartService() {
   if (serviceExternallyManaged) {
     serviceReadyPromise = null;
-    await waitForServiceReady();
-    return true;
+    updateServiceInfoStatus("STARTING", "Re-checking externally managed service...");
+    const health = await fetchServiceHealthWithRetry(10, 500);
+    if (!health.ok) {
+      console.warn(`[service] External service restart check failed: ${health.detail}`);
+      updateServiceInfoStatus("DOWN", health.detail);
+    } else {
+      updateServiceInfoStatus("RUNNING", "External service healthy.");
+    }
+    return health.ok;
   }
 
   await stopManagedService();
-  await startServiceIfNeeded();
-  return true;
+  await delay(500);
+  const ready = await startServiceIfNeeded();
+  if (!ready) {
+    console.warn(`[service] Restart finished but service is still not healthy at ${serviceBaseUrl}.`);
+    updateServiceInfoStatus("DOWN", "Service restart failed health-check.");
+  }
+  return ready;
 }
 
 async function delay(ms: number) {
@@ -343,13 +513,45 @@ async function fetchServiceHealthWithRetry(attempts = 10, intervalMs = 500) {
 }
 
 async function getServiceStatus() {
-  const status = await fetchServiceHealthWithRetry(10, 500);
+  const health = await fetchServiceHealthWithRetry(10, 500);
+  if (health.ok) {
+    updateServiceInfoStatus("RUNNING", health.detail);
+  } else if (serviceRuntimeStatus === "STARTING" && (isServiceAlive(serviceProcess) || serviceReadyPromise)) {
+    updateServiceInfoStatus("STARTING", health.detail);
+  } else {
+    updateServiceInfoStatus("DOWN", health.detail);
+  }
+
   return {
-    ok: status.ok,
+    ok: health.ok,
     managed: !serviceExternallyManaged,
     url: serviceBaseUrl,
-    detail: status.detail,
+    detail: serviceStatusDetail,
+    status: serviceRuntimeStatus,
   };
+}
+
+function getServiceInfo() {
+  return {
+    ...serviceInfoCache,
+    status: serviceRuntimeStatus,
+    note: serviceStatusDetail || serviceInfoCache.note,
+    port: servicePort,
+  };
+}
+
+async function openServiceFolder() {
+  const serviceDir = serviceInfoCache.serviceDir || resolveServiceDir();
+  if (!serviceDir) {
+    updateServiceInfoStatus("DOWN", app.isPackaged ? "Service not bundled." : "Service directory was not found.");
+    return false;
+  }
+  serviceInfoCache = {
+    ...serviceInfoCache,
+    serviceDir,
+  };
+  await shell.openPath(serviceDir);
+  return true;
 }
 
 function toServiceError(action: string, error: unknown): Error {
@@ -509,7 +711,9 @@ async function createWindow() {
     ...initial,
     minWidth: 1180,
     minHeight: 760,
-    backgroundColor: "#F2EFEA",
+    frame: false,
+    titleBarStyle: "hidden",
+    backgroundColor: "#161412",
     alwaysOnTop: settings.workspace.alwaysOnTop,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -552,8 +756,23 @@ function getWindowState() {
 }
 
 app.whenReady().then(async () => {
+  const serviceDir = resolveServiceDir();
+  serviceInfoCache = {
+    ...serviceInfoCache,
+    serviceDir,
+    pythonPathUsed: serviceDir ? resolveServicePython(serviceDir).pythonPath : "",
+    port: servicePort,
+    note: serviceDir
+      ? "Service location resolved."
+      : app.isPackaged
+        ? "Service not bundled."
+        : "Service directory was not found.",
+  };
+  updateServiceInfoStatus("DOWN", serviceInfoCache.note);
+
   void startServiceIfNeeded().catch((error) => {
     console.error("Failed to initialize service", error);
+    updateServiceInfoStatus("DOWN", "Failed to initialize local service.");
   });
 
   await createWindow();
@@ -567,7 +786,10 @@ app.whenReady().then(async () => {
 
 ipcMain.handle("volumia:analyze-images", async (_event, payload) => {
   try {
-    await startServiceIfNeeded();
+    const ready = await startServiceIfNeeded();
+    if (!ready) {
+      throw new Error("[SERVICE_UNAVAILABLE] Analyze images failed because the service is unavailable.");
+    }
     const response = await serviceHttp.post("/analyze-images", payload);
     return response.data;
   } catch (error) {
@@ -577,7 +799,10 @@ ipcMain.handle("volumia:analyze-images", async (_event, payload) => {
 
 ipcMain.handle("volumia:generate-model", async (_event, payload) => {
   try {
-    await startServiceIfNeeded();
+    const ready = await startServiceIfNeeded();
+    if (!ready) {
+      throw new Error("[SERVICE_UNAVAILABLE] Generate model failed because the service is unavailable.");
+    }
     const response = await serviceHttp.post("/generate-model", payload);
     return response.data;
   } catch (error) {
@@ -587,7 +812,10 @@ ipcMain.handle("volumia:generate-model", async (_event, payload) => {
 
 ipcMain.handle("volumia:export-package", async (_event, payload) => {
   try {
-    await startServiceIfNeeded();
+    const ready = await startServiceIfNeeded();
+    if (!ready) {
+      throw new Error("[SERVICE_UNAVAILABLE] Export package failed because the service is unavailable.");
+    }
     const response = await serviceHttp.post("/export-package", payload);
     return response.data;
   } catch (error) {
@@ -681,6 +909,30 @@ ipcMain.handle("volumia:window:apply-size-preset", async (_event, preset: Window
   return true;
 });
 
+ipcMain.handle("volumia:window:minimize", () => {
+  mainWindow?.minimize();
+  return true;
+});
+
+ipcMain.handle("volumia:window:toggle-maximize", () => {
+  if (!mainWindow) return false;
+  if (mainWindow.isMaximized()) {
+    mainWindow.unmaximize();
+  } else {
+    mainWindow.maximize();
+  }
+  return mainWindow.isMaximized();
+});
+
+ipcMain.handle("volumia:window:close", () => {
+  mainWindow?.close();
+  return true;
+});
+
+ipcMain.handle("volumia:window:is-maximized", () => {
+  return mainWindow?.isMaximized() ?? false;
+});
+
 ipcMain.handle("volumia:diagnostics:gpu-info", () => {
   try {
     const status = app.getGPUFeatureStatus();
@@ -697,10 +949,25 @@ ipcMain.handle("volumia:diagnostics:open-logs-folder", async () => {
   return logsPath;
 });
 
+ipcMain.handle("volumia:diagnostics:open-service-folder", async () => {
+  return openServiceFolder();
+});
+
+ipcMain.handle("service:getInfo", () => {
+  return getServiceInfo();
+});
+
+ipcMain.handle("service:restart", async () => {
+  try {
+    return await restartService();
+  } catch {
+    return false;
+  }
+});
+
 ipcMain.handle("volumia:diagnostics:restart-service", async () => {
   try {
-    await restartService();
-    return true;
+    return await restartService();
   } catch {
     return false;
   }
@@ -713,10 +980,16 @@ ipcMain.handle("volumia:diagnostics:service-status", async () => {
 ipcMain.handle("volumia:getAppVersion", () => app.getVersion());
 
 app.on("before-quit", () => {
-  if (serviceProcess) {
-    serviceProcess.kill();
-    serviceProcess = null;
+  const child = serviceProcess;
+  if (child && !child.killed && child.exitCode === null) {
+    try {
+      child.kill();
+    } catch {
+      // ignore process shutdown errors
+    }
   }
+  serviceProcess = null;
+  updateServiceInfoStatus("DOWN", "Service stopped.");
 });
 
 app.on("window-all-closed", () => {

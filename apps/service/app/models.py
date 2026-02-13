@@ -43,6 +43,7 @@ TextureSize = Literal["2k", "4k"]
 class CaptureImageInput(BaseModel):
     slotId: CaptureSlotId
     fileName: str
+    filePath: str | None = None
     userHint: str | None = None
 
 

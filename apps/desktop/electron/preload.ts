@@ -20,9 +20,18 @@ contextBridge.exposeInMainWorld("volumia", {
   setZoomFactor: (value: number) => ipcRenderer.invoke("volumia:window:set-zoom-factor", value),
   getGpuInfo: () => ipcRenderer.invoke("volumia:diagnostics:gpu-info"),
   openLogsFolder: () => ipcRenderer.invoke("volumia:diagnostics:open-logs-folder"),
+  openServiceFolder: () => ipcRenderer.invoke("volumia:diagnostics:open-service-folder"),
   restartPythonService: () => ipcRenderer.invoke("volumia:diagnostics:restart-service"),
   getServiceStatus: () => ipcRenderer.invoke("volumia:diagnostics:service-status"),
+  getServiceInfo: () => ipcRenderer.invoke("service:getInfo"),
   getAppVersion: () => ipcRenderer.invoke("volumia:getAppVersion") as Promise<string>,
+});
+
+contextBridge.exposeInMainWorld("volumiaWindow", {
+  minimize: () => ipcRenderer.invoke("volumia:window:minimize") as Promise<boolean>,
+  toggleMaximize: () => ipcRenderer.invoke("volumia:window:toggle-maximize") as Promise<boolean>,
+  close: () => ipcRenderer.invoke("volumia:window:close") as Promise<boolean>,
+  isMaximized: () => ipcRenderer.invoke("volumia:window:is-maximized") as Promise<boolean>,
 });
 
 export {};

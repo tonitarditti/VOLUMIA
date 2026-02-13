@@ -4,12 +4,13 @@ import type { ExportOptions, GenerationRequest, ObjectTypeOption, StudioPresetDe
 import { resolveLanguage } from "@/i18n";
 import { desktopApi } from "@/api/desktopApi";
 import { ExportModal } from "@/components/ExportModal";
+import { TitleBar } from "@/components/layout/TitleBar";
 import { NewCaptureScreen } from "@/components/screens/NewCaptureScreen";
 import { ProcessingScreen } from "@/components/screens/ProcessingScreen";
 import { ReviewExportScreen } from "@/components/screens/ReviewExportScreen";
 import { SettingsScreen } from "@/components/screens/SettingsScreen";
 import { UiKitScreen } from "@/components/screens/UiKitScreen";
-import { Button, Chip } from "@/components/ui";
+import { Button } from "@/components/ui";
 import { useCaptureStore } from "@/state/capture.store";
 import { usePresetsStore } from "@/state/presets.store";
 import { useProcessingStore } from "@/state/processing.store";
@@ -99,13 +100,6 @@ export default function App() {
   const [exportMessage, setExportMessage] = useState<string | null>(null);
 
   const hasImages = useMemo(() => slots.some((slot) => slot.image), [slots]);
-
-  const statusLabel = useMemo(() => {
-    if (processingFailed) return t("app.statusError");
-    if (screen === "processing") return t("app.statusProcessing");
-    if (generationResult) return t("app.statusRunning");
-    return t("app.statusIdle");
-  }, [generationResult, processingFailed, screen, t]);
 
   const initialExportOptions = useMemo<ExportOptions>(
     () => ({
@@ -296,6 +290,13 @@ export default function App() {
   if (isUiKitRoute) {
     return (
       <div className="appRoot">
+        <TitleBar
+          appTitle={t("app.title")}
+          projectLabel={t("app.projectUntitled")}
+          envLabel={import.meta.env.DEV ? t("app.env.dev") : t("app.env.prod")}
+          serviceLabel={serviceStatus.ok ? t("settings.serviceOnline") : t("settings.serviceOffline")}
+          serviceOnline={serviceStatus.ok}
+        />
         <main className="appContent">
           <UiKitScreen />
         </main>
@@ -305,6 +306,14 @@ export default function App() {
 
   return (
     <div className="appRoot">
+      <TitleBar
+        appTitle={t("app.title")}
+        projectLabel={t("app.projectUntitled")}
+        envLabel={import.meta.env.DEV ? t("app.env.dev") : t("app.env.prod")}
+        serviceLabel={serviceStatus.ok ? t("settings.serviceOnline") : t("settings.serviceOffline")}
+        serviceOnline={serviceStatus.ok}
+      />
+
       <header className="appHeader">
         <div className="headerLeft">
           <button
@@ -317,17 +326,7 @@ export default function App() {
             <span />
             <span />
           </button>
-          <img src="/assets/logo.svg" alt="VOLUMIA" className="logoMark" />
-          <div className="projectMeta">
-            <strong>{t("app.title")}</strong>
-            <span>{t("app.projectUntitled")}</span>
-          </div>
-        </div>
-
-        <div className="headerRight">
           <span className="tagline">{t("app.tagline")}</span>
-          <Chip className="envChip">{import.meta.env.DEV ? t("app.env.dev") : t("app.env.prod")}</Chip>
-          <Chip active>{statusLabel}</Chip>
         </div>
       </header>
 

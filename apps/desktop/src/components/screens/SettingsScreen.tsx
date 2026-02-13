@@ -12,6 +12,7 @@ export function SettingsScreen() {
   const appVersion = useSettingsStore((state) => state.appVersion);
   const gpuInfo = useSettingsStore((state) => state.gpuInfo);
   const serviceStatus = useSettingsStore((state) => state.serviceStatus);
+  const serviceInfo = useSettingsStore((state) => state.serviceInfo);
 
   const setLanguage = useSettingsStore((state) => state.setLanguage);
   const setTheme = useSettingsStore((state) => state.setTheme);
@@ -23,10 +24,17 @@ export function SettingsScreen() {
   const setExportDefaults = useSettingsStore((state) => state.setExportDefaults);
   const setPerformanceDefaults = useSettingsStore((state) => state.setPerformanceDefaults);
   const openLogsFolder = useSettingsStore((state) => state.openLogsFolder);
+  const openServiceFolder = useSettingsStore((state) => state.openServiceFolder);
   const restartService = useSettingsStore((state) => state.restartService);
   const refreshServiceStatus = useSettingsStore((state) => state.refreshServiceStatus);
 
   const [restartFeedback, setRestartFeedback] = useState<string | null>(null);
+  const serviceRuntimeLabel =
+    serviceInfo.status === "RUNNING"
+      ? t("settings.serviceRunning")
+      : serviceInfo.status === "STARTING"
+        ? t("settings.serviceStarting")
+        : t("settings.serviceDown");
 
   return (
     <div className="screenWrap settingsScreen">
@@ -198,10 +206,25 @@ export function SettingsScreen() {
           <div className="field">
             <span>{t("settings.serviceStatus")}</span>
             <div className="diagnosticStatusRow">
-              <Chip active={serviceStatus.ok}>{serviceStatus.ok ? t("settings.serviceOnline") : t("settings.serviceOffline")}</Chip>
+              <Chip active={serviceInfo.status === "RUNNING"}>{serviceRuntimeLabel}</Chip>
               <small>{serviceStatus.url}</small>
             </div>
-            <small>{serviceStatus.detail}</small>
+            <small>{serviceStatus.detail || serviceInfo.note}</small>
+          </div>
+
+          <div className="field">
+            <span>{t("settings.servicePort")}</span>
+            <code className="diagnosticCode">{serviceInfo.port}</code>
+          </div>
+
+          <div className="field">
+            <span>{t("settings.servicePythonPath")}</span>
+            <code className="diagnosticCode">{serviceInfo.pythonPathUsed || "-"}</code>
+          </div>
+
+          <div className="field">
+            <span>{t("settings.serviceDirectory")}</span>
+            <code className="diagnosticCode">{serviceInfo.serviceDir || t("settings.serviceNotBundled")}</code>
           </div>
 
           <div className="field">
@@ -215,6 +238,9 @@ export function SettingsScreen() {
             </Button>
             <Button type="button" variant="secondary" onClick={() => void openLogsFolder()}>
               {t("settings.openLogs")}
+            </Button>
+            <Button type="button" variant="secondary" onClick={() => void openServiceFolder()}>
+              {t("settings.openServiceFolder")}
             </Button>
             <Button
               type="button"

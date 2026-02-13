@@ -34,6 +34,7 @@ export type ObjectTypeOption =
 export type CaptureImageInput = {
   slotId: CaptureSlotId;
   fileName: string;
+  filePath?: string;
   userHint?: string;
 };
 

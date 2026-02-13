@@ -50,18 +50,20 @@ npm install
 Windows (PowerShell):
 
 ```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
+python -m venv apps/service/.venv
+.\apps\service\.venv\Scripts\Activate.ps1
 pip install -r apps/service/requirements.txt
 ```
 
 macOS/Linux:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
+python3 -m venv apps/service/.venv
+source apps/service/.venv/bin/activate
 pip install -r apps/service/requirements.txt
 ```
+
+Note: Ensure `apps/service/.venv` exists and dependencies are installed; Electron will use it automatically.
 
 ## Run (One Command)
 
@@ -79,8 +81,9 @@ Notes:
 
 - `apps/service/run-service.cjs` auto-resolves Python from:
   1. `VOLUMIA_PYTHON_BIN`
-  2. repo `.venv`
+  2. `apps/service/.venv`
   3. `python` in PATH
+- Electron also prefers `apps/service/.venv` automatically when starting the local FastAPI service.
 - Desktop dev host is fixed to `127.0.0.1` to avoid host mismatch issues.
 
 ## Build and Lint

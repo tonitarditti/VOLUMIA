@@ -8,7 +8,7 @@ import type {
   ObjectTypeOption,
   StudioPresetDefinition,
 } from "@volumia/shared";
-import type { ServiceStatus, StoredAppSettings, WindowBounds, WindowRuntimeState } from "@/state/settings.types";
+import type { ServiceInfo, ServiceStatus, StoredAppSettings, WindowBounds, WindowRuntimeState } from "@/state/settings.types";
 
 export {};
 
@@ -41,9 +41,17 @@ declare global {
       setZoomFactor: (value: number) => Promise<boolean>;
       getGpuInfo: () => Promise<string>;
       openLogsFolder: () => Promise<string>;
+      openServiceFolder: () => Promise<boolean>;
       restartPythonService: () => Promise<boolean>;
       getServiceStatus: () => Promise<ServiceStatus>;
+      getServiceInfo: () => Promise<ServiceInfo>;
       getAppVersion: () => Promise<string>;
+    };
+    volumiaWindow: {
+      minimize: () => Promise<boolean>;
+      toggleMaximize: () => Promise<boolean>;
+      close: () => Promise<boolean>;
+      isMaximized: () => Promise<boolean>;
     };
   }
 }

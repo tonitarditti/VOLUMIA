@@ -16,6 +16,7 @@ export type CaptureSlot = {
   optional: boolean;
   image: {
     fileName: string;
+    filePath?: string;
     previewUrl: string;
     status: SlotStatus;
     note: string;
@@ -142,6 +143,7 @@ export const useCaptureStore = create<CaptureState>((set, get) => ({
 
   setSlotFile: (slotId, file) => {
     set((state) => {
+      const localPath = (file as File & { path?: string }).path;
       const slots = state.slots.map((slot) => {
         if (slot.id !== slotId) return slot;
         revokePreview(slot);
@@ -149,6 +151,7 @@ export const useCaptureStore = create<CaptureState>((set, get) => ({
           ...slot,
           image: {
             fileName: file.name,
+            filePath: localPath,
             previewUrl: URL.createObjectURL(file),
             status: "Ready" as SlotStatus,
             note: "Ready to process",
@@ -181,11 +184,13 @@ export const useCaptureStore = create<CaptureState>((set, get) => ({
 
         const nextFile = queue.shift();
         if (!nextFile) return slot;
+        const localPath = (nextFile as File & { path?: string }).path;
 
         return {
           ...slot,
           image: {
             fileName: nextFile.name,
+            filePath: localPath,
             previewUrl: URL.createObjectURL(nextFile),
             status: "Ready" as SlotStatus,
             note: "Ready to process",
@@ -211,6 +216,7 @@ export const useCaptureStore = create<CaptureState>((set, get) => ({
       .map((slot) => ({
         slotId: slot.id,
         fileName: slot.image!.fileName,
+        filePath: slot.image!.filePath,
       }));
   },
 }));
