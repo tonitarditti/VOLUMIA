@@ -11,6 +11,11 @@ import { Button, Card, TextArea, TextField } from "@/ui/primitives";
 import { ProjectViewport } from "@/three/ProjectViewport";
 import { useT } from "@/volumia/i18n/useT";
 
+type GenerationDevice = {
+  device: "cuda" | "cpu";
+  name: string;
+};
+
 function formatMessageTime(value: string, locale: string) {
   return new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit" }).format(new Date(value));
 }
@@ -29,6 +34,24 @@ function toFileUrl(filePath: string) {
 function filenameFromPath(value: string) {
   const parts = value.split(/[/\\]/);
   return parts[parts.length - 1] ?? value;
+}
+
+function shortDeviceName(value: string) {
+  if (value.length <= 24) {
+    return value;
+  }
+  return `${value.slice(0, 24)}...`;
+}
+
+function parseDeviceLine(value: string): GenerationDevice | null {
+  const match = value.match(/^\[VOLUMIA_DEVICE\]\s+device=(cuda|cpu)\s+index=-?\d+\s+name="([^"]*)"$/);
+  if (!match) {
+    return null;
+  }
+  return {
+    device: match[1] as "cuda" | "cpu",
+    name: match[2],
+  };
 }
 
 function getProjectModel(model: ProjectModel | undefined): ProjectModel {
@@ -53,6 +76,7 @@ export function ProjectPage() {
   const [generationPercent, setGenerationPercent] = useState(0);
   const [generationMessage, setGenerationMessage] = useState("Selecciona imagenes para iniciar.");
   const [isGenerating, setIsGenerating] = useState(false);
+  const [generationDevice, setGenerationDevice] = useState<GenerationDevice | null>(null);
   const historyBottomRef = useRef<HTMLDivElement | null>(null);
   const projectModel = getProjectModel(project?.model);
 
@@ -73,6 +97,7 @@ export function ProjectPage() {
     setGenerationPercent(0);
     setGenerationMessage("Selecciona imagenes para iniciar.");
     setIsGenerating(false);
+    setGenerationDevice(null);
   }, [project?.id]);
 
   useEffect(() => {
@@ -89,6 +114,10 @@ export function ProjectPage() {
       setGenerationStage(payload.stage);
       setGenerationPercent(Math.max(0, Math.min(100, payload.percent)));
       setGenerationMessage(payload.message);
+      const progressDevice = parseDeviceLine(payload.message);
+      if (progressDevice) {
+        setGenerationDevice(progressDevice);
+      }
     });
 
     const cleanupDone = desktopApi.onGenerationDone((payload) => {
@@ -110,6 +139,7 @@ export function ProjectPage() {
       setGenerationStage("done");
       setGenerationPercent(100);
       setGenerationMessage("Modelo 3D generado correctamente.");
+      setGenerationDevice(payload.device ?? null);
     });
 
     const cleanupError = desktopApi.onGenerationError((payload) => {
@@ -185,6 +215,7 @@ export function ProjectPage() {
     setGenerationStage("running");
     setGenerationPercent(1);
     setGenerationMessage("Iniciando generacion...");
+    setGenerationDevice(null);
 
     const result = await desktopApi.runGeneration({
       projectId: project.id,
@@ -258,6 +289,13 @@ export function ProjectPage() {
                 <Button variant="primary" onClick={() => void handleRunGeneration()} disabled={selectedImages.length === 0 || isGenerating}>
                   Generar 3D
                 </Button>
+                <span className="inline-flex h-10 items-center rounded-full border border-[var(--border)] bg-[var(--surface-2)] px-3 text-xs text-[var(--text-muted)]">
+                  {generationDevice
+                    ? generationDevice.device === "cuda"
+                      ? `GPU: ${shortDeviceName(generationDevice.name)}`
+                      : "CPU"
+                    : "Detectando..."}
+                </span>
                 <Button variant="ghost" onClick={() => void handleCancelGeneration()} disabled={!isGenerating}>
                   Cancelar
                 </Button>

@@ -169,11 +169,18 @@ export type GenerationProgressPayload = {
   message: string;
 };
 
+export type GenerationDevice = {
+  device: "cuda" | "cpu";
+  name: string;
+};
+
 export type GenerationDonePayload = {
   projectId: string;
   glbPath: string;
+  outGlbPath?: string;
   sourceImages?: string[];
   preset?: GenerationPreset;
+  device?: GenerationDevice;
 };
 
 export type GenerationErrorPayload = {

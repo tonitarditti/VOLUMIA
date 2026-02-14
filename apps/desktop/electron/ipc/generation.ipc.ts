@@ -6,6 +6,7 @@ import { basename, extname, resolve } from "path";
 import {
   IPC_CHANNELS,
   type GenerationCheckResult,
+  type GenerationDevice,
   type GenerationDonePayload,
   type GenerationErrorPayload,
   type GenerationProgressPayload,
@@ -26,6 +27,7 @@ type LocalGenerationResult = {
   logs: string[];
   error?: string;
   outGlbPath?: string;
+  device?: GenerationDevice;
 };
 
 const PYTHON = "F:\\MINICONDA\\envs\\volumia\\python.exe";
@@ -195,6 +197,19 @@ function parseProgressLine(rawLine: string) {
   }
 }
 
+function parseDeviceLine(rawLine: string): GenerationDevice | null {
+  const line = rawLine.trim();
+  const match = line.match(/^\[VOLUMIA_DEVICE\]\s+device=(cuda|cpu)\s+index=-?\d+\s+name="([^"]*)"$/);
+  if (!match) {
+    return null;
+  }
+
+  return {
+    device: match[1] as "cuda" | "cpu",
+    name: match[2],
+  };
+}
+
 async function runLocalPythonGeneration(
   payload: GenerationRunPayload,
   imagePath: string,
@@ -203,6 +218,7 @@ async function runLocalPythonGeneration(
   scriptPath: string
 ): Promise<LocalGenerationResult> {
   const logs: string[] = [];
+  let device: GenerationDevice | undefined;
 
   try {
     const assetsDir = ensureAssetsDir();
@@ -246,6 +262,17 @@ async function runLocalPythonGeneration(
     }
 
     for (const line of stdout.split(/\r?\n/)) {
+      const parsedDevice = parseDeviceLine(line);
+      if (parsedDevice) {
+        device = parsedDevice;
+        sendProgress(getWindow, {
+          projectId: payload.projectId,
+          stage: "infer",
+          percent: 56,
+          message: line.trim(),
+        });
+      }
+
       const parsedProgress = parseProgressLine(line);
       if (parsedProgress) {
         sendProgress(getWindow, {
@@ -285,6 +312,7 @@ async function runLocalPythonGeneration(
       ok: true,
       logs,
       outGlbPath: outGlb,
+      device,
     };
   } catch (error) {
     return {
@@ -399,8 +427,10 @@ async function runGenerationJob(payload: GenerationRunPayload, getWindow: Window
   sendDone(getWindow, {
     projectId,
     glbPath: localResult.outGlbPath,
+    outGlbPath: localResult.outGlbPath,
     sourceImages: copiedImages,
     preset: payload.preset,
+    device: localResult.device,
   });
 }
 

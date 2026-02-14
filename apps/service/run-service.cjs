@@ -7,8 +7,6 @@ const serviceEntry = path.resolve(__dirname, "main.py");
 
 const candidates = [
   process.env.VOLUMIA_PYTHON_BIN,
-  path.join(repoRoot, ".venv", "Scripts", "python.exe"),
-  path.join(repoRoot, ".venv", "bin", "python"),
   "python",
 ].filter(Boolean);
 

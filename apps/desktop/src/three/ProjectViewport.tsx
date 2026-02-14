@@ -39,6 +39,7 @@ type LoadedModelProps = {
 type ViewportTheme = "light" | "dark";
 
 type ViewportThemeConfig = {
+  isDark: boolean;
   background: string;
   ground: string;
   gridMain: string;
@@ -249,6 +250,7 @@ function resolveViewportTheme(theme: string | undefined): ViewportTheme {
 function getViewportThemeConfig(theme: ViewportTheme): ViewportThemeConfig {
   if (theme === "light") {
     return {
+      isDark: false,
       background: "#f0ebe3",
       ground: "#bfb7ac",
       gridMain: "#6a6358",
@@ -264,6 +266,7 @@ function getViewportThemeConfig(theme: ViewportTheme): ViewportThemeConfig {
   }
 
   return {
+    isDark: true,
     background: "#2b2926",
     ground: "#4a4640",
     gridMain: "#6a6358",
@@ -367,13 +370,15 @@ export function ProjectViewport({ glbPath, glbVersion }: ProjectViewportProps) {
   const canRenderCanvas = size.width >= 10 && size.height >= 10;
   const viewportTheme = resolveViewportTheme(resolvedTheme);
   const themeConfig = getViewportThemeConfig(viewportTheme);
+  const bgClass = themeConfig.isDark
+    ? "bg-[#2b2926]"
+    : "bg-[#f0ebe3]";
 
   return (
     <div className="relative w-full">
       <div
         ref={hostRef}
-        className="relative w-full min-h-[260px] overflow-hidden rounded-xl border border-[var(--border)] shadow-[var(--shadow)] aspect-[16/9]"
-        style={{ backgroundColor: themeConfig.background }}
+        className={`relative w-full min-h-[260px] overflow-hidden rounded-xl border border-[var(--border)] shadow-[var(--shadow)] aspect-[16/9] ${bgClass}`}
       >
         <div className="pointer-events-none absolute left-3 top-3 z-10 rounded-md border border-[var(--border)] bg-[var(--surface-1)] px-2 py-1 text-[10px] uppercase tracking-[0.16em] text-[var(--text-muted)]">
           {t("project.viewport")}
@@ -382,52 +387,55 @@ export function ProjectViewport({ glbPath, glbVersion }: ProjectViewportProps) {
           {t("project.viewportHint")}
         </div>
         {canRenderCanvas ? (
-          <Canvas
-            key={`viewport-aa-${settings.antialias}-fps-${settings.fpsLimit}`}
-            className="absolute inset-0 block !h-full !w-full"
-            camera={{ position: [8, 6, 8], fov: 48, near: 0.1, far: 200 }}
-            dpr={[1, 2]}
-            frameloop="demand"
-            gl={{ antialias: settings.antialias, alpha: false }}
-          >
-            <ViewportResizeSync width={size.width} height={size.height} />
-            <SceneRendererSetup
-              theme={viewportTheme}
-              background={themeConfig.background}
-              exposure={themeConfig.exposure}
-            />
-            <FrameLimiter fpsLimit={settings.fpsLimit} />
-            <color attach="background" args={[themeConfig.background]} />
-            <ambientLight intensity={themeConfig.ambientIntensity} color="#efe5d5" />
-            <hemisphereLight args={["#f2e8d8", "#7f7468", themeConfig.hemisphereIntensity]} />
-            <directionalLight
-              intensity={themeConfig.keyIntensity}
-              color="#f8f0e3"
-              position={[5, 10, 5]}
-              castShadow
-              shadow-mapSize-width={1024}
-              shadow-mapSize-height={1024}
-            />
-            <directionalLight
-              intensity={themeConfig.fillIntensity}
-              color="#ece2d1"
-              position={[-6, 6, -4]}
-            />
-            <SceneMassing
-              showMassing={!glbPath}
-              groundColor={themeConfig.ground}
-              gridMain={themeConfig.gridMain}
-              gridSub={themeConfig.gridSub}
-              gridOpacity={themeConfig.gridOpacity}
-            />
-            <LoadedModel
-              glbPath={glbPath}
-              glbVersion={glbVersion}
-              controlsRef={controlsRef}
-              envMapIntensity={themeConfig.envMapIntensity}
-            />
-            <OrbitControls ref={controlsRef} makeDefault target={[0, 1.5, 0]} enableDamping dampingFactor={0.08} />
-          </Canvas>
+          <div className="absolute inset-0">
+            <Canvas
+              key={`viewport-aa-${settings.antialias}-fps-${settings.fpsLimit}`}
+              className="block !h-full !w-full"
+              style={{ display: "block" }}
+              camera={{ position: [8, 6, 8], fov: 48, near: 0.1, far: 200 }}
+              dpr={[1, 2]}
+              frameloop="demand"
+              gl={{ antialias: settings.antialias, alpha: false }}
+            >
+              <ViewportResizeSync width={size.width} height={size.height} />
+              <SceneRendererSetup
+                theme={viewportTheme}
+                background={themeConfig.background}
+                exposure={themeConfig.exposure}
+              />
+              <FrameLimiter fpsLimit={settings.fpsLimit} />
+              <color attach="background" args={[themeConfig.background]} />
+              <ambientLight intensity={themeConfig.ambientIntensity} color="#efe5d5" />
+              <hemisphereLight args={["#f2e8d8", "#7f7468", themeConfig.hemisphereIntensity]} />
+              <directionalLight
+                intensity={themeConfig.keyIntensity}
+                color="#f8f0e3"
+                position={[5, 10, 5]}
+                castShadow
+                shadow-mapSize-width={1024}
+                shadow-mapSize-height={1024}
+              />
+              <directionalLight
+                intensity={themeConfig.fillIntensity}
+                color="#ece2d1"
+                position={[-6, 6, -4]}
+              />
+              <SceneMassing
+                showMassing={!glbPath}
+                groundColor={themeConfig.ground}
+                gridMain={themeConfig.gridMain}
+                gridSub={themeConfig.gridSub}
+                gridOpacity={themeConfig.gridOpacity}
+              />
+              <LoadedModel
+                glbPath={glbPath}
+                glbVersion={glbVersion}
+                controlsRef={controlsRef}
+                envMapIntensity={themeConfig.envMapIntensity}
+              />
+              <OrbitControls ref={controlsRef} makeDefault target={[0, 1.5, 0]} enableDamping dampingFactor={0.08} />
+            </Canvas>
+          </div>
         ) : null}
       </div>
     </div>

@@ -3,10 +3,9 @@ import argparse
 import os
 import sys
 import traceback
-from typing import Tuple
 
-import numpy as np
-from PIL import Image
+from _bootstrap import ensure_cache_dirs, ensure_packages, get_cache_root
+from _models import get_depth_model
 
 print("VOLUMIA PYTHON PATH:", sys.executable)
 
@@ -19,7 +18,14 @@ def log_error(message: str) -> None:
     print(message, file=sys.stderr, flush=True)
 
 
-def robust_normalize(depth: np.ndarray) -> Tuple[np.ndarray, float, float, float, float]:
+def emit_progress(stage: str, percent: int, message: str) -> None:
+    print(
+        f'{{"stage":"{stage}","percent":{max(0, min(100, int(percent)))},"message":"{message}"}}',
+        flush=True,
+    )
+
+
+def robust_normalize(depth):
     finite = np.isfinite(depth)
     if not np.any(finite):
         raise RuntimeError("Depth map has no finite values")
@@ -38,80 +44,29 @@ def robust_normalize(depth: np.ndarray) -> Tuple[np.ndarray, float, float, float
     return normalized.astype(np.float32), dmin, dmax, p2, p98
 
 
-def infer_depth_with_transformers(image: Image.Image, device: str) -> np.ndarray:
-    import torch
-    from transformers import pipeline
-
-    hf_device = 0 if device == "cuda" and torch.cuda.is_available() else -1
-    estimator = pipeline(
-        task="depth-estimation",
-        model="LiheYoung/depth-anything-small-hf",
-        device=hf_device,
-    )
-    result = estimator(image)
-
-    if "predicted_depth" in result:
-        tensor = result["predicted_depth"]
-        if hasattr(tensor, "detach"):
-            depth = tensor.detach().cpu().numpy()
+def depth_to_numpy(result):
+    if isinstance(result, dict):
+        predicted_depth = result.get("predicted_depth")
+        if predicted_depth is not None and hasattr(predicted_depth, "detach"):
+            depth = predicted_depth.detach().cpu().numpy()
             if depth.ndim == 3:
                 depth = depth[0]
             return depth.astype(np.float32)
 
-    depth_image = result.get("depth")
-    if depth_image is None:
-        raise RuntimeError("Transformers depth-estimation returned no depth output")
+        depth_image = result.get("depth")
+        if depth_image is not None:
+            return np.asarray(depth_image, dtype=np.float32)
 
-    return np.asarray(depth_image, dtype=np.float32)
+    if hasattr(result, "detach"):
+        depth = result.detach().cpu().numpy()
+        if depth.ndim == 3:
+            depth = depth[0]
+        return depth.astype(np.float32)
 
-
-def infer_depth_with_midas(image: Image.Image, device: str) -> np.ndarray:
-    import torch
-
-    model_type = "MiDaS_small"
-    model = torch.hub.load("intel-isl/MiDaS", model_type)
-    transforms = torch.hub.load("intel-isl/MiDaS", "transforms")
-    transform = transforms.small_transform
-
-    target_device = "cuda" if device == "cuda" and torch.cuda.is_available() else "cpu"
-    model.to(target_device)
-    model.eval()
-
-    image_np = np.asarray(image, dtype=np.uint8)
-    input_batch = transform(image_np).to(target_device)
-
-    with torch.no_grad():
-        prediction = model(input_batch)
-        prediction = torch.nn.functional.interpolate(
-            prediction.unsqueeze(1),
-            size=image_np.shape[:2],
-            mode="bicubic",
-            align_corners=False,
-        ).squeeze()
-
-    return prediction.cpu().numpy().astype(np.float32)
+    raise RuntimeError("Depth model produced unsupported output format")
 
 
-def estimate_depth(image: Image.Image, device: str) -> np.ndarray:
-    try:
-        log("[depth] using transformers depth-anything")
-        return infer_depth_with_transformers(image, device)
-    except Exception as first_error:
-        log_error(f"[depth] transformers failed: {first_error}")
-
-    try:
-        log("[depth] fallback to torchhub MiDaS")
-        return infer_depth_with_midas(image, device)
-    except Exception as second_error:
-        log_error(f"[depth] MiDaS failed: {second_error}")
-        raise RuntimeError("Depth inference failed with both transformers and MiDaS")
-
-
-def create_point_cloud(
-    depth: np.ndarray,
-    rgb: np.ndarray,
-    quality: str,
-) -> Tuple[np.ndarray, np.ndarray, float, float, float]:
+def create_point_cloud(depth, rgb, quality: str):
     if quality == "fast":
         step = 4
     elif quality == "balanced":
@@ -139,7 +94,7 @@ def create_point_cloud(
     return points, colors, float(focal), float(cx), float(cy)
 
 
-def reconstruct_mesh(points: np.ndarray, colors: np.ndarray, quality: str):
+def reconstruct_mesh(points, colors, quality: str):
     import open3d as o3d
 
     pcd = o3d.geometry.PointCloud()
@@ -176,7 +131,7 @@ def reconstruct_mesh(points: np.ndarray, colors: np.ndarray, quality: str):
     return mesh
 
 
-def colorize_mesh_vertices(mesh, rgb: np.ndarray, focal: float, cx: float, cy: float) -> None:
+def colorize_mesh_vertices(mesh, rgb, focal: float, cx: float, cy: float) -> None:
     import open3d as o3d
 
     vertices = np.asarray(mesh.vertices)
@@ -197,7 +152,7 @@ def colorize_mesh_vertices(mesh, rgb: np.ndarray, focal: float, cx: float, cy: f
     mesh.vertex_colors = o3d.utility.Vector3dVector(vertex_colors)
 
 
-def export_glb(mesh, out_path: str) -> Tuple[int, int, int]:
+def export_glb(mesh, out_path: str):
     import trimesh
 
     vertices = np.asarray(mesh.vertices)
@@ -232,18 +187,6 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def prepare_model_cache(models_dir: str) -> None:
-    os.makedirs(models_dir, exist_ok=True)
-    hf_dir = os.path.join(models_dir, "hf")
-    torch_dir = os.path.join(models_dir, "torch")
-    os.makedirs(hf_dir, exist_ok=True)
-    os.makedirs(torch_dir, exist_ok=True)
-
-    os.environ["HF_HOME"] = models_dir
-    os.environ["TRANSFORMERS_CACHE"] = hf_dir
-    os.environ["TORCH_HOME"] = torch_dir
-
-
 def main() -> int:
     args = parse_args()
 
@@ -256,38 +199,75 @@ def main() -> int:
         log_error(f"Input image does not exist: {in_path}")
         return 1
 
-    models_dir = args.models_dir.strip() or os.path.join(os.path.dirname(out_dir), "models")
-    models_dir = os.path.abspath(models_dir)
-    prepare_model_cache(models_dir)
-
     try:
-        import torch
+        cache_root = get_cache_root()
+    except Exception as error:
+        log_error(str(error))
+        return 1
 
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-    except Exception:
-        device = "cpu"
+    cache_dirs = ensure_cache_dirs(cache_root)
+    models_dir = os.path.abspath(args.models_dir.strip() or cache_dirs["models"])
+    os.makedirs(models_dir, exist_ok=True)
+    os.environ["HF_HOME"] = models_dir
+    os.environ["TRANSFORMERS_CACHE"] = models_dir
+    os.environ["TORCH_HOME"] = models_dir
+    os.environ["PIP_CACHE_DIR"] = cache_dirs["pip"]
+
+    emit_progress("preprocess", 5, "Bootstrap de dependencias")
+    try:
+        ensure_packages([
+            "numpy",
+            "pillow",
+            "opencv-python",
+            "trimesh",
+            "open3d",
+            "pygltflib",
+            "torch",
+            "torchvision",
+            "transformers",
+            "accelerate",
+            "safetensors",
+            "huggingface_hub",
+        ])
+    except Exception as error:
+        log_error(f"[BOOT] failed: {error}")
+        return 1
+
+    global np
+    global Image
+    import numpy as np
+    from PIL import Image
 
     log(f"in: {in_path}")
     log(f"out: {out_path}")
     log(f"quality: {args.quality}")
+    log(f"cache_root: {cache_root}")
     log(f"models_dir: {models_dir}")
-    log(f"device: {device}")
 
     try:
+        emit_progress("infer", 25, "Cargando modelo de profundidad")
+        depth_model = get_depth_model(cache_root)
+
         image = Image.open(in_path).convert("RGB")
         rgb = np.asarray(image, dtype=np.uint8)
 
-        depth_raw = estimate_depth(image, device)
+        emit_progress("infer", 60, "Ejecutando inferencia de profundidad")
+        depth_result = depth_model(image)
+        depth_raw = depth_to_numpy(depth_result)
+
         depth, dmin, dmax, p2, p98 = robust_normalize(depth_raw)
         log(f"depth stats: min={dmin:.6f} max={dmax:.6f} p2={p2:.6f} p98={p98:.6f}")
 
+        emit_progress("mesh", 80, "Reconstruyendo malla")
         points, colors, focal, cx, cy = create_point_cloud(depth, rgb, args.quality)
         mesh = reconstruct_mesh(points, colors, args.quality)
         colorize_mesh_vertices(mesh, rgb, focal, cx, cy)
 
+        emit_progress("export", 92, "Exportando GLB")
         vertex_count, face_count, glb_size = export_glb(mesh, out_path)
         log(f"mesh: vertices={vertex_count} faces={face_count}")
         log(f"glb size bytes: {glb_size}")
+        log(f"OUT_SIZE_BYTES={glb_size}")
 
         if not os.path.exists(out_path):
             log_error(f"GLB not created: {out_path}")
@@ -297,6 +277,7 @@ def main() -> int:
             log_error(f"GLB too small ({glb_size} bytes): {out_path}")
             return 1
 
+        emit_progress("done", 100, "Modelo 3D listo")
         return 0
     except Exception as error:
         log_error(f"image_to_3d failed: {error}")
