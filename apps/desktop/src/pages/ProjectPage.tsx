@@ -167,6 +167,7 @@ export function ProjectPage() {
       return;
     }
 
+    console.log("[gen][renderer] selected:", picked.length, picked[0] ?? "");
     setSelectedImages(picked);
     setGenerationMessage(`${picked.length} imagen(es) seleccionada(s).`);
   };
@@ -181,7 +182,7 @@ export function ProjectPage() {
     }
 
     setIsGenerating(true);
-    setGenerationStage("queue");
+    setGenerationStage("running");
     setGenerationPercent(1);
     setGenerationMessage("Iniciando generacion...");
 
@@ -214,6 +215,14 @@ export function ProjectPage() {
     setIsGenerating(false);
     setGenerationStage("cancelled");
     setGenerationMessage("Cancelando generacion...");
+  };
+
+  const handleOpenOutputFolder = async () => {
+    if (!hasDesktopBridge() || !project.model?.glbPath) {
+      return;
+    }
+
+    await desktopApi.openGenerationOutputFolder(project.model.glbPath);
   };
 
   return (
@@ -251,6 +260,9 @@ export function ProjectPage() {
                 </Button>
                 <Button variant="ghost" onClick={() => void handleCancelGeneration()} disabled={!isGenerating}>
                   Cancelar
+                </Button>
+                <Button variant="secondary" onClick={() => void handleOpenOutputFolder()} disabled={!project.model?.glbPath}>
+                  Abrir carpeta de salida
                 </Button>
               </div>
 

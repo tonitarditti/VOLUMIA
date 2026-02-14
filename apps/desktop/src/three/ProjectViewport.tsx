@@ -27,20 +27,6 @@ type LoadedModelProps = {
   controlsRef: { current: OrbitControlsImpl | null };
 };
 
-function toFileUrl(filePath: string) {
-  const normalized = filePath.replace(/\\/g, "/");
-
-  if (/^[a-zA-Z]:\//.test(normalized)) {
-    return `file:///${normalized}`;
-  }
-
-  if (normalized.startsWith("/")) {
-    return `file://${normalized}`;
-  }
-
-  return `file://${normalized}`;
-}
-
 function fitCameraToObject(
   camera: THREE.Camera,
   object: THREE.Object3D,
@@ -91,24 +77,46 @@ function LoadedModel({ glbPath, controlsRef }: LoadedModelProps) {
 
     const loader = new GLTFLoader();
     let active = true;
+    const readGlb = (window as { volumia?: { generation?: { readGlb?: (path: string) => Promise<ArrayBuffer | Uint8Array> } } }).volumia?.generation?.readGlb;
 
-    loader.load(
-      toFileUrl(glbPath),
-      (gltf) => {
+    if (!readGlb) {
+      return;
+    }
+
+    void (async () => {
+      try {
+        console.log("[glb] path", glbPath);
+        const buffer = await readGlb(glbPath);
+        const source = buffer instanceof ArrayBuffer ? new Uint8Array(buffer) : buffer;
+        const bytes = new Uint8Array(source.byteLength);
+        bytes.set(source);
+        const arrayBuffer = bytes.buffer;
+        console.log("[glb] bytes", arrayBuffer.byteLength);
+        loader.parse(
+          arrayBuffer,
+          "",
+          (gltf) => {
+            if (!active) return;
+            const model = gltf.scene ?? gltf.scenes[0];
+            if (!model) return;
+            scene.add(model);
+            modelRef.current = model;
+            fitCameraToObject(camera, model, controlsRef);
+            console.log("[glb] loaded", true);
+            invalidate();
+          },
+          (error) => {
+            if (!active) return;
+            console.error("GLB parse error", error);
+            invalidate();
+          }
+        );
+      } catch (error) {
         if (!active) return;
-        const model = gltf.scene ?? gltf.scenes[0];
-        if (!model) return;
-        scene.add(model);
-        modelRef.current = model;
-        fitCameraToObject(camera, model, controlsRef);
-        invalidate();
-      },
-      undefined,
-      () => {
-        if (!active) return;
+        console.error("GLB parse error", error);
         invalidate();
       }
-    );
+    })();
 
     return () => {
       active = false;

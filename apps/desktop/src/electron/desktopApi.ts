@@ -8,9 +8,11 @@ import {
   type SettingsExportEnvelope,
   type GenerationDonePayload,
   type GenerationErrorPayload,
+  type GenerationCheckResult,
   type GenerationProgressPayload,
   type GenerationRunPayload,
   type GenerationRunResult,
+  type GenerationTestResult,
   type Theme,
   type WindowModePayload,
   type WindowStateSnapshot,
@@ -40,6 +42,9 @@ export type VolumiaGenerationBridge = {
   selectImages: () => Promise<string[]>;
   run: (payload: GenerationRunPayload) => Promise<GenerationRunResult>;
   cancel: (projectId: string) => Promise<void>;
+  check: () => Promise<GenerationCheckResult>;
+  test: () => Promise<GenerationTestResult>;
+  openOutputFolder: (glbPath: string) => Promise<{ ok: boolean; path: string; error?: string }>;
   onProgress: (callback: (payload: GenerationProgressPayload) => void) => void;
   offProgress: (callback: (payload: GenerationProgressPayload) => void) => void;
   onDone: (callback: (payload: GenerationDonePayload) => void) => void;
@@ -120,6 +125,9 @@ function ensureGenerationBridge(): VolumiaGenerationBridge {
     !generation?.selectImages ||
     !generation.run ||
     !generation.cancel ||
+    !generation.check ||
+    !generation.test ||
+    !generation.openOutputFolder ||
     !generation.onProgress ||
     !generation.offProgress ||
     !generation.onDone ||
@@ -189,6 +197,15 @@ export const desktopApi = {
   },
   cancelGeneration(projectId: string): Promise<void> {
     return ensureGenerationBridge().cancel(projectId);
+  },
+  checkLocalGenerator(): Promise<GenerationCheckResult> {
+    return ensureGenerationBridge().check();
+  },
+  runLocalGeneratorTest(): Promise<GenerationTestResult> {
+    return ensureGenerationBridge().test();
+  },
+  openGenerationOutputFolder(glbPath: string): Promise<{ ok: boolean; path: string; error?: string }> {
+    return ensureGenerationBridge().openOutputFolder(glbPath);
   },
   onGenerationProgress(callback: (payload: GenerationProgressPayload) => void): () => void {
     const generation = ensureGenerationBridge();

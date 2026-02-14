@@ -1,29 +1,49 @@
-import { app, dialog, ipcMain, type BrowserWindow } from "electron";
-import { copyFile, mkdir, writeFile } from "fs/promises";
+import { app, dialog, ipcMain, shell, type BrowserWindow } from "electron";
+import { spawn, spawnSync, type ChildProcess } from "child_process";
+import { createInterface } from "readline";
+import { copyFile } from "fs/promises";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync } from "fs";
 import { basename, extname, join, resolve } from "path";
 import {
   IPC_CHANNELS,
+  type GenerationCheckResult,
   type GenerationDonePayload,
   type GenerationErrorPayload,
-  type GenerationPreset,
   type GenerationProgressPayload,
+  type GenerationPreset,
   type GenerationRunPayload,
   type GenerationRunResult,
+  type GenerationTestResult,
 } from "../channels";
 
 type WindowGetter = () => BrowserWindow | null;
 type GenerationJobState = {
   canceled: boolean;
+  process: ChildProcess | null;
+};
+
+type PythonCommand = {
+  command: string;
+  prefixArgs: string[];
+  label: string;
+};
+
+type GeneratorRuntime = {
+  scriptPath?: string;
+  pythonCommand?: PythonCommand;
+  venvPath?: string;
+  logs: string[];
+};
+
+type LocalGenerationResult = {
+  ok: boolean;
+  logs: string[];
+  error?: string;
 };
 
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp"]);
 const activeJobs = new Map<string, GenerationJobState>();
-
-function wait(ms: number) {
-  return new Promise<void>((resolvePromise) => {
-    setTimeout(resolvePromise, ms);
-  });
-}
+const latestOutputByProject = new Map<string, string>();
 
 function sanitizeProjectId(projectId: string) {
   const safe = projectId.replace(/[^a-zA-Z0-9_-]/g, "_");
@@ -63,85 +83,300 @@ function sendError(getWindow: WindowGetter, payload: GenerationErrorPayload) {
   window.webContents.send(IPC_CHANNELS.generationError, payload);
 }
 
-function createPlaceholderGlbBuffer() {
-  const positions = Buffer.from(
-    new Float32Array([-0.6, 0, 0.6, 0.6, 0, 0.6, 0, 1.1, 0]).buffer
-  );
-  const indices = Buffer.from(new Uint16Array([0, 1, 2]).buffer);
-  const binaryChunk = Buffer.concat([positions, indices, Buffer.from([0, 0])]);
+function resolveGeneratorScriptPath() {
+  const candidates = [
+    resolve(process.cwd(), "tools", "local_generator", "run_triposr.py"),
+    resolve(process.cwd(), "..", "..", "tools", "local_generator", "run_triposr.py"),
+    resolve(app.getAppPath(), "tools", "local_generator", "run_triposr.py"),
+    resolve(app.getAppPath(), "..", "..", "tools", "local_generator", "run_triposr.py"),
+    resolve(process.resourcesPath, "tools", "local_generator", "run_triposr.py"),
+    resolve(process.resourcesPath, "app.asar.unpacked", "tools", "local_generator", "run_triposr.py"),
+  ];
 
-  const gltf = {
-    asset: {
-      version: "2.0",
-      generator: "VOLUMIA Placeholder Generator",
-    },
-    scene: 0,
-    scenes: [{ nodes: [0] }],
-    nodes: [{ mesh: 0 }],
-    meshes: [
-      {
-        primitives: [{ attributes: { POSITION: 0 }, indices: 1 }],
-      },
-    ],
-    buffers: [{ byteLength: binaryChunk.length }],
-    bufferViews: [
-      { buffer: 0, byteOffset: 0, byteLength: positions.length, target: 34962 },
-      { buffer: 0, byteOffset: positions.length, byteLength: indices.length, target: 34963 },
-    ],
-    accessors: [
-      {
-        bufferView: 0,
-        componentType: 5126,
-        count: 3,
-        type: "VEC3",
-        min: [-0.6, 0, 0],
-        max: [0.6, 1.1, 0.6],
-      },
-      {
-        bufferView: 1,
-        componentType: 5123,
-        count: 3,
-        type: "SCALAR",
-      },
-    ],
+  return candidates.find((candidate) => existsSync(candidate));
+}
+
+function resolveSampleImagePath(scriptPath?: string) {
+  const candidates = [
+    scriptPath ? resolve(scriptPath, "..", "sample.jpg") : "",
+    resolve(process.cwd(), "tools", "local_generator", "sample.jpg"),
+    resolve(process.cwd(), "..", "..", "tools", "local_generator", "sample.jpg"),
+    resolve(app.getAppPath(), "tools", "local_generator", "sample.jpg"),
+    resolve(app.getAppPath(), "..", "..", "tools", "local_generator", "sample.jpg"),
+    resolve(process.resourcesPath, "tools", "local_generator", "sample.jpg"),
+    resolve(process.resourcesPath, "app.asar.unpacked", "tools", "local_generator", "sample.jpg"),
+  ].filter(Boolean);
+
+  return candidates.find((candidate) => existsSync(candidate));
+}
+
+function resolveTemplateGlbPath() {
+  const candidates = [
+    join(process.cwd(), "apps", "desktop", "assets", "templates", "box.glb"),
+    join(process.cwd(), "assets", "templates", "box.glb"),
+    join(app.getAppPath(), "assets", "templates", "box.glb"),
+    join(process.resourcesPath, "assets", "templates", "box.glb"),
+    join(process.resourcesPath, "app.asar.unpacked", "assets", "templates", "box.glb"),
+  ];
+
+  return candidates.find((candidate) => existsSync(candidate));
+}
+
+function inferVenvPath(pythonPath: string) {
+  const normalized = pythonPath.replace(/\\/g, "/").toLowerCase();
+
+  if (normalized.endsWith("/scripts/python.exe")) {
+    return resolve(pythonPath, "..", "..");
+  }
+
+  if (normalized.endsWith("/bin/python") || normalized.endsWith("/bin/python3")) {
+    return resolve(pythonPath, "..", "..");
+  }
+
+  return undefined;
+}
+
+function detectPythonCommand() {
+  const logs: string[] = [];
+  const envPython = process.env.VOLUMIA_PYTHON_PATH?.trim();
+
+  const candidates: PythonCommand[] = [];
+
+  if (envPython) {
+    candidates.push({ command: envPython, prefixArgs: [], label: envPython });
+  }
+
+  candidates.push({ command: "python", prefixArgs: [], label: "python" });
+
+  if (process.platform === "win32") {
+    candidates.push({ command: "py", prefixArgs: ["-3"], label: "py -3" });
+  }
+
+  for (const candidate of candidates) {
+    const result = spawnSync(candidate.command, [...candidate.prefixArgs, "--version"], {
+      encoding: "utf-8",
+      timeout: 8_000,
+    });
+
+    if (result.error) {
+      logs.push(`${candidate.label}: ${result.error.message}`);
+      continue;
+    }
+
+    if (result.status !== 0) {
+      const output = `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
+      logs.push(`${candidate.label}: ${output || `exit ${result.status}`}`);
+      continue;
+    }
+
+    const versionOutput = `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
+    logs.push(`${candidate.label}: ${versionOutput || "ok"}`);
+
+    return {
+      command: candidate,
+      logs,
+      venvPath: inferVenvPath(candidate.command),
+    };
+  }
+
+  return { logs };
+}
+
+function resolveGeneratorRuntime(): GeneratorRuntime {
+  const logs: string[] = [];
+  const scriptPath = resolveGeneratorScriptPath();
+  const python = detectPythonCommand();
+
+  if (scriptPath) {
+    logs.push(`script: ${scriptPath}`);
+  } else {
+    logs.push("script: not found");
+  }
+
+  logs.push(...python.logs);
+
+  return {
+    scriptPath,
+    pythonCommand: python.command,
+    venvPath: python.venvPath,
+    logs,
   };
+}
 
-  const jsonBufferRaw = Buffer.from(JSON.stringify(gltf), "utf-8");
-  const jsonPadding = (4 - (jsonBufferRaw.length % 4)) % 4;
-  const jsonBuffer =
-    jsonPadding === 0 ? jsonBufferRaw : Buffer.concat([jsonBufferRaw, Buffer.alloc(jsonPadding, 0x20)]);
+function parseProgressLine(rawLine: string) {
+  const line = rawLine.trim();
+  if (!line.startsWith("{")) {
+    return null;
+  }
 
-  const binaryPadding = (4 - (binaryChunk.length % 4)) % 4;
-  const paddedBinaryChunk =
-    binaryPadding === 0 ? binaryChunk : Buffer.concat([binaryChunk, Buffer.alloc(binaryPadding, 0)]);
+  try {
+    const parsed = JSON.parse(line) as {
+      stage?: unknown;
+      percent?: unknown;
+      message?: unknown;
+    };
 
-  const totalLength = 12 + 8 + jsonBuffer.length + 8 + paddedBinaryChunk.length;
-  const header = Buffer.alloc(12);
-  header.writeUInt32LE(0x46546c67, 0);
-  header.writeUInt32LE(2, 4);
-  header.writeUInt32LE(totalLength, 8);
+    if (typeof parsed.stage !== "string" || typeof parsed.message !== "string") {
+      return null;
+    }
 
-  const jsonChunkHeader = Buffer.alloc(8);
-  jsonChunkHeader.writeUInt32LE(jsonBuffer.length, 0);
-  jsonChunkHeader.writeUInt32LE(0x4e4f534a, 4);
+    const numericPercent =
+      typeof parsed.percent === "number" ? parsed.percent : Number.parseFloat(String(parsed.percent ?? ""));
 
-  const binaryChunkHeader = Buffer.alloc(8);
-  binaryChunkHeader.writeUInt32LE(paddedBinaryChunk.length, 0);
-  binaryChunkHeader.writeUInt32LE(0x004e4942, 4);
+    if (!Number.isFinite(numericPercent)) {
+      return null;
+    }
 
-  return Buffer.concat([header, jsonChunkHeader, jsonBuffer, binaryChunkHeader, paddedBinaryChunk]);
+    return {
+      stage: parsed.stage,
+      percent: Math.max(0, Math.min(100, Math.round(numericPercent))),
+      message: parsed.message,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function runLocalPythonGeneration(
+  payload: GenerationRunPayload,
+  imagePath: string,
+  outGlbPath: string,
+  job: GenerationJobState,
+  getWindow: WindowGetter,
+  runtime: Required<Pick<GeneratorRuntime, "scriptPath" | "pythonCommand">>
+): Promise<LocalGenerationResult> {
+  const args = [
+    ...runtime.pythonCommand.prefixArgs,
+    runtime.scriptPath,
+    "--out_glb",
+    outGlbPath,
+    "--image",
+    imagePath,
+    "--preset",
+    payload.preset,
+    "--device",
+    "cuda",
+  ];
+
+  return new Promise<LocalGenerationResult>((resolvePromise) => {
+    const logs: string[] = [];
+    let settled = false;
+
+    const finish = (result: LocalGenerationResult) => {
+      if (settled) return;
+      settled = true;
+      job.process = null;
+      resolvePromise(result);
+    };
+
+    const child = spawn(runtime.pythonCommand.command, args, {
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    job.process = child;
+
+    const stdoutInterface = createInterface({ input: child.stdout });
+    const stderrInterface = createInterface({ input: child.stderr });
+
+    stdoutInterface.on("line", (line) => {
+      if (!line.trim()) return;
+
+      logs.push(`[stdout] ${line}`);
+
+      const parsedProgress = parseProgressLine(line);
+      if (!parsedProgress) {
+        return;
+      }
+
+      sendProgress(getWindow, {
+        projectId: payload.projectId,
+        stage: parsedProgress.stage,
+        percent: parsedProgress.percent,
+        message: parsedProgress.message,
+      });
+    });
+
+    stderrInterface.on("line", (line) => {
+      if (!line.trim()) return;
+      logs.push(`[stderr] ${line}`);
+    });
+
+    child.once("error", (error) => {
+      finish({
+        ok: false,
+        logs,
+        error: `No se pudo iniciar Python: ${error.message}`,
+      });
+    });
+
+    child.once("close", (code, signal) => {
+      stdoutInterface.close();
+      stderrInterface.close();
+
+      if (job.canceled) {
+        finish({ ok: false, logs, error: "Generacion cancelada." });
+        return;
+      }
+
+      if (code === 0) {
+        if (!existsSync(outGlbPath)) {
+          finish({ ok: false, logs, error: "El generador local no produjo un archivo GLB." });
+          return;
+        }
+
+        const generatedStat = statSync(outGlbPath);
+        if (generatedStat.size < 10_000) {
+          finish({ ok: false, logs, error: "El GLB generado por Python es invalido (<10KB)." });
+          return;
+        }
+
+        finish({ ok: true, logs });
+        return;
+      }
+
+      const signalSuffix = signal ? ` (${signal})` : "";
+      finish({
+        ok: false,
+        logs,
+        error: `El generador local finalizo con codigo ${code ?? "desconocido"}${signalSuffix}.`,
+      });
+    });
+  });
+}
+
+async function copyFallbackGlb(outGlbPath: string) {
+  const templateGlbPath = resolveTemplateGlbPath();
+
+  if (!templateGlbPath) {
+    throw new Error("Fallback template GLB is missing at assets/templates/box.glb");
+  }
+
+  await copyFile(templateGlbPath, outGlbPath);
+
+  if (!existsSync(outGlbPath)) {
+    throw new Error("Failed to create result.glb");
+  }
+
+  const stat = statSync(outGlbPath);
+  if (stat.size < 10_000) {
+    throw new Error("Invalid fallback GLB");
+  }
 }
 
 async function runGenerationJob(payload: GenerationRunPayload, getWindow: WindowGetter, job: GenerationJobState) {
   const projectId = payload.projectId;
-  const safeProjectId = sanitizeProjectId(projectId);
-  const baseDir = join(app.getPath("userData"), "project-assets", safeProjectId);
+  const safeProjectId = sanitizeProjectId(payload.projectId);
+  const userDataPath = app.getPath("userData");
+  const baseDir = join(userDataPath, "project-assets", safeProjectId);
   const imagesDir = join(baseDir, "images");
   const outputDir = join(baseDir, "generated", String(Date.now()));
+  const outGlbPath = join(outputDir, "result.glb");
   const copiedImages: string[] = [];
 
-  await mkdir(imagesDir, { recursive: true });
-  await mkdir(outputDir, { recursive: true });
+  mkdirSync(imagesDir, { recursive: true });
+  mkdirSync(outputDir, { recursive: true });
+  console.log("[gen] userData:", userDataPath);
+  console.log("[gen] outGlb:", outGlbPath);
 
   sendProgress(getWindow, {
     projectId,
@@ -164,7 +399,7 @@ async function runGenerationJob(payload: GenerationRunPayload, getWindow: Window
 
     const filename = `${Date.now()}-${index + 1}-${basename(imagePath)}`;
     const targetPath = join(imagesDir, filename);
-    await copyFile(resolve(imagePath), targetPath);
+    copyFileSync(resolve(imagePath), targetPath);
     copiedImages.push(targetPath);
 
     const copyPercent = 10 + Math.round(((index + 1) / Math.max(1, payload.imagePaths.length)) * 35);
@@ -176,48 +411,103 @@ async function runGenerationJob(payload: GenerationRunPayload, getWindow: Window
     });
   }
 
-  if (job.canceled) {
-    sendError(getWindow, { projectId, message: "Generacion cancelada." });
-    return;
+  if (copiedImages.length === 0) {
+    throw new Error("No se encontraron imagenes validas para generar el modelo.");
   }
-
-  sendProgress(getWindow, {
-    projectId,
-    stage: "infer",
-    percent: 60,
-    message: "Generando geometria base...",
-  });
-  await wait(payload.preset === "quality" ? 850 : payload.preset === "balanced" ? 500 : 300);
 
   if (job.canceled) {
     sendError(getWindow, { projectId, message: "Generacion cancelada." });
     return;
   }
 
-  sendProgress(getWindow, {
-    projectId,
-    stage: "export",
-    percent: 90,
-    message: "Exportando GLB...",
-  });
+  const runtime = resolveGeneratorRuntime();
+  let usedFallback = false;
 
-  const glbPath = join(outputDir, "result.glb");
-  const glbBuffer = createPlaceholderGlbBuffer();
-  await writeFile(glbPath, glbBuffer);
+  if (runtime.pythonCommand && runtime.scriptPath) {
+    sendProgress(getWindow, {
+      projectId,
+      stage: "infer",
+      percent: 55,
+      message: "Ejecutando generador local...",
+    });
+
+    const localResult = await runLocalPythonGeneration(
+      payload,
+      copiedImages[0],
+      outGlbPath,
+      job,
+      getWindow,
+      { scriptPath: runtime.scriptPath, pythonCommand: runtime.pythonCommand }
+    );
+
+    if (!localResult.ok) {
+      if (job.canceled) {
+        sendError(getWindow, { projectId, message: "Generacion cancelada." });
+        return;
+      }
+
+      usedFallback = true;
+      sendProgress(getWindow, {
+        projectId,
+        stage: "infer",
+        percent: 70,
+        message: "Generador local no disponible, usando fallback GLB.",
+      });
+    }
+  } else {
+    usedFallback = true;
+    sendProgress(getWindow, {
+      projectId,
+      stage: "infer",
+      percent: 70,
+      message: "Generador local no detectado, usando fallback GLB.",
+    });
+  }
+
+  if (usedFallback) {
+    if (job.canceled) {
+      sendError(getWindow, { projectId, message: "Generacion cancelada." });
+      return;
+    }
+
+    sendProgress(getWindow, {
+      projectId,
+      stage: "export",
+      percent: 90,
+      message: "Exportando fallback GLB...",
+    });
+
+    await copyFallbackGlb(outGlbPath);
+  }
+
+  latestOutputByProject.set(projectId, outGlbPath);
 
   sendProgress(getWindow, {
     projectId,
     stage: "done",
     percent: 100,
-    message: "Modelo 3D listo.",
+    message: usedFallback ? "Modelo 3D listo (fallback)." : "Modelo 3D listo.",
   });
 
   sendDone(getWindow, {
     projectId,
-    glbPath,
+    glbPath: outGlbPath,
     sourceImages: copiedImages,
     preset: payload.preset,
   });
+}
+
+function buildGeneratorCheckResult(): GenerationCheckResult {
+  const runtime = resolveGeneratorRuntime();
+
+  return {
+    pythonFound: Boolean(runtime.pythonCommand),
+    pythonPath: runtime.pythonCommand?.label,
+    venvPath: runtime.venvPath,
+    scriptFound: Boolean(runtime.scriptPath),
+    scriptPath: runtime.scriptPath,
+    logs: runtime.logs,
+  };
 }
 
 export function registerGenerationHandlers(getWindow: WindowGetter) {
@@ -252,7 +542,7 @@ export function registerGenerationHandlers(getWindow: WindowGetter) {
       return { ok: false, error: "No valid images were selected." };
     }
 
-    const job: GenerationJobState = { canceled: false };
+    const job: GenerationJobState = { canceled: false, process: null };
     activeJobs.set(payload.projectId, job);
 
     void runGenerationJob(payload, getWindow, job)
@@ -277,6 +567,105 @@ export function registerGenerationHandlers(getWindow: WindowGetter) {
     const job = activeJobs.get(payload.projectId);
     if (job) {
       job.canceled = true;
+      if (job.process && !job.process.killed) {
+        job.process.kill();
+      }
     }
+  });
+
+  ipcMain.handle(IPC_CHANNELS.generationCheck, async () => {
+    return buildGeneratorCheckResult();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.generationTest, async (): Promise<GenerationTestResult> => {
+    const runtime = resolveGeneratorRuntime();
+
+    if (!runtime.scriptPath || !runtime.pythonCommand) {
+      return {
+        ok: false,
+        error: "No se encontro un generador local valido.",
+        logs: runtime.logs,
+      };
+    }
+
+    const sampleImagePath = resolveSampleImagePath(runtime.scriptPath);
+    if (!sampleImagePath) {
+      return {
+        ok: false,
+        error: "No se encontro tools/local_generator/sample.jpg.",
+        logs: runtime.logs,
+      };
+    }
+
+    const testProjectId = "_generator-test";
+    const userDataPath = app.getPath("userData");
+    const testOutputDir = join(
+      userDataPath,
+      "project-assets",
+      testProjectId,
+      "generated",
+      String(Date.now())
+    );
+    const outGlbPath = join(testOutputDir, "result.glb");
+    mkdirSync(testOutputDir, { recursive: true });
+
+    const testPayload: GenerationRunPayload = {
+      projectId: testProjectId,
+      imagePaths: [sampleImagePath],
+      preset: "balanced",
+    };
+
+    const testJob: GenerationJobState = {
+      canceled: false,
+      process: null,
+    };
+
+    const localResult = await runLocalPythonGeneration(
+      testPayload,
+      sampleImagePath,
+      outGlbPath,
+      testJob,
+      getWindow,
+      { scriptPath: runtime.scriptPath, pythonCommand: runtime.pythonCommand }
+    );
+
+    const logs = [...runtime.logs, ...localResult.logs];
+
+    if (!localResult.ok) {
+      return {
+        ok: false,
+        error: localResult.error ?? "El test del generador local fallo.",
+        logs,
+      };
+    }
+
+    return {
+      ok: true,
+      glbPath: outGlbPath,
+      logs,
+    };
+  });
+
+  ipcMain.handle("gen:read-glb", async (_event, glbPath: string) => {
+    if (!existsSync(glbPath)) {
+      throw new Error("GLB file not found");
+    }
+
+    const buffer = readFileSync(glbPath);
+    return buffer;
+  });
+
+  ipcMain.handle("gen:open-output-folder", async (_event, payload: { glbPath?: string } | undefined) => {
+    const fallbackPath = join(app.getPath("userData"), "project-assets");
+    const outGlbPath =
+      payload?.glbPath
+        ? payload.glbPath
+        : fallbackPath;
+    shell.showItemInFolder(outGlbPath);
+
+    return {
+      ok: true,
+      path: outGlbPath,
+    };
   });
 }

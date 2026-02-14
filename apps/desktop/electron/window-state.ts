@@ -33,7 +33,12 @@ const DEFAULT_WINDOW_STATE: PersistedWindowState = {
   mode: "windowed",
   rememberWindowBounds: true,
   hasSavedBounds: false,
-  bounds: defaultCenteredBounds(),
+  bounds: {
+    x: 0,
+    y: 0,
+    width: 1280,
+    height: 800,
+  },
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {

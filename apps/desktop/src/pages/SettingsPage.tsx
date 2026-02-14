@@ -1,3 +1,5 @@
+import { useState } from "react";
+import { desktopApi, hasDesktopBridge } from "@/electron/desktopApi";
 import { Button, Card, Select, TextField, Toggle } from "@/ui/primitives";
 import { useT } from "@/volumia/i18n/useT";
 import { useSettings } from "@/volumia/settings/context";
@@ -42,6 +44,18 @@ export function SettingsPage({
     setAntialias,
     resetToRecommended,
   } = useSettings();
+  const [isCheckingGenerator, setIsCheckingGenerator] = useState(false);
+  const [isTestingGenerator, setIsTestingGenerator] = useState(false);
+  const [generatorStatus, setGeneratorStatus] = useState<{
+    pythonFound: boolean;
+    pythonPath?: string;
+    venvPath?: string;
+    scriptFound: boolean;
+    scriptPath?: string;
+  } | null>(null);
+  const [generatorLogs, setGeneratorLogs] = useState<string[]>([]);
+  const [generatorMessage, setGeneratorMessage] = useState<string>("");
+  const [testGlbPath, setTestGlbPath] = useState<string | null>(null);
 
   const fpsOptions: AppSettings["fpsLimit"][] = [30, 60, 120];
 
@@ -60,6 +74,70 @@ export function SettingsPage({
     const confirmed = window.confirm(t("settings.resetAllConfirm"));
     if (!confirmed) return;
     await onResetAllData();
+  };
+
+  const handleCheckGenerator = async () => {
+    if (!hasDesktopBridge()) {
+      setGeneratorMessage(t("settings.generator.noBridge"));
+      return;
+    }
+
+    setIsCheckingGenerator(true);
+    setGeneratorMessage("");
+
+    try {
+      const result = await desktopApi.checkLocalGenerator();
+      setGeneratorStatus(result);
+      setGeneratorLogs(result.logs ?? []);
+      setGeneratorMessage(
+        result.pythonFound && result.scriptFound
+          ? t("settings.generator.ready")
+          : t("settings.generator.notReady")
+      );
+    } catch (error) {
+      setGeneratorMessage(
+        error instanceof Error ? error.message : t("settings.generator.checkFailed")
+      );
+    } finally {
+      setIsCheckingGenerator(false);
+    }
+  };
+
+  const handleTestGenerator = async () => {
+    if (!hasDesktopBridge()) {
+      setGeneratorMessage(t("settings.generator.noBridge"));
+      return;
+    }
+
+    setIsTestingGenerator(true);
+    setGeneratorMessage("");
+
+    try {
+      const result = await desktopApi.runLocalGeneratorTest();
+      setGeneratorLogs(result.logs ?? []);
+      if (result.ok) {
+        setTestGlbPath(result.glbPath);
+        setGeneratorMessage(t("settings.generator.testOk"));
+      } else {
+        setTestGlbPath(null);
+        setGeneratorMessage(result.error || t("settings.generator.testFailed"));
+      }
+    } catch (error) {
+      setTestGlbPath(null);
+      setGeneratorMessage(
+        error instanceof Error ? error.message : t("settings.generator.testFailed")
+      );
+    } finally {
+      setIsTestingGenerator(false);
+    }
+  };
+
+  const handleOpenGeneratorTestOutput = async () => {
+    if (!hasDesktopBridge() || !testGlbPath) {
+      return;
+    }
+
+    await desktopApi.openGenerationOutputFolder(testGlbPath);
   };
 
   return (
@@ -229,6 +307,41 @@ export function SettingsPage({
           </div>
 
           <Toggle checked={settings.antialias} onChange={setAntialias} label={t("settings.antialias")} />
+        </div>
+      </Card>
+
+      <Card padding="md">
+        <h2 className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">{t("settings.generator.title")}</h2>
+        <div className="mt-3 space-y-3">
+          <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" onClick={() => void handleCheckGenerator()} disabled={isCheckingGenerator || isTestingGenerator}>
+              {isCheckingGenerator ? t("settings.generator.checking") : t("settings.generator.check")}
+            </Button>
+            <Button variant="primary" onClick={() => void handleTestGenerator()} disabled={isTestingGenerator}>
+              {isTestingGenerator ? t("settings.generator.testing") : t("settings.generator.test")}
+            </Button>
+            <Button variant="ghost" onClick={() => void handleOpenGeneratorTestOutput()} disabled={!testGlbPath}>
+              {t("settings.generator.openTestOutput")}
+            </Button>
+          </div>
+
+          <div className="space-y-1 rounded-lg border border-[var(--border)] bg-[var(--surface-2)] p-3 text-sm">
+            <p className="text-[var(--text)]">
+              {t("settings.generator.pythonFound")}: {generatorStatus?.pythonFound ? t("common.enabled") : t("common.disabled")}
+            </p>
+            <p className="text-[var(--text-muted)]">{t("settings.generator.pythonPath")}: {generatorStatus?.pythonPath ?? "-"}</p>
+            <p className="text-[var(--text-muted)]">{t("settings.generator.venvPath")}: {generatorStatus?.venvPath ?? "-"}</p>
+            <p className="text-[var(--text-muted)]">{t("settings.generator.scriptPath")}: {generatorStatus?.scriptPath ?? "-"}</p>
+            {generatorMessage ? <p className="text-[var(--text)]">{generatorMessage}</p> : null}
+          </div>
+
+          <div className="max-h-44 overflow-auto rounded-lg border border-[var(--border)] bg-[var(--surface-3)] p-3">
+            {generatorLogs.length > 0 ? (
+              <pre className="whitespace-pre-wrap text-[11px] leading-relaxed text-[var(--text-muted)]">{generatorLogs.join("\n")}</pre>
+            ) : (
+              <p className="text-xs text-[var(--text-muted)]">{t("settings.generator.noLogs")}</p>
+            )}
+          </div>
         </div>
       </Card>
 

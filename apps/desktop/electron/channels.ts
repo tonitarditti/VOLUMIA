@@ -16,6 +16,8 @@ export const IPC_CHANNELS = {
   generationSelectImages: "gen:select-images",
   generationRun: "gen:run",
   generationCancel: "gen:cancel",
+  generationCheck: "gen:check",
+  generationTest: "gen:test",
   generationProgress: "gen:progress",
   generationDone: "gen:done",
   generationError: "gen:error",
@@ -178,3 +180,24 @@ export type GenerationErrorPayload = {
   projectId: string;
   message: string;
 };
+
+export type GenerationCheckResult = {
+  pythonFound: boolean;
+  pythonPath?: string;
+  venvPath?: string;
+  scriptFound: boolean;
+  scriptPath?: string;
+  logs: string[];
+};
+
+export type GenerationTestResult =
+  | {
+      ok: true;
+      glbPath: string;
+      logs: string[];
+    }
+  | {
+      ok: false;
+      error: string;
+      logs: string[];
+    };

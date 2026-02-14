@@ -6,9 +6,11 @@ import {
   type ExportProjectsResult,
   type GenerationDonePayload,
   type GenerationErrorPayload,
+  type GenerationCheckResult,
   type GenerationProgressPayload,
   type GenerationRunPayload,
   type GenerationRunResult,
+  type GenerationTestResult,
   type ImportProjectsResult,
   type ProjectsExportEnvelope,
   type RememberWindowBoundsPayload,
@@ -77,6 +79,11 @@ const bridge = {
     run: (payload: GenerationRunPayload) =>
       ipcRenderer.invoke(IPC_CHANNELS.generationRun, payload) as Promise<GenerationRunResult>,
     cancel: (projectId: string) => ipcRenderer.invoke(IPC_CHANNELS.generationCancel, { projectId }) as Promise<void>,
+    check: () => ipcRenderer.invoke(IPC_CHANNELS.generationCheck) as Promise<GenerationCheckResult>,
+    test: () => ipcRenderer.invoke(IPC_CHANNELS.generationTest) as Promise<GenerationTestResult>,
+    readGlb: (glbPath: string) => ipcRenderer.invoke("gen:read-glb", glbPath),
+    openOutputFolder: (glbPath: string) =>
+      ipcRenderer.invoke("gen:open-output-folder", { glbPath }) as Promise<{ ok: boolean; path: string; error?: string }>,
     onProgress: (callback: (payload: GenerationProgressPayload) => void) => {
       const wrapped = (_event: Electron.IpcRendererEvent, payload: GenerationProgressPayload) => {
         callback(payload);
