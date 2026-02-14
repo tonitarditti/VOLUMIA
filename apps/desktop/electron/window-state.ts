@@ -183,7 +183,7 @@ export function createWindowStateController(): WindowStateController {
 
   return {
     getLaunchBounds: () => {
-      const bounds = sanitizeBounds(persisted.bounds);
+      const bounds = persisted.rememberWindowBounds ? sanitizeBounds(persisted.bounds) : { ...DEFAULT_BOUNDS };
       return {
         x: bounds.x,
         y: bounds.y,
@@ -193,10 +193,12 @@ export function createWindowStateController(): WindowStateController {
     },
     applyLaunchMode: (window) => {
       if (persisted.mode === "remember") {
-        if (persisted.isFullScreen) {
-          window.setFullScreen(true);
-        } else if (persisted.isMaximized) {
-          window.maximize();
+        if (persisted.rememberWindowBounds) {
+          if (persisted.isFullScreen) {
+            window.setFullScreen(true);
+          } else if (persisted.isMaximized) {
+            window.maximize();
+          }
         }
         return;
       }

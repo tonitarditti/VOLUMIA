@@ -1,5 +1,5 @@
 export type Language = "es" | "en" | "pt";
-export type Theme = "volumia_warm" | "volumia_mono";
+export type Theme = "light" | "dark";
 export type WindowMode = "remember" | "maximized" | "fullscreen";
 export type PerformancePreset = "quality" | "balanced" | "performance";
 

@@ -53,7 +53,7 @@ function AppContent() {
       setNotice(
         t("notice.importCompleted", {
           count: payload.projects.length,
-          filePath: result.filePath ?? "selected file",
+          filePath: result.filePath ?? t("notice.selectedFile"),
         })
       );
     } catch (error) {

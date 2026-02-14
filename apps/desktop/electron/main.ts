@@ -11,9 +11,13 @@ const isDev = !app.isPackaged;
 const devServerUrl = process.env.VITE_DEV_SERVER_URL ?? "http://127.0.0.1:5173";
 
 let mainWindow: BrowserWindow | null = null;
-const windowStateController = createWindowStateController();
+let windowStateController: ReturnType<typeof createWindowStateController> | null = null;
 
 function createMainWindow() {
+  if (!windowStateController) {
+    windowStateController = createWindowStateController();
+  }
+
   const cwdPreloadPath = path.join(process.cwd(), "electron-dist", "preload.js");
   const fallbackPreloadPath = path.join(__dirname, "preload.js");
   const preloadPath = existsSync(cwdPreloadPath) ? cwdPreloadPath : fallbackPreloadPath;
@@ -56,7 +60,11 @@ function createMainWindow() {
 }
 
 app.whenReady().then(() => {
+  windowStateController = createWindowStateController();
   mainWindow = createMainWindow();
+  if (!windowStateController) {
+    throw new Error("Window state controller is unavailable.");
+  }
 
   registerProjectsFileHandlers();
   registerSettingsFileHandlers();

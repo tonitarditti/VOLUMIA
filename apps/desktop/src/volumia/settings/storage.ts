@@ -4,7 +4,7 @@ export const SETTINGS_STORAGE_KEY = "volumia.settings.v1";
 
 export const DEFAULT_SETTINGS: AppSettings = {
   language: "es",
-  theme: "volumia_warm",
+  theme: "dark",
   windowMode: "remember",
   rememberWindowBounds: true,
   performancePreset: "balanced",
@@ -26,7 +26,7 @@ type SettingsStorageEnvelope = {
 };
 
 const LANGUAGE_SET = new Set<Language>(["es", "en", "pt"]);
-const THEME_SET = new Set<Theme>(["volumia_warm", "volumia_mono"]);
+const THEME_SET = new Set<Theme>(["light", "dark"]);
 const WINDOW_MODE_SET = new Set<WindowMode>(["remember", "maximized", "fullscreen"]);
 const PRESET_SET = new Set<PerformancePreset>(["quality", "balanced", "performance"]);
 const FPS_SET = new Set<AppSettings["fpsLimit"]>([30, 60, 120]);
@@ -41,6 +41,22 @@ function isLanguage(value: unknown): value is Language {
 
 function isTheme(value: unknown): value is Theme {
   return typeof value === "string" && THEME_SET.has(value as Theme);
+}
+
+function migrateLegacyTheme(value: unknown): Theme | null {
+  if (value === "light" || value === "dark") {
+    return value;
+  }
+
+  if (value === "volumia_warm") {
+    return "dark";
+  }
+
+  if (value === "volumia_mono") {
+    return "light";
+  }
+
+  return null;
 }
 
 function isWindowMode(value: unknown): value is WindowMode {
@@ -70,9 +86,11 @@ export function sanitizeAppSettings(value: unknown, fallback: AppSettings = DEFA
     return { ...fallback };
   }
 
+  const migratedTheme = migrateLegacyTheme(value.theme);
+
   return {
     language: isLanguage(value.language) ? value.language : fallback.language,
-    theme: isTheme(value.theme) ? value.theme : fallback.theme,
+    theme: migratedTheme ?? (isTheme(value.theme) ? value.theme : fallback.theme),
     windowMode: isWindowMode(value.windowMode) ? value.windowMode : fallback.windowMode,
     rememberWindowBounds:
       typeof value.rememberWindowBounds === "boolean"

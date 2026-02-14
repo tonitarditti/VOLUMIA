@@ -5,10 +5,7 @@ import { createChatMessage } from "@/projects/factory";
 import { useProjects } from "@/projects/context";
 import { selectProjectById } from "@/projects/selectors";
 import { buildMockAssistantReply, summarizeReply } from "@/projects/mockAssistant";
-import { Card } from "@/ui/Card";
-import { TextField } from "@/ui/Input";
-import { TextArea } from "@/ui/Textarea";
-import { Button } from "@/ui/Button";
+import { Button, Card, TextArea, TextField } from "@/ui/primitives";
 import { ProjectViewport } from "@/three/ProjectViewport";
 import { useT } from "@/volumia/i18n/useT";
 
@@ -63,41 +60,41 @@ export function ProjectPage() {
     <SplitView
       left={
         <>
-          <Card className="p-5">
-            <label className="mb-2 block text-[11px] uppercase tracking-[0.18em] text-volume-muted">{t("project.projectName")}</label>
+          <Card padding="md">
             <TextField
               value={project.name}
               onChange={(event) => renameProject(project.id, event.target.value)}
               aria-label={t("dashboard.projectNameLabel")}
+              label={t("project.projectName")}
             />
           </Card>
 
-          <Card className="flex min-h-0 flex-1 flex-col p-5">
-            <h2 className="mb-3 text-[11px] font-medium uppercase tracking-[0.18em] text-volume-muted">{t("project.viewport")}</h2>
+          <Card padding="md" className="flex min-h-0 flex-1 flex-col">
+            <h2 className="mb-3 text-[11px] font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">{t("project.viewport")}</h2>
             <div className="min-h-0 flex-1">
               <ProjectViewport />
             </div>
           </Card>
 
-          <Card className="p-5">
-            <label className="mb-2 block text-[11px] uppercase tracking-[0.18em] text-volume-muted">{t("project.notes")}</label>
+          <Card padding="md">
             <TextArea
               value={project.notes}
               onChange={(event) => updateNotes(project.id, event.target.value)}
               rows={7}
               className="min-h-36 leading-relaxed"
               placeholder={t("project.notesPlaceholder")}
+              label={t("project.notes")}
             />
           </Card>
         </>
       }
       right={
-        <Card className="flex h-full min-h-0 flex-1 flex-col p-5">
-          <h2 className="mb-3 text-[11px] font-medium uppercase tracking-[0.18em] text-volume-muted">{t("project.assistant")}</h2>
+        <Card padding="md" className="flex h-full min-h-0 flex-1 flex-col">
+          <h2 className="mb-3 text-[11px] font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">{t("project.assistant")}</h2>
 
-          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto rounded-xl border border-volume-stroke bg-volume-panelAlt/35 p-3.5">
+          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto rounded-xl border border-[var(--border)] bg-[var(--surface-2)] p-3.5">
             {project.chatHistory.length === 0 ? (
-              <p className="text-sm leading-relaxed text-volume-muted">
+              <p className="text-sm leading-relaxed text-[var(--text-muted)]">
                 {t("project.noMessages")}
               </p>
             ) : null}
@@ -110,11 +107,11 @@ export function ProjectPage() {
                   key={message.id}
                   className={`rounded-xl border p-3 ${
                     isAssistant
-                      ? "border-volume-stroke bg-volume-panel text-volume-text"
-                      : "border-volume-accent/40 bg-volume-accent/12 text-volume-text"
+                      ? "border-[var(--border)] bg-[var(--surface-1)] text-[var(--text)]"
+                      : "border-[var(--accent)] bg-[var(--surface-2)] text-[var(--text)]"
                   }`}
                 >
-                  <header className="mb-1.5 flex items-center justify-between text-[10px] uppercase tracking-[0.16em] text-volume-muted">
+                  <header className="mb-1.5 flex items-center justify-between text-[10px] uppercase tracking-[0.16em] text-[var(--text-muted)]">
                     <span>{isAssistant ? t("project.assistantRole") : t("project.userRole")}</span>
                     <time>{formatMessageTime(message.createdAt, language)}</time>
                   </header>

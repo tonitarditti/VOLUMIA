@@ -17,16 +17,16 @@ export function TopBar() {
   const compactNavClass = (isActive: boolean) =>
     `no-drag rounded-md px-2 py-1 text-[11px] uppercase tracking-[0.14em] transition ${
       isActive
-        ? "bg-volume-panelAlt text-volume-text"
-        : "text-volume-muted hover:bg-volume-panelAlt/70 hover:text-volume-text"
+        ? "bg-[var(--surface-2)] text-[var(--text)]"
+        : "text-[var(--text-muted)] hover:bg-[var(--surface-2)] hover:text-[var(--text)]"
     }`;
 
   return (
-    <header className="drag-region flex h-12 items-center justify-between border-b border-volume-stroke/90 bg-volume-panel px-4">
+    <header className="drag-region flex h-12 items-center justify-between border-b border-[var(--border)] bg-[var(--surface-1)] px-4">
       <div className="flex min-w-0 items-center gap-3">
-        <div className="text-[11px] font-semibold uppercase tracking-[0.3em] text-volume-accent">{t("topbar.brand")}</div>
-        <div className="h-4 w-px bg-volume-stroke" />
-        <h1 className="truncate text-sm font-medium tracking-[0.08em] text-volume-text">{pageTitle}</h1>
+        <div className="text-[11px] font-semibold uppercase tracking-[0.3em] text-[var(--accent)]">{t("topbar.brand")}</div>
+        <div className="h-4 w-px bg-[var(--border)]" />
+        <h1 className="truncate text-sm font-medium tracking-[0.08em] text-[var(--text)]">{pageTitle}</h1>
         <nav className="ml-1 flex items-center gap-1 md:hidden">
           <NavLink to="/" end className={({ isActive }) => compactNavClass(isActive)}>
             {t("nav.dashboard")}
@@ -45,8 +45,8 @@ export function TopBar() {
               void desktopApi.minimizeWindow();
             }
           }}
-          aria-label="Minimize"
-          title="Minimize"
+          aria-label={t("topbar.minimize")}
+          title={t("topbar.minimize")}
         >
           <span className="text-lg leading-none">-</span>
         </IconButton>
@@ -57,21 +57,21 @@ export function TopBar() {
               void desktopApi.toggleMaximizeWindow();
             }
           }}
-          aria-label="Toggle maximize"
-          title="Maximize"
+          aria-label={t("topbar.maximize")}
+          title={t("topbar.maximize")}
         >
           <span className="text-sm">[]</span>
         </IconButton>
         <IconButton
           type="button"
-          className="hover:border-rose-500/60 hover:bg-rose-500/20 hover:text-rose-100"
+          className="hover:border-[var(--danger)] hover:bg-[var(--danger)] hover:text-[var(--surface-1)]"
           onClick={() => {
             if (canUseDesktopBridge) {
               void desktopApi.closeWindow();
             }
           }}
-          aria-label="Close"
-          title="Close"
+          aria-label={t("topbar.close")}
+          title={t("topbar.close")}
         >
           <span className="text-sm">x</span>
         </IconButton>

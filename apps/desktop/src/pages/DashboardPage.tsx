@@ -2,10 +2,8 @@ import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useProjects } from "@/projects/context";
 import { selectProjectsSortedByUpdatedAt } from "@/projects/selectors";
-import { Button } from "@/ui/Button";
-import { Card } from "@/ui/Card";
 import { EmptyState } from "@/ui/EmptyState";
-import { TextField } from "@/ui/Input";
+import { Button, Card, TextField } from "@/ui/primitives";
 import { useT } from "@/volumia/i18n/useT";
 
 type DashboardPageProps = {
@@ -44,12 +42,12 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col gap-5">
-      <Card className="p-5">
+      <Card padding="md">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
-            <p className="text-[11px] uppercase tracking-[0.2em] text-volume-muted">{t("dashboard.workspace")}</p>
-            <h1 className="mt-1 text-2xl font-semibold tracking-[0.03em]">{t("dashboard.title")}</h1>
-            <p className="mt-2 max-w-2xl text-sm text-volume-muted">
+            <p className="text-[11px] uppercase tracking-[0.2em] text-[var(--text-muted)]">{t("dashboard.workspace")}</p>
+            <h1 className="mt-1 text-2xl font-semibold tracking-[0.03em] text-[var(--text)]">{t("dashboard.title")}</h1>
+            <p className="mt-2 max-w-2xl text-sm text-[var(--text-muted)]">
               {t("dashboard.subtitle")}
             </p>
           </div>
@@ -82,24 +80,24 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
               const isEditing = editingProjectId === project.id;
 
               return (
-                <Card
-                  key={project.id}
-                  className="border-volume-stroke/90 p-5 transition duration-200 hover:border-volume-accent/45 hover:bg-volume-panelAlt/20"
-                >
+                <Card key={project.id} padding="md" hoverElevation className="hover:bg-[var(--surface-2)]">
                   <div className="flex items-start justify-between gap-3">
-                    <button
+                    <Button
                       type="button"
-                      className="text-left"
+                      variant="ghost"
+                      className="h-auto items-start justify-start p-0 text-left hover:border-transparent hover:bg-transparent"
                       onClick={() => {
                         setActiveProject(project.id);
                         navigate(`/project/${project.id}`);
                       }}
                     >
-                      <h2 className="text-lg font-medium tracking-[0.02em] text-volume-text">{project.name}</h2>
-                      <p className="mt-1 text-xs uppercase tracking-[0.12em] text-volume-muted">
-                        {t("dashboard.updated", { date: toHumanDate(project.updatedAt, language) })}
-                      </p>
-                    </button>
+                      <div>
+                        <h2 className="text-lg font-medium tracking-[0.02em] text-[var(--text)]">{project.name}</h2>
+                        <p className="mt-1 text-xs uppercase tracking-[0.12em] text-[var(--text-muted)]">
+                          {t("dashboard.updated", { date: toHumanDate(project.updatedAt, language) })}
+                        </p>
+                      </div>
+                    </Button>
                     <div className="flex flex-wrap justify-end gap-1.5">
                       <Button variant="ghost" className="h-8 px-3 text-xs" onClick={() => beginRename(project.id, project.name)}>
                         {t("dashboard.rename")}

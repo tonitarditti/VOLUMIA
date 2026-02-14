@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createProject } from "@/projects/factory";
 import { ProjectsProvider } from "@/projects/context";
 import { STORAGE_KEYS } from "@/storage/keys";
+import { SettingsProvider } from "@/volumia/settings/context";
 import { ProjectPage } from "./ProjectPage";
 
 vi.mock("@/three/ProjectViewport", () => ({
@@ -27,23 +28,27 @@ describe("ProjectPage", () => {
     const user = userEvent.setup();
 
     render(
-      <ProjectsProvider>
-        <MemoryRouter initialEntries={[`/project/${project.id}`]}>
-          <Routes>
-            <Route path="/project/:projectId" element={<ProjectPage />} />
-          </Routes>
-        </MemoryRouter>
-      </ProjectsProvider>
+      <SettingsProvider>
+        <ProjectsProvider>
+          <MemoryRouter initialEntries={[`/project/${project.id}`]}>
+            <Routes>
+              <Route path="/project/:projectId" element={<ProjectPage />} />
+            </Routes>
+          </MemoryRouter>
+        </ProjectsProvider>
+      </SettingsProvider>
     );
 
-    await user.type(screen.getByRole("textbox", { name: "Project name" }), " Tower");
+    await user.type(screen.getByRole("textbox", { name: /Project name|Nombre del proyecto|Nome do projeto/i }), " Tower");
 
-    const notes = screen.getByPlaceholderText("Capture constraints, zoning intent, and design decisions.");
+    const notes = screen.getByPlaceholderText(
+      /Capture constraints|Captura restricciones|Registre restricoes/i
+    );
     await user.type(notes, "Primary axis aligned to north facade.");
 
-    const prompt = screen.getByRole("textbox", { name: "Assistant prompt" });
+    const prompt = screen.getByRole("textbox", { name: /Assistant|Asistente|Assistente/i });
     await user.type(prompt, "Review massing hierarchy");
-    await user.click(screen.getByRole("button", { name: "Send" }));
+    await user.click(screen.getByRole("button", { name: /Send|Enviar/i }));
 
     expect(screen.getByText(/Primary axis aligned to north facade/i)).toBeInTheDocument();
     expect(screen.getByText(/Intent captured: Review massing hierarchy/i)).toBeInTheDocument();

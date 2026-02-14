@@ -46,12 +46,38 @@ export function SettingsProvider({ children }: PropsWithChildren) {
   }, [settings]);
 
   useEffect(() => {
-    document.documentElement.setAttribute("data-theme", settings.theme);
+    document.documentElement.dataset.theme = settings.theme;
   }, [settings.theme]);
 
   useEffect(() => {
     document.documentElement.classList.toggle("reduce-motion", settings.reduceMotion);
   }, [settings.reduceMotion]);
+
+  useEffect(() => {
+    let active = true;
+
+    void desktopApi
+      .getWindowState()
+      .then((windowState) => {
+        if (!active) return;
+
+        setSettings((previous) =>
+          sanitizeAppSettings(
+            {
+              ...previous,
+              windowMode: windowState.mode,
+              rememberWindowBounds: windowState.rememberWindowBounds,
+            },
+            DEFAULT_SETTINGS
+          )
+        );
+      })
+      .catch(() => undefined);
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     void desktopApi.setWindowMode(settings.windowMode).catch(() => undefined);
