@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { desktopApi, hasDesktopBridge } from "@/electron/desktopApi";
-import type { PythonCandidate, PythonProbeResult } from "@/electron/channels";
+import type { ClearCacheResult, PythonCandidate, PythonProbeResult } from "@/electron/channels";
 import { Button, Card, Select, TextField, Toggle } from "@/ui/primitives";
 import { useT } from "@/volumia/i18n/useT";
 import { useSettings } from "@/volumia/settings/context";
 import type { AppSettings } from "@/volumia/settings/types";
+
+const CACHE_CLEAR_MARKER_FILE = "__clear_cache_on_next_start__.json";
 
 type SettingsPageProps = {
   onImportProjects: () => Promise<void>;
@@ -54,6 +56,11 @@ export function SettingsPage({
   const [isDetectingPython, setIsDetectingPython] = useState(false);
   const [isProbingPython, setIsProbingPython] = useState(false);
   const [isInstallingTorch, setIsInstallingTorch] = useState(false);
+  const [userDataPath, setUserDataPath] = useState("");
+  const [systemMessage, setSystemMessage] = useState("");
+  const [isClearingCache, setIsClearingCache] = useState(false);
+  const [clearCacheResult, setClearCacheResult] = useState<ClearCacheResult | null>(null);
+  const [clearCacheMessage, setClearCacheMessage] = useState("");
 
   const fpsOptions: AppSettings["fpsLimit"][] = [30, 60, 120];
 
@@ -205,6 +212,49 @@ export function SettingsPage({
     }
   };
 
+  const handleOpenUserDataFolder = useCallback(async () => {
+    if (!hasDesktopBridge()) {
+      setSystemMessage(t("settings.generator.noBridge"));
+      return;
+    }
+
+    try {
+      const path = await desktopApi.openUserDataFolder();
+      setUserDataPath(path);
+      setSystemMessage("");
+    } catch (error) {
+      setSystemMessage(error instanceof Error ? error.message : "No se pudo abrir la carpeta de datos.");
+    }
+  }, [t]);
+
+  const handleClearCache = useCallback(async () => {
+    if (!hasDesktopBridge()) {
+      setClearCacheMessage(t("settings.generator.noBridge"));
+      return;
+    }
+
+    setIsClearingCache(true);
+    setClearCacheMessage("");
+
+    try {
+      const result = await desktopApi.clearCache();
+      setClearCacheResult(result);
+
+      const markerCreated = result.errors.some((entry) => entry.name === CACHE_CLEAR_MARKER_FILE);
+      if (markerCreated) {
+        setClearCacheMessage("Algunos archivos estaban en uso. Se borraran al reiniciar.");
+      } else if (result.errors.length > 0) {
+        setClearCacheMessage("No se pudo borrar parte de la cache.");
+      } else {
+        setClearCacheMessage("Cache borrada.");
+      }
+    } catch (error) {
+      setClearCacheMessage(error instanceof Error ? error.message : "No se pudo borrar la cache.");
+    } finally {
+      setIsClearingCache(false);
+    }
+  }, [t]);
+
   useEffect(() => {
     setSelectedPythonPath(settings.pythonPath ?? "");
   }, [settings.pythonPath]);
@@ -217,6 +267,33 @@ export function SettingsPage({
     return desktopApi.onPythonInstallLog((line) => {
       setPythonLogs((previous) => [...previous.slice(-999), line]);
     });
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+
+    if (!hasDesktopBridge()) {
+      setUserDataPath("Disponible solo en la app de escritorio.");
+      return () => {
+        active = false;
+      };
+    }
+
+    void (async () => {
+      try {
+        const path = await desktopApi.getUserDataPath();
+        if (!active) return;
+        setUserDataPath(path);
+        setSystemMessage("");
+      } catch (error) {
+        if (!active) return;
+        setSystemMessage(error instanceof Error ? error.message : "No se pudo leer la carpeta de datos.");
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -361,6 +438,45 @@ export function SettingsPage({
           <Button variant="secondary" className="w-full" onClick={() => void onResetWindowLayout()}>
             {t("settings.resetWindowLayout")}
           </Button>
+        </div>
+      </Card>
+
+      <Card padding="md">
+        <h2 className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">Sistema</h2>
+        <div className="mt-3 space-y-3">
+          <TextField label="Carpeta de datos" value={userDataPath} readOnly />
+          <Button variant="secondary" className="w-full" onClick={() => void handleOpenUserDataFolder()}>
+            Abrir carpeta
+          </Button>
+          {systemMessage ? <p className="text-xs text-[var(--text-muted)]">{systemMessage}</p> : null}
+        </div>
+      </Card>
+
+      <Card padding="md">
+        <h2 className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">Mantenimiento</h2>
+        <div className="mt-3 space-y-3">
+          <p className="text-xs text-[var(--text-muted)]">
+            No borra proyectos ni modelos; solo cache de Chromium.
+          </p>
+          <Button variant="secondary" className="w-full" onClick={() => void handleClearCache()} disabled={isClearingCache}>
+            {isClearingCache ? "Borrando..." : "Borrar cache"}
+          </Button>
+          {clearCacheResult ? (
+            <div className="space-y-1 rounded-lg border border-[var(--border)] bg-[var(--surface-2)] p-3 text-xs">
+              <p className="text-[var(--text)]">
+                Deleted: {clearCacheResult.deleted.length > 0 ? clearCacheResult.deleted.join(", ") : "-"}
+              </p>
+              <p className="text-[var(--text-muted)]">
+                Missing: {clearCacheResult.missing.length > 0 ? clearCacheResult.missing.join(", ") : "-"}
+              </p>
+              {clearCacheResult.errors.length > 0 ? (
+                <p className="text-[var(--text-muted)]">
+                  Errors: {clearCacheResult.errors.map((entry) => `${entry.name}: ${entry.message}`).join(" | ")}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+          {clearCacheMessage ? <p className="text-xs text-[var(--text-muted)]">{clearCacheMessage}</p> : null}
         </div>
       </Card>
 

@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from "electron";
 import {
   type ExportSettingsResult,
   IPC_CHANNELS,
+  type ClearCacheResult,
   type ImportSettingsResult,
   type ExportProjectsResult,
   type GenerationDonePayload,
@@ -81,6 +82,11 @@ const bridge = {
       ipcRenderer.off(IPC_CHANNELS.systemThemeChanged, wrapped);
       systemThemeListeners.delete(callback);
     },
+  },
+  systemInfo: {
+    getUserDataPath: () => ipcRenderer.invoke(IPC_CHANNELS.getUserDataPath) as Promise<string>,
+    openUserDataFolder: () => ipcRenderer.invoke(IPC_CHANNELS.openUserDataFolder) as Promise<string>,
+    clearCache: () => ipcRenderer.invoke(IPC_CHANNELS.clearCache) as Promise<ClearCacheResult>,
   },
   generation: {
     selectImages: () => ipcRenderer.invoke(IPC_CHANNELS.generationSelectImages) as Promise<string[]>,

@@ -12,6 +12,9 @@ export const IPC_CHANNELS = {
   resetWindowLayout: "window:reset-layout",
   getSystemLocale: "system:get-locale",
   getSystemTheme: "system:get-theme",
+  getUserDataPath: "system:get-userdata-path",
+  openUserDataFolder: "system:open-userdata-folder",
+  clearCache: "system:clear-cache",
   systemThemeChanged: "system:theme-changed",
   generationSelectImages: "gen:select-images",
   generationRun: "gen:run",
@@ -98,6 +101,17 @@ export type PythonInstallLogPayload = {
 
 export type PythonInstallDonePayload = {
   ok: boolean;
+};
+
+export type ClearCacheError = {
+  name: string;
+  message: string;
+};
+
+export type ClearCacheResult = {
+  deleted: string[];
+  missing: string[];
+  errors: ClearCacheError[];
 };
 
 export type ChatRole = "user" | "assistant";

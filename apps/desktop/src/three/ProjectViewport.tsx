@@ -69,7 +69,8 @@ type ViewportThemeConfig = {
 };
 
 const VIEW_TARGET = new THREE.Vector3(0, 0.4, 0);
-const CAMERA_DIRECTION = new THREE.Vector3(1, 0.8, 1).normalize();
+const MODEL_VIEW_TARGET = new THREE.Vector3(0, 0, 0);
+const MODEL_CAMERA_POSITION = new THREE.Vector3(0, 1.5, 3);
 const DEFAULT_CAMERA_SNAPSHOT: CameraSnapshot = {
   position: new THREE.Vector3(2.8, 2.2, 2.8),
   target: VIEW_TARGET.clone(),
@@ -120,17 +121,10 @@ function fitCameraToObject(
     return null;
   }
 
-  const size = box.getSize(new THREE.Vector3());
-  const maxSize = Math.max(size.x, size.y, size.z);
-  const distance = THREE.MathUtils.clamp(
-    (maxSize / (2 * Math.tan((Math.PI * camera.fov) / 360))) * 1.35,
-    1.2,
-    20
-  );
-  const nextTarget = VIEW_TARGET.clone();
-  const nextPosition = nextTarget.clone().add(CAMERA_DIRECTION.clone().multiplyScalar(distance));
-  const near = Math.max(0.01, distance / 200);
-  const far = Math.max(120, distance * 24);
+  const nextTarget = MODEL_VIEW_TARGET.clone();
+  const nextPosition = MODEL_CAMERA_POSITION.clone();
+  const near = 0.1;
+  const far = 200;
 
   applyCameraSnapshot(camera, controlsRef, {
     position: nextPosition,
@@ -147,39 +141,35 @@ function fitCameraToObject(
   };
 }
 
-function normalizeModelForViewport(object: THREE.Object3D, targetSize = 1.0) {
+function normalizeModelForViewport(object: THREE.Object3D, targetSize = 2) {
   object.updateMatrixWorld(true);
 
-  const sourceBox = new THREE.Box3().setFromObject(object);
-  if (sourceBox.isEmpty()) {
+  const box = new THREE.Box3().setFromObject(object);
+  if (box.isEmpty()) {
     return;
   }
 
-  const sourceSize = sourceBox.getSize(new THREE.Vector3());
-  const maxDimension = Math.max(sourceSize.x, sourceSize.y, sourceSize.z);
-  if (Number.isFinite(maxDimension) && maxDimension > 0) {
-    const uniformScale = targetSize / maxDimension;
-    if (Number.isFinite(uniformScale) && uniformScale > 0) {
-      object.scale.multiplyScalar(uniformScale);
-      object.updateMatrixWorld(true);
+  const center = box.getCenter(new THREE.Vector3());
+  const size = box.getSize(new THREE.Vector3());
+  object.position.sub(center);
+
+  const maxDim = Math.max(size.x, size.y, size.z);
+  if (Number.isFinite(maxDim) && maxDim > 0) {
+    const scale = targetSize / maxDim;
+    if (Number.isFinite(scale) && scale > 0) {
+      object.scale.setScalar(scale);
     }
   }
 
-  const centeredBox = new THREE.Box3().setFromObject(object);
-  if (centeredBox.isEmpty()) {
-    return;
-  }
-
-  const center = centeredBox.getCenter(new THREE.Vector3());
-  object.position.sub(center);
   object.updateMatrixWorld(true);
 
-  const groundedBox = new THREE.Box3().setFromObject(object);
-  if (groundedBox.isEmpty()) {
+  const newBox = new THREE.Box3().setFromObject(object);
+  if (newBox.isEmpty()) {
     return;
   }
 
-  object.position.y -= groundedBox.min.y;
+  const newCenter = newBox.getCenter(new THREE.Vector3());
+  object.position.sub(newCenter);
   object.updateMatrixWorld(true);
 }
 

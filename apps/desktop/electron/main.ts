@@ -4,7 +4,7 @@ import path from "path";
 import { registerProjectsFileHandlers } from "./ipc/projects-file.ipc";
 import { registerGenerationHandlers } from "./ipc/generation.ipc";
 import { registerSettingsFileHandlers } from "./ipc/settings-file.ipc";
-import { registerSystemPreferencesHandlers } from "./ipc/system-preferences.ipc";
+import { processPendingCacheClearOnStart, registerSystemPreferencesHandlers } from "./ipc/system-preferences.ipc";
 import { registerSystemPythonHandlers } from "./ipc/system-python.ipc";
 import { registerWindowControlHandlers } from "./ipc/window-controls.ipc";
 import { registerWindowSettingsHandlers } from "./ipc/window-settings.ipc";
@@ -70,6 +70,12 @@ function createMainWindow() {
 }
 
 app.whenReady().then(() => {
+  if (process.env.NODE_ENV === "development") {
+    console.log("UserData path:", app.getPath("userData"));
+  }
+
+  processPendingCacheClearOnStart();
+
   windowStateController = createWindowStateController();
   mainWindow = createMainWindow();
   if (!windowStateController) {

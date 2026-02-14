@@ -14,6 +14,7 @@ import {
   type GenerationRunResult,
   type GenerationTestResult,
   type Theme,
+  type ClearCacheResult,
   type PythonDetectResult,
   type PythonProbeResult,
   type PythonInstallTorchCudaResult,
@@ -39,6 +40,12 @@ export type VolumiaSystemBridge = {
   getTheme: () => Promise<Theme>;
   onThemeChanged: (callback: (theme: Theme) => void) => void;
   offThemeChanged: (callback: (theme: Theme) => void) => void;
+};
+
+export type VolumiaSystemInfoBridge = {
+  getUserDataPath: () => Promise<string>;
+  openUserDataFolder: () => Promise<string>;
+  clearCache: () => Promise<ClearCacheResult>;
 };
 
 export type VolumiaGenerationBridge = {
@@ -72,6 +79,7 @@ export type VolumiaDesktopBridge = {
   windowControls?: Partial<VolumiaWindowControls>;
   settingsWindow?: Partial<VolumiaSettingsWindowBridge>;
   system?: Partial<VolumiaSystemBridge>;
+  systemInfo?: Partial<VolumiaSystemInfoBridge>;
   generation?: Partial<VolumiaGenerationBridge>;
   systemPython?: Partial<VolumiaSystemPythonBridge>;
 };
@@ -129,6 +137,15 @@ function ensureSystemBridge(): VolumiaSystemBridge {
   }
 
   return system as VolumiaSystemBridge;
+}
+
+function ensureSystemInfoBridge(): VolumiaSystemInfoBridge {
+  const systemInfo = ensureBridge().systemInfo;
+  if (!systemInfo?.getUserDataPath || !systemInfo.openUserDataFolder || !systemInfo.clearCache) {
+    throw new Error("Desktop system info bridge is unavailable.");
+  }
+
+  return systemInfo as VolumiaSystemInfoBridge;
 }
 
 function ensureGenerationBridge(): VolumiaGenerationBridge {
@@ -207,6 +224,15 @@ export const desktopApi = {
   },
   getSystemTheme(): Promise<Theme> {
     return ensureSystemBridge().getTheme();
+  },
+  getUserDataPath(): Promise<string> {
+    return ensureSystemInfoBridge().getUserDataPath();
+  },
+  openUserDataFolder(): Promise<string> {
+    return ensureSystemInfoBridge().openUserDataFolder();
+  },
+  clearCache(): Promise<ClearCacheResult> {
+    return ensureSystemInfoBridge().clearCache();
   },
   onSystemThemeChanged(callback: (theme: Theme) => void): () => void {
     const system = ensureSystemBridge();
