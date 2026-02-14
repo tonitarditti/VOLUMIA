@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { desktopApi, hasDesktopBridge } from "@/electron/desktopApi";
+import type { PythonCandidate, PythonProbeResult } from "@/electron/channels";
 import { Button, Card, Select, TextField, Toggle } from "@/ui/primitives";
 import { useT } from "@/volumia/i18n/useT";
 import { useSettings } from "@/volumia/settings/context";
@@ -42,20 +43,17 @@ export function SettingsPage({
     setPerformancePreset,
     setFpsLimit,
     setAntialias,
+    setPythonPath,
     resetToRecommended,
   } = useSettings();
-  const [isCheckingGenerator, setIsCheckingGenerator] = useState(false);
-  const [isTestingGenerator, setIsTestingGenerator] = useState(false);
-  const [generatorStatus, setGeneratorStatus] = useState<{
-    pythonFound: boolean;
-    pythonPath?: string;
-    venvPath?: string;
-    scriptFound: boolean;
-    scriptPath?: string;
-  } | null>(null);
-  const [generatorLogs, setGeneratorLogs] = useState<string[]>([]);
-  const [generatorMessage, setGeneratorMessage] = useState<string>("");
-  const [testGlbPath, setTestGlbPath] = useState<string | null>(null);
+  const [pythonCandidates, setPythonCandidates] = useState<PythonCandidate[]>([]);
+  const [selectedPythonPath, setSelectedPythonPath] = useState(settings.pythonPath ?? "");
+  const [pythonProbe, setPythonProbe] = useState<PythonProbeResult | null>(null);
+  const [pythonLogs, setPythonLogs] = useState<string[]>([]);
+  const [pythonMessage, setPythonMessage] = useState("");
+  const [isDetectingPython, setIsDetectingPython] = useState(false);
+  const [isProbingPython, setIsProbingPython] = useState(false);
+  const [isInstallingTorch, setIsInstallingTorch] = useState(false);
 
   const fpsOptions: AppSettings["fpsLimit"][] = [30, 60, 120];
 
@@ -76,69 +74,158 @@ export function SettingsPage({
     await onResetAllData();
   };
 
-  const handleCheckGenerator = async () => {
+  const applyPythonPathSelection = useCallback((pythonPath: string) => {
+    const normalizedPath = pythonPath.trim();
+    setSelectedPythonPath(normalizedPath);
+    setPythonPath(normalizedPath.length > 0 ? normalizedPath : undefined);
+  }, [setPythonPath]);
+
+  const handleDetectPython = useCallback(async () => {
     if (!hasDesktopBridge()) {
-      setGeneratorMessage(t("settings.generator.noBridge"));
+      setPythonMessage(t("settings.generator.noBridge"));
       return;
     }
 
-    setIsCheckingGenerator(true);
-    setGeneratorMessage("");
+    setIsDetectingPython(true);
+    setPythonMessage("");
 
     try {
-      const result = await desktopApi.checkLocalGenerator();
-      setGeneratorStatus(result);
-      setGeneratorLogs(result.logs ?? []);
-      setGeneratorMessage(
-        result.pythonFound && result.scriptFound
-          ? t("settings.generator.ready")
-          : t("settings.generator.notReady")
-      );
+      const result = await desktopApi.detectPythonInterpreters();
+      setPythonCandidates(result.candidates);
+      if (result.candidates.length === 0) {
+        applyPythonPathSelection("");
+        setPythonProbe(null);
+        setPythonMessage("No se encontraron interpretes de Python.");
+        return;
+      }
+
+      const preferredPath =
+        result.candidates.find((candidate) => candidate.pythonPath === settings.pythonPath)?.pythonPath ??
+        result.candidates[0].pythonPath;
+
+      applyPythonPathSelection(preferredPath);
+      setPythonMessage(`Detectados ${result.candidates.length} interprete(s).`);
     } catch (error) {
-      setGeneratorMessage(
+      setPythonMessage(
         error instanceof Error ? error.message : t("settings.generator.checkFailed")
       );
     } finally {
-      setIsCheckingGenerator(false);
+      setIsDetectingPython(false);
     }
-  };
+  }, [applyPythonPathSelection, settings.pythonPath, t]);
 
-  const handleTestGenerator = async () => {
+  const handleProbePython = async () => {
     if (!hasDesktopBridge()) {
-      setGeneratorMessage(t("settings.generator.noBridge"));
+      setPythonMessage(t("settings.generator.noBridge"));
       return;
     }
 
-    setIsTestingGenerator(true);
-    setGeneratorMessage("");
+    if (!selectedPythonPath) {
+      setPythonMessage("Selecciona un interprete de Python primero.");
+      return;
+    }
+
+    setIsProbingPython(true);
+    setPythonMessage("");
 
     try {
-      const result = await desktopApi.runLocalGeneratorTest();
-      setGeneratorLogs(result.logs ?? []);
-      if (result.ok) {
-        setTestGlbPath(result.glbPath);
-        setGeneratorMessage(t("settings.generator.testOk"));
+      const result = await desktopApi.probePythonInterpreter(selectedPythonPath);
+      setPythonProbe(result);
+      if (!result.ok) {
+        setPythonMessage(result.error || "La comprobacion fallo.");
+        return;
+      }
+
+      if (!result.torchInstalled) {
+        setPythonMessage("PyTorch no esta instalado en este interprete.");
+        return;
+      }
+
+      if (!result.cudaAvailable) {
+        setPythonMessage("PyTorch instalado, pero CUDA no disponible.");
       } else {
-        setTestGlbPath(null);
-        setGeneratorMessage(result.error || t("settings.generator.testFailed"));
+        setPythonMessage(`CUDA disponible en: ${result.deviceName ?? "GPU detectada"}.`);
       }
     } catch (error) {
-      setTestGlbPath(null);
-      setGeneratorMessage(
+      setPythonMessage(
         error instanceof Error ? error.message : t("settings.generator.testFailed")
       );
     } finally {
-      setIsTestingGenerator(false);
+      setIsProbingPython(false);
     }
   };
 
-  const handleOpenGeneratorTestOutput = async () => {
-    if (!hasDesktopBridge() || !testGlbPath) {
+  const handleInstallTorchCuda = async () => {
+    if (!hasDesktopBridge()) {
+      setPythonMessage(t("settings.generator.noBridge"));
       return;
     }
 
-    await desktopApi.openGenerationOutputFolder(testGlbPath);
+    if (!selectedPythonPath) {
+      setPythonMessage("Selecciona un interprete de Python primero.");
+      return;
+    }
+
+    setIsInstallingTorch(true);
+    setPythonLogs([]);
+    setPythonMessage("");
+
+    try {
+      const installResult = await desktopApi.installTorchCuda(selectedPythonPath);
+      if (installResult.logs.trim().length > 0) {
+        const lines = installResult.logs.split(/\r?\n/).filter((line) => line.trim().length > 0);
+        setPythonLogs((previous) => (previous.length >= lines.length ? previous : lines));
+      }
+
+      if (!installResult.ok) {
+        setPythonMessage(installResult.error || "La instalacion de PyTorch CUDA fallo.");
+        return;
+      }
+
+      setPythonMessage("Instalacion completada. Ejecutando prueba...");
+      const probeResult = await desktopApi.probePythonInterpreter(selectedPythonPath);
+      setPythonProbe(probeResult);
+    } catch (error) {
+      setPythonMessage(error instanceof Error ? error.message : "La instalacion fallo.");
+    } finally {
+      setIsInstallingTorch(false);
+    }
   };
+
+  const handleCopyLogs = async () => {
+    if (pythonLogs.length === 0) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(pythonLogs.join("\n"));
+      setPythonMessage("Logs copiados al portapapeles.");
+    } catch {
+      setPythonMessage("No se pudieron copiar los logs.");
+    }
+  };
+
+  useEffect(() => {
+    setSelectedPythonPath(settings.pythonPath ?? "");
+  }, [settings.pythonPath]);
+
+  useEffect(() => {
+    if (!hasDesktopBridge()) {
+      return;
+    }
+
+    return desktopApi.onPythonInstallLog((line) => {
+      setPythonLogs((previous) => [...previous.slice(-999), line]);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!hasDesktopBridge()) {
+      return;
+    }
+
+    void handleDetectPython();
+  }, [handleDetectPython]);
 
   return (
     <div className="grid h-full w-full grid-cols-1 gap-5 overflow-y-auto pr-1 xl:grid-cols-2">
@@ -311,33 +398,71 @@ export function SettingsPage({
       </Card>
 
       <Card padding="md">
-        <h2 className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">{t("settings.generator.title")}</h2>
+        <h2 className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">Generador 3D local (Python)</h2>
         <div className="mt-3 space-y-3">
+          <Select
+            label="Interprete de Python"
+            value={selectedPythonPath}
+            onChange={(event) => {
+              applyPythonPathSelection(event.target.value);
+              setPythonProbe(null);
+            }}
+            disabled={isInstallingTorch}
+          >
+            {pythonCandidates.length === 0 ? (
+              <option value="">Sin interpretes detectados</option>
+            ) : null}
+            {pythonCandidates.map((candidate) => (
+              <option key={candidate.pythonPath} value={candidate.pythonPath}>
+                {candidate.pythonPath} ({candidate.source})
+              </option>
+            ))}
+          </Select>
+
           <div className="flex flex-wrap gap-2">
-            <Button variant="secondary" onClick={() => void handleCheckGenerator()} disabled={isCheckingGenerator || isTestingGenerator}>
-              {isCheckingGenerator ? t("settings.generator.checking") : t("settings.generator.check")}
+            <Button
+              variant="secondary"
+              onClick={() => void handleDetectPython()}
+              disabled={isDetectingPython || isInstallingTorch}
+            >
+              {isDetectingPython ? "Detectando..." : "Detectar"}
             </Button>
-            <Button variant="primary" onClick={() => void handleTestGenerator()} disabled={isTestingGenerator}>
-              {isTestingGenerator ? t("settings.generator.testing") : t("settings.generator.test")}
+            <Button
+              variant="secondary"
+              onClick={() => void handleProbePython()}
+              disabled={!selectedPythonPath || isProbingPython || isInstallingTorch}
+            >
+              {isProbingPython ? "Probando..." : "Probar"}
             </Button>
-            <Button variant="ghost" onClick={() => void handleOpenGeneratorTestOutput()} disabled={!testGlbPath}>
-              {t("settings.generator.openTestOutput")}
+            <Button
+              variant="primary"
+              onClick={() => void handleInstallTorchCuda()}
+              disabled={!selectedPythonPath || isInstallingTorch}
+            >
+              {isInstallingTorch ? "Instalando..." : "Instalar / Reparar PyTorch (CUDA)"}
+            </Button>
+            <Button variant="ghost" onClick={() => void handleCopyLogs()} disabled={pythonLogs.length === 0}>
+              Copy logs
             </Button>
           </div>
 
           <div className="space-y-1 rounded-lg border border-[var(--border)] bg-[var(--surface-2)] p-3 text-sm">
-            <p className="text-[var(--text)]">
-              {t("settings.generator.pythonFound")}: {generatorStatus?.pythonFound ? t("common.enabled") : t("common.disabled")}
-            </p>
-            <p className="text-[var(--text-muted)]">{t("settings.generator.pythonPath")}: {generatorStatus?.pythonPath ?? "-"}</p>
-            <p className="text-[var(--text-muted)]">{t("settings.generator.venvPath")}: {generatorStatus?.venvPath ?? "-"}</p>
-            <p className="text-[var(--text-muted)]">{t("settings.generator.scriptPath")}: {generatorStatus?.scriptPath ?? "-"}</p>
-            {generatorMessage ? <p className="text-[var(--text)]">{generatorMessage}</p> : null}
+            <p className="text-[var(--text)]">Python: {pythonProbe?.executable ? "OK" : "Not found"}</p>
+            <p className="text-[var(--text-muted)]">Pip: {pythonProbe?.pip ?? "-"}</p>
+            <p className="text-[var(--text-muted)]">Torch: {pythonProbe?.torchInstalled ? "Installed" : "Not installed"}</p>
+            <p className="text-[var(--text-muted)]">CUDA: {pythonProbe?.cudaAvailable ? "Available" : "Not available"}</p>
+            <p className="text-[var(--text-muted)]">Device: {pythonProbe?.deviceName ?? "-"}</p>
+            {pythonMessage ? <p className="text-[var(--text)]">{pythonMessage}</p> : null}
+            {pythonProbe?.torchInstalled && pythonProbe.cudaAvailable === false ? (
+              <p className="text-xs text-[var(--warning)]">
+                Torch esta en modo CPU o CUDA no disponible; verifique que instalo wheels cu121/cu124 y drivers NVIDIA.
+              </p>
+            ) : null}
           </div>
 
           <div className="max-h-44 overflow-auto rounded-lg border border-[var(--border)] bg-[var(--surface-3)] p-3">
-            {generatorLogs.length > 0 ? (
-              <pre className="whitespace-pre-wrap text-[11px] leading-relaxed text-[var(--text-muted)]">{generatorLogs.join("\n")}</pre>
+            {pythonLogs.length > 0 ? (
+              <pre className="whitespace-pre-wrap text-[11px] leading-relaxed text-[var(--text-muted)]">{pythonLogs.join("\n")}</pre>
             ) : (
               <p className="text-xs text-[var(--text-muted)]">{t("settings.generator.noLogs")}</p>
             )}

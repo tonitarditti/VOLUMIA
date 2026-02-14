@@ -5,6 +5,7 @@ import { registerProjectsFileHandlers } from "./ipc/projects-file.ipc";
 import { registerGenerationHandlers } from "./ipc/generation.ipc";
 import { registerSettingsFileHandlers } from "./ipc/settings-file.ipc";
 import { registerSystemPreferencesHandlers } from "./ipc/system-preferences.ipc";
+import { registerSystemPythonHandlers } from "./ipc/system-python.ipc";
 import { registerWindowControlHandlers } from "./ipc/window-controls.ipc";
 import { registerWindowSettingsHandlers } from "./ipc/window-settings.ipc";
 import { createWindowStateController } from "./window-state";
@@ -81,6 +82,7 @@ app.whenReady().then(() => {
   registerWindowControlHandlers(() => mainWindow);
   registerWindowSettingsHandlers(() => mainWindow, windowStateController);
   disposeSystemPreferencesHandlers = registerSystemPreferencesHandlers(() => mainWindow);
+  registerSystemPythonHandlers(() => mainWindow);
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {

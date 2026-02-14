@@ -22,4 +22,5 @@ export interface AppSettings {
   fpsLimit: 30 | 60 | 120;
   antialias: boolean;
   reduceMotion: boolean;
+  pythonPath?: string;
 }

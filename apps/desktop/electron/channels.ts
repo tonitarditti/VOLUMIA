@@ -21,6 +21,11 @@ export const IPC_CHANNELS = {
   generationProgress: "gen:progress",
   generationDone: "gen:done",
   generationError: "gen:error",
+  pyDetect: "py:detect",
+  pyProbe: "py:probe",
+  pyInstallTorchCuda: "py:install-torch-cuda",
+  pyInstallLog: "py:install-log",
+  pyInstallDone: "py:install-done",
 } as const;
 
 export type LanguageMode = "system" | "manual";
@@ -47,7 +52,53 @@ export interface AppSettingsSnapshot {
   fpsLimit: 30 | 60 | 120;
   antialias: boolean;
   reduceMotion: boolean;
+  pythonPath?: string;
 }
+
+export type PythonCandidateSource = "conda" | "where" | "py-launcher" | "custom";
+
+export type PythonCandidate = {
+  pythonPath: string;
+  source: PythonCandidateSource;
+};
+
+export type PythonDetectResult = {
+  candidates: PythonCandidate[];
+};
+
+export type PythonProbePayload = {
+  pythonPath: string;
+};
+
+export type PythonProbeResult = {
+  pythonPath: string;
+  ok: boolean;
+  executable?: string;
+  pip?: string;
+  torchInstalled: boolean;
+  torchVersion?: string;
+  cudaAvailable?: boolean;
+  deviceName?: string;
+  error?: string;
+};
+
+export type PythonInstallTorchCudaPayload = {
+  pythonPath: string;
+};
+
+export type PythonInstallTorchCudaResult = {
+  ok: boolean;
+  logs: string;
+  error?: string;
+};
+
+export type PythonInstallLogPayload = {
+  line: string;
+};
+
+export type PythonInstallDonePayload = {
+  ok: boolean;
+};
 
 export type ChatRole = "user" | "assistant";
 
@@ -151,6 +202,7 @@ export type GenerationRunPayload = {
   projectId: string;
   imagePaths: string[];
   preset: GenerationPreset;
+  pythonPath?: string;
 };
 
 export type GenerationRunResult =

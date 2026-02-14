@@ -12,6 +12,10 @@ import {
   type GenerationRunResult,
   type GenerationTestResult,
   type ImportProjectsResult,
+  type PythonDetectResult,
+  type PythonInstallLogPayload,
+  type PythonInstallTorchCudaResult,
+  type PythonProbeResult,
   type ProjectsExportEnvelope,
   type RememberWindowBoundsPayload,
   type SettingsExportEnvelope,
@@ -33,6 +37,10 @@ const generationDoneListeners = new Map<
 const generationErrorListeners = new Map<
   (payload: GenerationErrorPayload) => void,
   (_event: Electron.IpcRendererEvent, payload: GenerationErrorPayload) => void
+>();
+const pythonInstallLogListeners = new Map<
+  (line: string) => void,
+  (_event: Electron.IpcRendererEvent, payload: PythonInstallLogPayload) => void
 >();
 
 const bridge = {
@@ -125,6 +133,27 @@ const bridge = {
       if (!wrapped) return;
       ipcRenderer.off(IPC_CHANNELS.generationError, wrapped);
       generationErrorListeners.delete(callback);
+    },
+  },
+  systemPython: {
+    detect: () => ipcRenderer.invoke(IPC_CHANNELS.pyDetect) as Promise<PythonDetectResult>,
+    probe: (pythonPath: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.pyProbe, { pythonPath }) as Promise<PythonProbeResult>,
+    installTorchCuda: (pythonPath: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.pyInstallTorchCuda, { pythonPath }) as Promise<PythonInstallTorchCudaResult>,
+    onInstallLog: (callback: (line: string) => void) => {
+      const wrapped = (_event: Electron.IpcRendererEvent, payload: PythonInstallLogPayload) => {
+        callback(payload.line);
+      };
+
+      pythonInstallLogListeners.set(callback, wrapped);
+      ipcRenderer.on(IPC_CHANNELS.pyInstallLog, wrapped);
+    },
+    offInstallLog: (callback: (line: string) => void) => {
+      const wrapped = pythonInstallLogListeners.get(callback);
+      if (!wrapped) return;
+      ipcRenderer.off(IPC_CHANNELS.pyInstallLog, wrapped);
+      pythonInstallLogListeners.delete(callback);
     },
   },
   // Backward compatibility for existing renderer wrappers.

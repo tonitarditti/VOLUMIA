@@ -55,7 +55,7 @@ type GenerationRunSuccessResult = {
 
 type GenerationRunHandlerResult = GenerationRunSuccessResult | GenerationRunErrorResult;
 
-const PYTHON = "F:\\MINICONDA\\envs\\volumia\\python.exe";
+const DEFAULT_PYTHON = "F:\\MINICONDA\\envs\\volumia\\python.exe";
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp"]);
 const activeJobs = new Map<string, GenerationJobState>();
 const latestOutputByProject = new Map<string, string>();
@@ -210,22 +210,23 @@ function getArgValue(args: string[], flag: string) {
 }
 
 function runPython(
+  pythonPath: string,
   scriptPath: string,
   args: string[],
   spawnEnv: NodeJS.ProcessEnv,
   onProcess?: (process: ChildProcess) => void
 ) {
   return new Promise<{ stdout: string; stderr: string; code: number }>((resolvePromise, rejectPromise) => {
-    logInfo("[VOLUMIA] Using Python:", PYTHON);
+    logInfo("[VOLUMIA] Using Python:", pythonPath);
     const outPath = getArgValue(args, "--out");
     logInfo(
       "[VOLUMIA][PY] spawn",
-      `python=${PYTHON}`,
+      `python=${pythonPath}`,
       `script=${scriptPath}`,
       `args=${JSON.stringify(args)}`,
       `out=${outPath || "n/a"}`
     );
-    const p = spawn(PYTHON, [scriptPath, ...args], {
+    const p = spawn(pythonPath, [scriptPath, ...args], {
       windowsHide: true,
       env: spawnEnv,
       stdio: ["ignore", "pipe", "pipe"],
@@ -250,7 +251,7 @@ function runPython(
 
     p.on("error", (error) => {
       stderr = capOutput(stderr, `\n${asErrorMessage(error)}`, MAX_STDERR_CHARS);
-      logErr("[VOLUMIA][PY] spawn error", `python=${PYTHON}`, `script=${scriptPath}`, `out=${outPath || "n/a"}`);
+      logErr("[VOLUMIA][PY] spawn error", `python=${pythonPath}`, `script=${scriptPath}`, `out=${outPath || "n/a"}`);
       rejectOnce(createPythonError(-1, null, stdout, stderr));
     });
 
@@ -266,7 +267,7 @@ function runPython(
       const exitCode = code ?? -1;
       logInfo(
         "[VOLUMIA][PY]",
-        `python=${PYTHON}`,
+        `python=${pythonPath}`,
         `script=${scriptPath}`,
         `out=${outPath || "n/a"}`,
         `exit=${exitCode}`
@@ -306,6 +307,19 @@ function isPreset(value: unknown): value is GenerationPreset {
   return value === "fast" || value === "balanced" || value === "quality";
 }
 
+function resolvePythonPath(value: unknown) {
+  if (typeof value !== "string") {
+    return DEFAULT_PYTHON;
+  }
+
+  const normalized = value.trim();
+  if (!normalized) {
+    return DEFAULT_PYTHON;
+  }
+
+  return normalized;
+}
+
 function validateRunPayload(payload: unknown): payload is GenerationRunPayload {
   if (typeof payload !== "object" || payload === null) return false;
   const candidate = payload as Partial<GenerationRunPayload>;
@@ -313,7 +327,8 @@ function validateRunPayload(payload: unknown): payload is GenerationRunPayload {
     typeof candidate.projectId === "string" &&
     Array.isArray(candidate.imagePaths) &&
     candidate.imagePaths.every((item) => typeof item === "string") &&
-    isPreset(candidate.preset)
+    isPreset(candidate.preset) &&
+    (typeof candidate.pythonPath === "undefined" || typeof candidate.pythonPath === "string")
   );
 }
 
@@ -458,7 +473,8 @@ async function runLocalPythonGeneration(
   imagePath: string,
   job: GenerationJobState,
   getWindow: WindowGetter,
-  scriptPath: string
+  scriptPath: string,
+  pythonPath: string
 ): Promise<LocalGenerationResult> {
   const logs: string[] = [];
   let device: GenerationDevice | undefined;
@@ -485,7 +501,7 @@ async function runLocalPythonGeneration(
     };
     logInfo("[VOLUMIA] OpenMP duplicate workaround enabled");
 
-    const { stdout, stderr, code } = await runPython(scriptPath, [
+    const { stdout, stderr, code } = await runPython(pythonPath, scriptPath, [
       "--in", imagePath,
       "--out", outGlb,
       "--quality", mapPresetToQuality(payload.preset),
@@ -641,14 +657,15 @@ async function runGenerationJob(
 
   const mode = resolveGenerationMode(copiedImages[0]);
   const scriptPath = mode === "furniture" ? resolveFurnitureScriptPath() : resolveGeneratorScriptPath();
+  const pythonPath = resolvePythonPath(payload.pythonPath);
   if (!scriptPath) {
     if (mode === "furniture") {
       throw new Error("No se encontro apps/desktop/python/image_to_3d_furniture_tables.py");
     }
     throw new Error("No se encontro apps/desktop/python/image_to_3d_depth_glb.py");
   }
-  if (!fs.existsSync(PYTHON)) {
-    throw new Error(`No se encontro Python en: ${PYTHON}`);
+  if (!fs.existsSync(pythonPath)) {
+    throw new Error(`No se encontro Python en: ${pythonPath}`);
   }
 
   sendProgress(getWindow, {
@@ -665,7 +682,8 @@ async function runGenerationJob(
     copiedImages[0],
     job,
     getWindow,
-    scriptPath
+    scriptPath,
+    pythonPath
   );
 
   if (!localResult.ok || !localResult.outGlbPath) {
@@ -710,11 +728,11 @@ async function runGenerationJob(
 function buildGeneratorCheckResult(): GenerationCheckResult {
   const scriptPath = resolveGeneratorScriptPath();
   const furnitureScriptPath = resolveFurnitureScriptPath();
-  const pythonFound = fs.existsSync(PYTHON);
+  const pythonFound = fs.existsSync(DEFAULT_PYTHON);
   const logs = [
     `script: ${scriptPath ?? "not found"}`,
     `furniture_script: ${furnitureScriptPath ?? "not found"}`,
-    `python: ${PYTHON}`,
+    `python: ${DEFAULT_PYTHON}`,
     `pythonFound: ${pythonFound}`,
     "generator: image_to_3d_depth_glb.py",
     "generator_mode_switch: handled inside image_to_3d_depth_glb.py via object detection",
@@ -722,8 +740,8 @@ function buildGeneratorCheckResult(): GenerationCheckResult {
 
   return {
     pythonFound,
-    pythonPath: PYTHON,
-    venvPath: path.dirname(path.dirname(PYTHON)),
+    pythonPath: DEFAULT_PYTHON,
+    venvPath: path.dirname(path.dirname(DEFAULT_PYTHON)),
     scriptFound: Boolean(scriptPath),
     scriptPath,
     logs,
@@ -817,7 +835,7 @@ export function registerGenerationHandlers(getWindow: WindowGetter) {
   ipcMain.handle(IPC_CHANNELS.generationTest, async (): Promise<GenerationTestResult> => {
     const scriptPath = resolveGeneratorScriptPath();
 
-    if (!scriptPath || !fs.existsSync(PYTHON)) {
+    if (!scriptPath || !fs.existsSync(DEFAULT_PYTHON)) {
       return {
         ok: false,
         error: "No se encontro un generador local valido.",
@@ -850,7 +868,8 @@ export function registerGenerationHandlers(getWindow: WindowGetter) {
       sampleImagePath,
       testJob,
       getWindow,
-      scriptPath
+      scriptPath,
+      DEFAULT_PYTHON
     );
 
     if (!localResult.ok || !localResult.outGlbPath) {

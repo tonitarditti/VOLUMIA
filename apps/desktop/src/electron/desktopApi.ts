@@ -14,6 +14,9 @@ import {
   type GenerationRunResult,
   type GenerationTestResult,
   type Theme,
+  type PythonDetectResult,
+  type PythonProbeResult,
+  type PythonInstallTorchCudaResult,
   type WindowModePayload,
   type WindowStateSnapshot,
 } from "./channels";
@@ -53,6 +56,14 @@ export type VolumiaGenerationBridge = {
   offError: (callback: (payload: GenerationErrorPayload) => void) => void;
 };
 
+export type VolumiaSystemPythonBridge = {
+  detect: () => Promise<PythonDetectResult>;
+  probe: (pythonPath: string) => Promise<PythonProbeResult>;
+  installTorchCuda: (pythonPath: string) => Promise<PythonInstallTorchCudaResult>;
+  onInstallLog: (callback: (line: string) => void) => void;
+  offInstallLog: (callback: (line: string) => void) => void;
+};
+
 export type VolumiaDesktopBridge = {
   exportJson: (payload: ProjectsExportEnvelope) => Promise<ExportProjectsResult>;
   importJson: () => Promise<ImportProjectsResult>;
@@ -62,6 +73,7 @@ export type VolumiaDesktopBridge = {
   settingsWindow?: Partial<VolumiaSettingsWindowBridge>;
   system?: Partial<VolumiaSystemBridge>;
   generation?: Partial<VolumiaGenerationBridge>;
+  systemPython?: Partial<VolumiaSystemPythonBridge>;
 };
 
 export function hasDesktopBridge() {
@@ -139,6 +151,21 @@ function ensureGenerationBridge(): VolumiaGenerationBridge {
   }
 
   return generation as VolumiaGenerationBridge;
+}
+
+function ensureSystemPythonBridge(): VolumiaSystemPythonBridge {
+  const systemPython = ensureBridge().systemPython;
+  if (
+    !systemPython?.detect ||
+    !systemPython.probe ||
+    !systemPython.installTorchCuda ||
+    !systemPython.onInstallLog ||
+    !systemPython.offInstallLog
+  ) {
+    throw new Error("Desktop system Python bridge is unavailable.");
+  }
+
+  return systemPython as VolumiaSystemPythonBridge;
 }
 
 export const desktopApi = {
@@ -226,6 +253,22 @@ export const desktopApi = {
     generation.onError(callback);
     return () => {
       generation.offError(callback);
+    };
+  },
+  detectPythonInterpreters(): Promise<PythonDetectResult> {
+    return ensureSystemPythonBridge().detect();
+  },
+  probePythonInterpreter(pythonPath: string): Promise<PythonProbeResult> {
+    return ensureSystemPythonBridge().probe(pythonPath);
+  },
+  installTorchCuda(pythonPath: string): Promise<PythonInstallTorchCudaResult> {
+    return ensureSystemPythonBridge().installTorchCuda(pythonPath);
+  },
+  onPythonInstallLog(callback: (line: string) => void): () => void {
+    const systemPython = ensureSystemPythonBridge();
+    systemPython.onInstallLog(callback);
+    return () => {
+      systemPython.offInstallLog(callback);
     };
   },
 };

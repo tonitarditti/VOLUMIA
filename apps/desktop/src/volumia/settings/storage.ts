@@ -104,6 +104,14 @@ function hasOwnKey(record: Record<string, unknown>, key: string) {
   return Object.prototype.hasOwnProperty.call(record, key);
 }
 
+function normalizeOptionalString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
 function getStorage() {
   if (typeof window === "undefined") return null;
 
@@ -148,6 +156,7 @@ export function sanitizeAppSettings(value: unknown, fallback: AppSettings = DEFA
     fpsLimit: isFpsLimit(value.fpsLimit) ? value.fpsLimit : fallback.fpsLimit,
     antialias: typeof value.antialias === "boolean" ? value.antialias : fallback.antialias,
     reduceMotion: typeof value.reduceMotion === "boolean" ? value.reduceMotion : fallback.reduceMotion,
+    pythonPath: normalizeOptionalString(value.pythonPath) ?? fallback.pythonPath,
   };
 }
 

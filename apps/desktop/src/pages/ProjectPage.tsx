@@ -10,6 +10,7 @@ import { desktopApi, hasDesktopBridge } from "@/electron/desktopApi";
 import { Button, Card, TextArea, TextField } from "@/ui/primitives";
 import { ProjectViewport } from "@/three/ProjectViewport";
 import { useT } from "@/volumia/i18n/useT";
+import { useSettings } from "@/volumia/settings/context";
 
 type GenerationDevice = {
   device: "cuda" | "cpu";
@@ -73,6 +74,7 @@ function getProjectModel(model: ProjectModel | undefined): ProjectModel {
 
 export function ProjectPage() {
   const { t, language } = useT();
+  const { settings } = useSettings();
   const { projectId = "" } = useParams();
   const { state, hydrated, renameProject, updateNotes, appendChatMessage, updateModelMetadata, updateProjectModel } = useProjects();
 
@@ -235,6 +237,7 @@ export function ProjectPage() {
       projectId: project.id,
       imagePaths: selectedImages,
       preset,
+      pythonPath: settings.pythonPath,
     });
 
     if (!result.ok) {
