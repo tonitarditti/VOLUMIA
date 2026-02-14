@@ -16,7 +16,7 @@ type GenerationDevice = {
   device: "cuda" | "cpu";
   name: string;
 };
-type AutoEngine = "triposr" | "arch" | "blockout";
+type AutoEngine = "instantmesh" | "triposr" | "arch" | "blockout";
 
 function formatMessageTime(value: string, locale: string) {
   return new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit" }).format(new Date(value));
@@ -59,6 +59,9 @@ function parseDeviceLine(value: string): GenerationDevice | null {
 }
 
 function formatAutoEngineLabel(engine: AutoEngine) {
+  if (engine === "instantmesh") {
+    return "InstantMesh";
+  }
   if (engine === "triposr") {
     return "TripoSR";
   }

@@ -133,7 +133,7 @@ export type GenerationPreset = "fast" | "balanced" | "quality";
 export type GenerationMode = "auto" | "neural" | "architectural";
 export type GenerationPipeline = "depth_glb" | "gen_skp";
 export type GenerationSkpQuality = "fast" | "high";
-export type GenerationAutoEngine = "triposr" | "arch" | "blockout";
+export type GenerationAutoEngine = "instantmesh" | "triposr" | "arch" | "blockout";
 
 export type ProjectModel = {
   sourceImages: string[];

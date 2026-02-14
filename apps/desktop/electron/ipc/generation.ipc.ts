@@ -603,7 +603,7 @@ function resolveGenerationMode(mode: GenerationMode | undefined): GenerationMode
 }
 
 function parseAutoEngine(value: unknown): GenerationAutoEngine | undefined {
-  if (value === "triposr" || value === "arch" || value === "blockout") {
+  if (value === "instantmesh" || value === "triposr" || value === "arch" || value === "blockout") {
     return value;
   }
   return undefined;

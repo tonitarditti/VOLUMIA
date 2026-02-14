@@ -808,6 +808,184 @@ def run_triposr(image_path: str, out_glb_path: str, preset: str, device: str) ->
         raise RuntimeError("TripoSR did not produce output GLB.")
 
 
+def _resolve_instantmesh_root() -> str:
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    candidates = [
+        os.path.abspath(os.path.join(current_dir, "..", "..", "..", "InstantMesh")),
+        os.path.abspath(os.path.join(os.getcwd(), "InstantMesh")),
+    ]
+    for candidate in candidates:
+        run_script = os.path.join(candidate, "run.py")
+        if os.path.exists(run_script):
+            return candidate
+    raise RuntimeError("InstantMesh repository not found at ./InstantMesh")
+
+
+def _instantmesh_requirements_file(instantmesh_root: str) -> str:
+    filename = "requirements-windows.txt" if os.name == "nt" else "requirements.txt"
+    candidate = os.path.join(instantmesh_root, filename)
+    if os.path.exists(candidate):
+        return candidate
+    return os.path.join(instantmesh_root, "requirements.txt")
+
+
+def check_instantmesh_available() -> Tuple[bool, str]:
+    try:
+        _resolve_instantmesh_root()
+    except Exception as error:
+        return False, str(error)
+
+    try:
+        importlib.import_module("nvdiffrast.torch")
+    except Exception:
+        return False, "InstantMesh unavailable: nvdiffrast missing"
+
+    return True, ""
+
+
+def _find_instantmesh_obj(mesh_dir: str, image_path: str) -> Optional[str]:
+    stem = os.path.splitext(os.path.basename(image_path))[0]
+    direct = os.path.join(mesh_dir, f"{stem}.obj")
+    if os.path.exists(direct):
+        return direct
+
+    if not os.path.isdir(mesh_dir):
+        return None
+
+    candidates = [name for name in os.listdir(mesh_dir) if name.lower().endswith(".obj")]
+    if not candidates:
+        return None
+
+    candidates.sort()
+    return os.path.join(mesh_dir, candidates[0])
+
+
+def run_instantmesh_provider(
+    image_path: str,
+    out_glb_path: str,
+    quality: str,
+    runtime_device: str,
+) -> Dict[str, Any]:
+    available, reason = check_instantmesh_available()
+    try:
+        instantmesh_root = _resolve_instantmesh_root()
+    except Exception as error:
+        return {"ok": False, "error": str(error)}
+
+    requirements_file = _instantmesh_requirements_file(instantmesh_root)
+    if not available:
+        return {
+            "ok": False,
+            "error": reason or "InstantMesh unavailable",
+            "requirements_file": requirements_file,
+        }
+
+    run_script = os.path.join(instantmesh_root, "run.py")
+    config_path = os.path.join(instantmesh_root, "configs", "instant-mesh-large.yaml")
+    if not os.path.exists(run_script) or not os.path.exists(config_path):
+        return {
+            "ok": False,
+            "error": "InstantMesh runner/config not found.",
+            "requirements_file": requirements_file,
+        }
+
+    steps_map = {"fast": "45", "balanced": "75", "high": "110"}
+    output_root = os.path.join(os.path.dirname(out_glb_path), "instantmesh-out")
+    os.makedirs(output_root, exist_ok=True)
+    command = [
+        sys.executable,
+        run_script,
+        config_path,
+        os.path.abspath(image_path),
+        "--output_path",
+        output_root,
+        "--diffusion_steps",
+        steps_map.get(quality, "75"),
+        "--view",
+        "6",
+    ]
+    if os.environ.get("VOLUMIA_INSTANTMESH_NO_REMBG", "0").strip() == "1":
+        command.append("--no_rembg")
+
+    command_env = os.environ.copy()
+    if runtime_device != "cuda":
+        command_env["CUDA_VISIBLE_DEVICES"] = ""
+
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=instantmesh_root,
+            env=command_env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except Exception as error:
+        return {
+            "ok": False,
+            "error": f"InstantMesh execution failed: {error}",
+            "requirements_file": requirements_file,
+        }
+
+    stdout = (completed.stdout or "").strip()
+    stderr = (completed.stderr or "").strip()
+    if completed.returncode != 0:
+        tail = "\n".join((stdout + "\n" + stderr).splitlines()[-8:]).strip()
+        return {
+            "ok": False,
+            "error": (
+                f"InstantMesh failed (code={completed.returncode}). "
+                f"Install deps with: pip install -r {requirements_file}. "
+                f"{tail}"
+            ).strip(),
+            "requirements_file": requirements_file,
+        }
+
+    config_name = os.path.splitext(os.path.basename(config_path))[0]
+    mesh_dir = os.path.join(output_root, config_name, "meshes")
+    obj_path = _find_instantmesh_obj(mesh_dir, image_path)
+    if not obj_path or not os.path.exists(obj_path):
+        return {
+            "ok": False,
+            "error": f"InstantMesh did not produce OBJ in {mesh_dir}",
+            "requirements_file": requirements_file,
+        }
+
+    try:
+        import trimesh
+
+        loaded = trimesh.load(obj_path, force="scene")
+        if isinstance(loaded, trimesh.Trimesh):
+            mesh = loaded.copy()
+        elif isinstance(loaded, trimesh.Scene):
+            meshes = [geom for geom in loaded.geometry.values() if isinstance(geom, trimesh.Trimesh)]
+            if not meshes:
+                raise RuntimeError("OBJ scene has no mesh geometry.")
+            mesh = trimesh.util.concatenate([m.copy() for m in meshes]) if len(meshes) > 1 else meshes[0].copy()
+        else:
+            raise RuntimeError(f"Unsupported InstantMesh OBJ type: {type(loaded)!r}")
+
+        scene = trimesh.Scene()
+        scene.add_geometry(mesh, node_name="instantmesh", geom_name="instantmesh")
+        normalized_mesh = normalize_scene_mesh_for_export(scene, target_size=2.0)
+        normalized_mesh.export(out_glb_path, file_type="glb")
+    except Exception as error:
+        return {
+            "ok": False,
+            "error": f"InstantMesh OBJ->GLB conversion failed: {error}",
+            "requirements_file": requirements_file,
+        }
+
+    return {
+        "ok": True,
+        "provider": "instantmesh",
+        "requirements_file": requirements_file,
+        "stdout_tail": "\n".join(stdout.splitlines()[-6:]).strip(),
+        "stderr_tail": "\n".join(stderr.splitlines()[-6:]).strip(),
+    }
+
+
 def _load_glb_mesh_for_gate(glb_path: str):
     import trimesh
 
@@ -1007,9 +1185,49 @@ def run_auto_pipeline(image_path: str, out_path: str, quality: str, runtime_devi
     if not os.path.exists(image_path):
         raise RuntimeError(f"Input image does not exist: {image_path}")
 
-    emit_progress("neural_bootstrap", 12, "Bootstrapping TripoSR runtime")
+    emit_progress("neural_bootstrap", 12, "Checking InstantMesh optional provider")
+    instantmesh_ok, instantmesh_reason = check_instantmesh_available()
+    if instantmesh_ok:
+        try:
+            emit_progress("neural_generate", 18, "Generating with InstantMesh (optional)")
+            instantmesh_result = run_instantmesh_provider(
+                image_path=image_path,
+                out_glb_path=out_path,
+                quality=quality,
+                runtime_device=runtime_device,
+            )
+            if instantmesh_result.get("ok"):
+                try:
+                    _normalize_exported_glb(out_path, target_size=2.0)
+                except Exception as normalize_error:
+                    errors.append(f"instantmesh normalize warning: {normalize_error}")
+                    log_error(f"[AUTO] instantmesh normalize warning: {normalize_error}")
+
+                emit_progress("gate1", 28, "Evaluating InstantMesh quality gate")
+                gate0 = quality_gate(out_path)
+                if gate0.get("ok"):
+                    emit_progress("export", 95, "Exporting GLB")
+                    _write_auto_meta(out_path, "instantmesh", gate0, errors)
+                    return "instantmesh"
+
+                gate0_reason = str(gate0.get("reason", "unknown"))
+                errors.append(f"instantmesh gate failed: {gate0_reason}")
+                log_error(f"[AUTO] instantmesh gate failed: {gate0_reason}")
+            else:
+                provider_error = str(instantmesh_result.get("error", "InstantMesh provider failed"))
+                errors.append(provider_error)
+                log_error(f"[AUTO] {provider_error}")
+        except Exception as instantmesh_error:
+            errors.append(f"instantmesh failed: {instantmesh_error}")
+            log_error(f"[AUTO] instantmesh failed: {instantmesh_error}")
+    else:
+        reason_text = instantmesh_reason or "InstantMesh unavailable"
+        errors.append(reason_text)
+        log_error(f"[AUTO] {reason_text}")
+
+    emit_progress("neural_bootstrap", 34, "Bootstrapping TripoSR runtime")
     try:
-        emit_progress("neural_generate", 24, "Generating with TripoSR")
+        emit_progress("neural_generate", 44, "Generating with TripoSR")
         run_triposr(image_path=image_path, out_glb_path=out_path, preset=quality, device=runtime_device)
         try:
             _normalize_exported_glb(out_path, target_size=2.0)
@@ -1017,7 +1235,7 @@ def run_auto_pipeline(image_path: str, out_path: str, quality: str, runtime_devi
             errors.append(f"triposr normalize warning: {normalize_error}")
             log_error(f"[AUTO] triposr normalize warning: {normalize_error}")
 
-        emit_progress("gate1", 40, "Evaluating neural quality gate")
+        emit_progress("gate1", 56, "Evaluating neural quality gate")
         gate1 = quality_gate(out_path)
         if gate1.get("ok"):
             emit_progress("export", 95, "Exporting GLB")
@@ -1031,7 +1249,7 @@ def run_auto_pipeline(image_path: str, out_path: str, quality: str, runtime_devi
         errors.append(f"triposr failed: {triposr_error}")
         log_error(f"[AUTO] triposr failed: {triposr_error}")
 
-    emit_progress("arch_generate", 58, "Generating ARCH fallback")
+    emit_progress("arch_generate", 70, "Generating ARCH fallback")
     try:
         run_architectural_pipeline(image_path, out_path, quality)
         try:
@@ -1040,7 +1258,7 @@ def run_auto_pipeline(image_path: str, out_path: str, quality: str, runtime_devi
             errors.append(f"arch normalize warning: {normalize_error}")
             log_error(f"[AUTO] arch normalize warning: {normalize_error}")
 
-        emit_progress("gate2", 74, "Evaluating ARCH quality gate")
+        emit_progress("gate2", 82, "Evaluating ARCH quality gate")
         gate2 = quality_gate(out_path)
         if gate2.get("ok"):
             emit_progress("export", 95, "Exporting GLB")
@@ -1054,7 +1272,7 @@ def run_auto_pipeline(image_path: str, out_path: str, quality: str, runtime_devi
         errors.append(f"arch failed: {arch_error}")
         log_error(f"[AUTO] arch failed: {arch_error}")
 
-    emit_progress("blockout", 88, "Generating simple blockout fallback")
+    emit_progress("blockout", 90, "Generating simple blockout fallback")
     try:
         run_simple_blockout_pipeline(image_path, out_path, quality)
         try:
