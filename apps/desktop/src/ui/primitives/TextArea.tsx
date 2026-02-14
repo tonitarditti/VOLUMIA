@@ -24,8 +24,8 @@ export function TextArea({
       {label ? <label htmlFor={textareaId} className="text-xs uppercase tracking-[0.14em] text-[var(--text-muted)]">{label}</label> : null}
       <textarea
         id={textareaId}
-        className={`min-h-24 w-full resize-y rounded-lg border bg-[var(--surface-3)] px-3 py-2 text-sm text-[var(--text)] outline-none transition duration-150 ease-out placeholder:text-[var(--text-muted)] focus:ring-2 focus:ring-[var(--focus-ring)] ${
-          error ? "border-[var(--danger)] focus:border-[var(--danger)]" : "border-[var(--border)] focus:border-[var(--accent)]"
+        className={`min-h-24 w-full resize-y rounded-lg border bg-[var(--input-bg)] px-3 py-2 text-sm text-[var(--text)] outline-none transition duration-150 ease-out placeholder:text-[var(--text-muted)] focus:ring-2 focus:ring-[var(--focus-ring)] ${
+          error ? "border-[var(--danger)] focus:border-[var(--danger)]" : "border-[var(--input-border)] focus:border-[var(--accent)]"
         } ${className}`}
         {...props}
       />
@@ -38,4 +38,3 @@ export function TextArea({
 export const Textarea = TextArea;
 
 export type { TextAreaProps };
-

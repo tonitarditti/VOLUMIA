@@ -306,7 +306,7 @@ export function SettingsPage({
 
   return (
     <div className="h-full w-full overflow-y-auto">
-      <div className="mx-auto grid max-w-6xl grid-cols-1 auto-rows-fr gap-6 p-8 md:grid-cols-2">
+      <div className="mx-auto grid max-w-5xl grid-cols-1 gap-6 px-8 py-10 lg:grid-cols-2">
       <Card padding="md" className="h-full">
         <p className="text-[11px] uppercase tracking-[0.2em] text-[var(--text-muted)]">{t("settings.workspace")}</p>
         <h1 className="mt-1 text-xl font-semibold tracking-[0.03em] text-[var(--text)]">{t("settings.title")}</h1>

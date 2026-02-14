@@ -423,7 +423,7 @@ function getViewportThemeConfig(theme: ViewportTheme): ViewportThemeConfig {
   if (theme === "light") {
     return {
       isDark: false,
-      background: "#e7e5e4",
+      background: "#f4f1ee",
       ground: "#d6d3d1",
       gridMain: "#a8a29e",
       gridSub: "#d6d3d1",
@@ -438,7 +438,7 @@ function getViewportThemeConfig(theme: ViewportTheme): ViewportThemeConfig {
 
   return {
     isDark: true,
-    background: "#2b2926",
+    background: "#0c0a09",
     ground: "#4a4640",
     gridMain: "#6a6358",
     gridSub: "#4a443c",
@@ -536,6 +536,8 @@ export function ProjectViewport({
   }, []);
 
   useEffect(() => {
+    window.dispatchEvent(new Event("resize"));
+
     const raf = window.requestAnimationFrame(() => {
       const host = hostRef.current;
       if (!host) {
@@ -562,9 +564,7 @@ export function ProjectViewport({
   const canRenderCanvas = size.width >= 10 && size.height >= 10;
   const viewportTheme = resolveViewportTheme(resolvedTheme);
   const themeConfig = getViewportThemeConfig(viewportTheme);
-  const bgClass = themeConfig.isDark
-    ? "bg-[#2b2926]"
-    : "bg-[#e7e5e4]";
+  const bgClass = themeConfig.isDark ? "bg-[#0c0a09]" : "bg-[#f4f1ee]";
 
   useEffect(() => {
     if (glbPath) {

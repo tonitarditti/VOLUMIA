@@ -8,7 +8,7 @@ type ButtonProps = PropsWithChildren<ButtonHTMLAttributes<HTMLButtonElement>> & 
 
 const variantClasses: Record<ButtonVariant, string> = {
   primary:
-    "border-[var(--accent)] bg-[var(--accent)] text-[var(--surface-1)] hover:border-[var(--accent-2)] hover:bg-[var(--accent-2)] active:bg-[var(--accent-2)]/95",
+    "border-[var(--accent)] bg-[var(--accent)] text-white hover:border-[var(--accent-2)] hover:bg-[var(--accent-2)] active:bg-[var(--accent-2)]/95",
   secondary:
     "border-[var(--border)] bg-[var(--surface-2)] text-[var(--text)] hover:border-[var(--accent)] hover:bg-[var(--surface-3)]",
   ghost:
@@ -27,4 +27,3 @@ export function Button({ variant = "secondary", className = "", children, ...pro
     </button>
   );
 }
-

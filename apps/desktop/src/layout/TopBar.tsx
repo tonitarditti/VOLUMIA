@@ -22,7 +22,7 @@ export function TopBar() {
     }`;
 
   return (
-    <header className="drag-region flex h-12 items-center justify-between border-b border-[var(--border)] bg-[var(--surface-1)] px-4">
+    <header className="drag-region relative z-[100] flex h-12 items-center justify-between border-b border-[var(--border)] bg-[var(--surface-1)] px-4">
       <div className="flex min-w-0 items-center gap-3">
         <div className="text-[11px] font-semibold uppercase tracking-[0.3em] text-[var(--accent)]">{t("topbar.brand")}</div>
         <div className="h-4 w-px bg-[var(--border)]" />

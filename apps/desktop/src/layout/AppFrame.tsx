@@ -1,4 +1,5 @@
 import type { PropsWithChildren } from "react";
+import { useLocation } from "react-router-dom";
 import { Button } from "@/ui/primitives";
 import { useT } from "@/volumia/i18n/useT";
 import { Sidebar } from "./Sidebar";
@@ -11,6 +12,8 @@ type AppFrameProps = PropsWithChildren<{
 
 export function AppFrame({ notice, onDismissNotice, children }: AppFrameProps) {
   const { t } = useT();
+  const location = useLocation();
+  const isProjectView = location.pathname.startsWith("/project/");
 
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-[var(--bg)] text-[var(--text)]">
@@ -26,9 +29,17 @@ export function AppFrame({ notice, onDismissNotice, children }: AppFrameProps) {
         </div>
       ) : null}
 
-      <div className="mx-auto flex h-full w-full max-w-[1680px] flex-1 gap-4 overflow-hidden p-4">
+      <div
+        className={isProjectView
+          ? "flex h-full w-full flex-1 gap-4 overflow-hidden py-4 pl-4 pr-0"
+          : "mx-auto flex h-full w-full max-w-[1680px] flex-1 gap-4 overflow-hidden p-4"}
+      >
         <Sidebar />
-        <main className="flex min-h-0 flex-1 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface-1)] p-4">
+        <main
+          className={isProjectView
+            ? "flex min-h-0 flex-1 overflow-hidden rounded-l-2xl rounded-r-none border border-[var(--border)] bg-[var(--surface-1)] p-0"
+            : "flex min-h-0 flex-1 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface-1)] p-4"}
+        >
           {children}
         </main>
       </div>

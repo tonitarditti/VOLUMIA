@@ -366,25 +366,25 @@ export function ProjectPage() {
     await desktopApi.openGenerationOutputFolder(project.model.glbPath);
   };
 
-  const isLightMode = resolvedTheme === "light";
-  const warmPanelClass = isLightMode
-    ? "border border-[#d6d3d1]/50 bg-white/40 text-[#1c1917] backdrop-blur-md shadow-[0_8px_32px_rgba(0,0,0,0.15)]"
-    : "border border-[#44403c]/50 bg-[#1c1917]/80 text-[#e7e5e4] backdrop-blur-xl shadow-2xl";
-  const warmGlassClass = isLightMode
-    ? "bg-white/40 backdrop-blur-md border border-[#d6d3d1]/50 text-[#1c1917] shadow-[0_8px_32px_rgba(0,0,0,0.15)]"
-    : "bg-[#0c0a09]/60 backdrop-blur-2xl border border-white/10 text-[#e7e5e4] shadow-[0_8px_32px_rgba(0,0,0,0.5)]";
-  const floatingButtonClass = isLightMode
-    ? "rounded-lg border border-[#d6d3d1]/50 bg-white/40 px-3 py-2 text-xs text-[#1c1917] backdrop-blur-md transition-all duration-200 ease-out hover:bg-white/60"
-    : "rounded-lg border border-[#44403c]/50 bg-[#1c1917]/80 px-3 py-2 text-xs text-[#e7e5e4] backdrop-blur-xl transition-all duration-200 ease-out hover:bg-[#292524]/85";
+  const isLightTheme = resolvedTheme === "light";
+  const warmPanelClass = isLightTheme
+    ? "border border-[#d6d3d1] bg-white/70 text-[#2d2a26] backdrop-blur-md shadow-[0_8px_32px_rgba(0,0,0,0.14)]"
+    : "border border-[#44403c] bg-[#1c1917]/70 text-[#e7e5e4] backdrop-blur-2xl shadow-[0_8px_32px_rgba(0,0,0,0.5)]";
+  const warmGlassClass = isLightTheme
+    ? "border border-[#d6d3d1] bg-white/70 text-[#2d2a26] backdrop-blur-md shadow-[0_8px_32px_rgba(0,0,0,0.14)]"
+    : "border border-[#44403c] bg-[#1c1917]/70 text-[#e7e5e4] backdrop-blur-2xl shadow-[0_8px_32px_rgba(0,0,0,0.5)]";
+  const floatingButtonClass = isLightTheme
+    ? "rounded-lg border border-[#d6d3d1] bg-white/70 px-3 py-2 text-xs text-[#2d2a26] backdrop-blur-md transition-all duration-200 ease-out hover:bg-white/80"
+    : "rounded-lg border border-[#44403c] bg-[#1c1917]/70 px-3 py-2 text-xs text-[#e7e5e4] backdrop-blur-2xl transition-all duration-200 ease-out hover:bg-[#292420]";
 
   return (
     <div className="relative h-full min-h-0 w-full min-w-0 overflow-hidden">
       <div className="absolute inset-0 z-0 h-full w-full">
-        <ProjectViewport glbPath={project.model?.glbPath} glbVersion={project.model?.generatedAt} showUtilityButtons={false} />
+        <ProjectViewport glbPath={project.model?.glbPath} glbVersion={project.model?.generatedAt} showUtilityButtons />
       </div>
 
-      <div className="pointer-events-none absolute inset-0 z-10 p-4">
-        <div className="relative flex h-full min-h-0 w-full min-w-0 gap-4">
+      <div className="pointer-events-none absolute inset-0 z-10">
+        <div className="relative flex h-full min-h-0 w-full min-w-0 gap-4 py-4 pl-4 pr-0">
           <aside className={`pointer-events-auto flex h-full min-h-0 w-[320px] flex-col rounded-2xl p-4 ${warmPanelClass}`}>
             <TextField
               value={project.name}
@@ -409,8 +409,8 @@ export function ProjectPage() {
                   {selectedImages.map((imagePath) => (
                     <figure
                       key={imagePath}
-                      className={`flex items-center gap-2 overflow-hidden rounded-lg p-2 ${
-                        isLightMode ? "border border-[#d6d3d1]/50 bg-white/40" : "border border-[#44403c]/50 bg-[#0c0a09]/55"
+                      className={`flex items-center gap-2 overflow-hidden rounded-lg border p-2 ${
+                        isLightTheme ? "border-[#d6d3d1] bg-white/70" : "border-[#44403c] bg-[#1c1917]/70"
                       }`}
                     >
                       {imagePreviews[imagePath] ? (
@@ -439,14 +439,14 @@ export function ProjectPage() {
 
           <div className="relative min-h-0 min-w-0 flex-1">
             <div className="pointer-events-none absolute left-1/2 top-0 z-10 -translate-x-1/2">
-              <div className={`pointer-events-auto flex items-center gap-2 rounded-full px-3 py-2 transition-all duration-200 ease-out ${isLightMode ? "hover:bg-white/60" : "hover:bg-[#1c1917]/80"} ${warmGlassClass}`}>
+              <div className={`pointer-events-auto flex items-center gap-2 rounded-full px-3 py-2 transition-all duration-200 ease-out ${isLightTheme ? "hover:bg-[#ded9d2]" : "hover:bg-[#292420]"} ${warmGlassClass}`}>
                 <select
                   value={preset}
                   onChange={(event) => setPreset(event.target.value as GenerationPreset)}
-                  className={`h-9 min-w-32 rounded-lg px-3 text-sm outline-none transition duration-150 ease-out focus:border-[#a8a29e] focus:ring-2 focus:ring-[#a8a29e] ${
-                    isLightMode
-                      ? "border border-[#d6d3d1]/50 bg-white/50 text-[#1c1917]"
-                      : "border border-[#44403c]/50 bg-[#1c1917]/85 text-[#e7e5e4]"
+                  className={`h-9 min-w-32 appearance-none rounded-lg border px-3 text-sm outline-none transition duration-150 ease-out focus:ring-2 focus:ring-[#8c7e6d]/50 ${
+                    isLightTheme
+                      ? "border-[#e5e5e3] bg-[#fcfafa] text-[#2d2a26] hover:bg-white focus:border-[#8c7e6d] focus:bg-[#fcfafa] focus:text-[#2d2a26]"
+                      : "border-[#44403c] bg-[#1c1917]/80 text-[#e7e5e4] hover:bg-[#44403c] hover:text-[#e7e5e4] focus:border-[#8c7e6d] focus:bg-[#44403c] focus:text-[#e7e5e4]"
                   }`}
                   disabled={isGenerating}
                 >
@@ -470,7 +470,7 @@ export function ProjectPage() {
               </div>
             </div>
 
-            <div className="pointer-events-none absolute right-0 top-0 z-10">
+            <div className="pointer-events-none absolute right-0 top-12 z-10">
               <div className="flex items-center gap-2">
                 <span className={`${floatingButtonClass}`}>
                   {generationDevice
@@ -498,8 +498,8 @@ export function ProjectPage() {
                 <h2 className="mb-3 text-[11px] font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">{t("project.assistant")}</h2>
 
                 <div
-                  className={`min-h-0 h-[calc(100%-4.5rem)] space-y-3 overflow-y-auto rounded-xl p-3.5 ${
-                    isLightMode ? "border border-[#d6d3d1]/50 bg-white/40" : "border border-[#44403c]/50 bg-[#0c0a09]/55"
+                  className={`min-h-0 h-[calc(100%-4.5rem)] space-y-3 overflow-y-auto rounded-xl border p-3.5 ${
+                    isLightTheme ? "border-[#d6d3d1] bg-white/70" : "border-[#44403c] bg-[#1c1917]/70"
                   }`}
                 >
                   {project.chatHistory.length === 0 ? <p className="text-sm leading-relaxed text-[var(--text-muted)]">{t("project.noMessages")}</p> : null}
@@ -512,12 +512,12 @@ export function ProjectPage() {
                         key={message.id}
                         className={`rounded-xl border p-3 ${
                           isAssistant
-                            ? isLightMode
-                              ? "border-[#d6d3d1]/60 bg-white/45 text-[#1c1917]"
-                              : "border-[#44403c]/50 bg-[#0c0a09]/55 text-[#e7e5e4]"
-                            : isLightMode
-                              ? "border-[#a8a29e] bg-[#f5f5f4]/75 text-[#1c1917]"
-                              : "border-[#78716c] bg-[#1c1917]/80 text-[#e7e5e4]"
+                            ? isLightTheme
+                              ? "border-[#d6d3d1] bg-white/70 text-[#2d2a26]"
+                              : "border-[#44403c] bg-[#1c1917]/70 text-[#e7e5e4]"
+                            : isLightTheme
+                              ? "border-[#d6d3d1] bg-[#ece8e3] text-[#2d2a26]"
+                              : "border-[#8c7e6d] bg-[#292420] text-[#e7e5e4]"
                         }`}
                       >
                         <header className="mb-1.5 flex items-center justify-between text-[10px] uppercase tracking-[0.16em] text-[var(--text-muted)]">
@@ -560,7 +560,7 @@ export function ProjectPage() {
                 <button
                   type="button"
                   className={`pointer-events-auto flex h-10 w-full items-center justify-between px-4 text-left text-xs font-medium uppercase tracking-[0.16em] transition-all duration-200 ease-out ${
-                    isLightMode ? "text-[#57534e] hover:bg-white/60" : "text-[#d6d3d1] hover:bg-[#1c1917]/80"
+                    isLightTheme ? "text-[#57534e] hover:bg-[#ded9d2]" : "text-[#a8a29e] hover:bg-[#292420]"
                   }`}
                   onClick={() => setIsNotesOpen((current) => !current)}
                 >
