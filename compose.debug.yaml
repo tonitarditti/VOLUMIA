@@ -1,0 +1,6 @@
+services:
+  volumia:
+    image: volumia
+    build:
+      context: .
+      dockerfile: ./Dockerfile
