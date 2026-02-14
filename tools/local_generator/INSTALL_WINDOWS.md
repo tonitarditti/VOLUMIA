@@ -1,11 +1,10 @@
 # VOLUMIA Local Generator - Windows Install
 
-## 1) Create virtual environment
+## 1) Use Miniconda environment (recommended)
 
 ```powershell
 cd <path-to-volumia-repo>
-python -m venv .venv
-.\.venv\Scripts\activate
+conda activate volumia
 python -m pip install --upgrade pip
 ```
 
@@ -24,6 +23,12 @@ pip install pillow numpy trimesh
 pip install git+https://github.com/VAST-AI-Research/TripoSR.git
 ```
 
+## 3b) Install Image->3D Depth MVP deps
+
+```powershell
+pip install -r apps/desktop/python/requirements-image-to-3d.txt
+```
+
 ## 4) Test the local runner directly
 
 ```powershell
@@ -31,6 +36,12 @@ python tools/local_generator/run_triposr.py --image tools/local_generator/sample
 ```
 
 If this succeeds, VOLUMIA can call the same script from Electron and stream progress.
+
+## 5) Test the depth MVP runner
+
+```powershell
+python apps/desktop/python/image_to_3d_depth_glb.py --in tools/local_generator/sample.jpg --out .\\tmp\\depth-test\\result.glb --quality balanced
+```
 
 ## Optional: force Python path used by Electron
 

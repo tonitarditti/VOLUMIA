@@ -291,7 +291,7 @@ export function ProjectPage() {
           <Card padding="md" className="flex min-h-0 flex-1 flex-col">
             <h2 className="mb-3 text-[11px] font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">{t("project.viewport")}</h2>
             <div className="min-h-0 flex-1">
-              <ProjectViewport glbPath={project.model?.glbPath} />
+              <ProjectViewport glbPath={project.model?.glbPath} glbVersion={project.model?.generatedAt} />
             </div>
           </Card>
 

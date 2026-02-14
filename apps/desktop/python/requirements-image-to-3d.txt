@@ -1,0 +1,11 @@
+numpy
+pillow
+opencv-python
+torch
+torchvision
+transformers
+huggingface_hub
+accelerate
+open3d
+trimesh
+scipy

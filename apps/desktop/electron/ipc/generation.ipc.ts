@@ -1,9 +1,8 @@
 import { app, dialog, ipcMain, shell, type BrowserWindow } from "electron";
-import { spawn, spawnSync, type ChildProcess } from "child_process";
-import { createInterface } from "readline";
-import { copyFile } from "fs/promises";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync } from "fs";
-import { basename, extname, join, resolve } from "path";
+import { spawn, type ChildProcess } from "child_process";
+import fs from "fs";
+import path from "path";
+import { basename, extname, resolve } from "path";
 import {
   IPC_CHANNELS,
   type GenerationCheckResult,
@@ -22,28 +21,54 @@ type GenerationJobState = {
   process: ChildProcess | null;
 };
 
-type PythonCommand = {
-  command: string;
-  prefixArgs: string[];
-  label: string;
-};
-
-type GeneratorRuntime = {
-  scriptPath?: string;
-  pythonCommand?: PythonCommand;
-  venvPath?: string;
-  logs: string[];
-};
-
 type LocalGenerationResult = {
   ok: boolean;
   logs: string[];
   error?: string;
+  outGlbPath?: string;
 };
 
+const PYTHON = "F:\\MINICONDA\\envs\\volumia\\python.exe";
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp"]);
 const activeJobs = new Map<string, GenerationJobState>();
 const latestOutputByProject = new Map<string, string>();
+
+function runPython(
+  scriptPath: string,
+  args: string[],
+  spawnEnv: NodeJS.ProcessEnv,
+  onProcess?: (process: ChildProcess) => void
+) {
+  return new Promise<{ stdout: string; stderr: string; code: number }>((resolvePromise) => {
+    console.log("[VOLUMIA] Using Python:", PYTHON);
+    const p = spawn(PYTHON, [scriptPath, ...args], { windowsHide: true, env: spawnEnv });
+    onProcess?.(p);
+
+    let stdout = "";
+    let stderr = "";
+
+    p.stdout?.on("data", (d) => (stdout += d.toString()));
+    p.stderr?.on("data", (d) => (stderr += d.toString()));
+    p.on("error", (error) => {
+      stderr += `\n${error.message}`;
+    });
+
+    p.on("close", (code) => resolvePromise({ stdout, stderr, code: code ?? -1 }));
+  });
+}
+
+function ensureAssetsDir() {
+  const assetsDir = path.join(app.getPath("userData"), "project-assets");
+  fs.mkdirSync(assetsDir, { recursive: true });
+  return assetsDir;
+}
+
+async function ensureGlbOk(outPath: string) {
+  if (!fs.existsSync(outPath)) throw new Error(`GLB not created: ${outPath}`);
+  const size = fs.statSync(outPath).size;
+  if (size < 2000) throw new Error(`GLB too small (${size} bytes): ${outPath}`);
+  return size;
+}
 
 function sanitizeProjectId(projectId: string) {
   const safe = projectId.replace(/[^a-zA-Z0-9_-]/g, "_");
@@ -85,122 +110,55 @@ function sendError(getWindow: WindowGetter, payload: GenerationErrorPayload) {
 
 function resolveGeneratorScriptPath() {
   const candidates = [
-    resolve(process.cwd(), "tools", "local_generator", "run_triposr.py"),
-    resolve(process.cwd(), "..", "..", "tools", "local_generator", "run_triposr.py"),
-    resolve(app.getAppPath(), "tools", "local_generator", "run_triposr.py"),
-    resolve(app.getAppPath(), "..", "..", "tools", "local_generator", "run_triposr.py"),
-    resolve(process.resourcesPath, "tools", "local_generator", "run_triposr.py"),
-    resolve(process.resourcesPath, "app.asar.unpacked", "tools", "local_generator", "run_triposr.py"),
+    resolve(process.cwd(), "apps", "desktop", "python", "image_to_3d_depth_glb.py"),
+    resolve(process.cwd(), "python", "image_to_3d_depth_glb.py"),
+    resolve(app.getAppPath(), "python", "image_to_3d_depth_glb.py"),
+    resolve(process.resourcesPath, "python", "image_to_3d_depth_glb.py"),
+    resolve(process.resourcesPath, "app.asar.unpacked", "python", "image_to_3d_depth_glb.py"),
   ];
 
-  return candidates.find((candidate) => existsSync(candidate));
+  return candidates.find((candidate) => fs.existsSync(candidate));
+}
+
+function resolveFurnitureScriptPath() {
+  const candidates = [
+    resolve(process.cwd(), "apps", "desktop", "python", "image_to_3d_furniture_tables.py"),
+    resolve(process.cwd(), "python", "image_to_3d_furniture_tables.py"),
+    resolve(app.getAppPath(), "python", "image_to_3d_furniture_tables.py"),
+    resolve(process.resourcesPath, "python", "image_to_3d_furniture_tables.py"),
+    resolve(process.resourcesPath, "app.asar.unpacked", "python", "image_to_3d_furniture_tables.py"),
+  ];
+
+  return candidates.find((candidate) => fs.existsSync(candidate));
 }
 
 function resolveSampleImagePath(scriptPath?: string) {
   const candidates = [
     scriptPath ? resolve(scriptPath, "..", "sample.jpg") : "",
+    resolve(process.cwd(), "apps", "desktop", "python", "sample.jpg"),
     resolve(process.cwd(), "tools", "local_generator", "sample.jpg"),
     resolve(process.cwd(), "..", "..", "tools", "local_generator", "sample.jpg"),
-    resolve(app.getAppPath(), "tools", "local_generator", "sample.jpg"),
-    resolve(app.getAppPath(), "..", "..", "tools", "local_generator", "sample.jpg"),
-    resolve(process.resourcesPath, "tools", "local_generator", "sample.jpg"),
-    resolve(process.resourcesPath, "app.asar.unpacked", "tools", "local_generator", "sample.jpg"),
+    resolve(app.getAppPath(), "python", "sample.jpg"),
+    resolve(process.resourcesPath, "python", "sample.jpg"),
+    resolve(process.resourcesPath, "app.asar.unpacked", "python", "sample.jpg"),
   ].filter(Boolean);
 
-  return candidates.find((candidate) => existsSync(candidate));
+  return candidates.find((candidate) => fs.existsSync(candidate));
 }
 
-function resolveTemplateGlbPath() {
-  const candidates = [
-    join(process.cwd(), "apps", "desktop", "assets", "templates", "box.glb"),
-    join(process.cwd(), "assets", "templates", "box.glb"),
-    join(app.getAppPath(), "assets", "templates", "box.glb"),
-    join(process.resourcesPath, "assets", "templates", "box.glb"),
-    join(process.resourcesPath, "app.asar.unpacked", "assets", "templates", "box.glb"),
-  ];
-
-  return candidates.find((candidate) => existsSync(candidate));
+function mapPresetToQuality(preset: GenerationPreset): "fast" | "balanced" | "high" {
+  if (preset === "quality") {
+    return "high";
+  }
+  return preset;
 }
 
-function inferVenvPath(pythonPath: string) {
-  const normalized = pythonPath.replace(/\\/g, "/").toLowerCase();
-
-  if (normalized.endsWith("/scripts/python.exe")) {
-    return resolve(pythonPath, "..", "..");
+function resolveGenerationMode(imagePath: string): "furniture" | "generic" {
+  const lower = path.basename(imagePath).toLowerCase();
+  if (lower.includes("table")) {
+    return "furniture";
   }
-
-  if (normalized.endsWith("/bin/python") || normalized.endsWith("/bin/python3")) {
-    return resolve(pythonPath, "..", "..");
-  }
-
-  return undefined;
-}
-
-function detectPythonCommand() {
-  const logs: string[] = [];
-  const envPython = process.env.VOLUMIA_PYTHON_PATH?.trim();
-
-  const candidates: PythonCommand[] = [];
-
-  if (envPython) {
-    candidates.push({ command: envPython, prefixArgs: [], label: envPython });
-  }
-
-  candidates.push({ command: "python", prefixArgs: [], label: "python" });
-
-  if (process.platform === "win32") {
-    candidates.push({ command: "py", prefixArgs: ["-3"], label: "py -3" });
-  }
-
-  for (const candidate of candidates) {
-    const result = spawnSync(candidate.command, [...candidate.prefixArgs, "--version"], {
-      encoding: "utf-8",
-      timeout: 8_000,
-    });
-
-    if (result.error) {
-      logs.push(`${candidate.label}: ${result.error.message}`);
-      continue;
-    }
-
-    if (result.status !== 0) {
-      const output = `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
-      logs.push(`${candidate.label}: ${output || `exit ${result.status}`}`);
-      continue;
-    }
-
-    const versionOutput = `${result.stdout ?? ""}${result.stderr ?? ""}`.trim();
-    logs.push(`${candidate.label}: ${versionOutput || "ok"}`);
-
-    return {
-      command: candidate,
-      logs,
-      venvPath: inferVenvPath(candidate.command),
-    };
-  }
-
-  return { logs };
-}
-
-function resolveGeneratorRuntime(): GeneratorRuntime {
-  const logs: string[] = [];
-  const scriptPath = resolveGeneratorScriptPath();
-  const python = detectPythonCommand();
-
-  if (scriptPath) {
-    logs.push(`script: ${scriptPath}`);
-  } else {
-    logs.push("script: not found");
-  }
-
-  logs.push(...python.logs);
-
-  return {
-    scriptPath,
-    pythonCommand: python.command,
-    venvPath: python.venvPath,
-    logs,
-  };
+  return "generic";
 }
 
 function parseProgressLine(rawLine: string) {
@@ -240,126 +198,100 @@ function parseProgressLine(rawLine: string) {
 async function runLocalPythonGeneration(
   payload: GenerationRunPayload,
   imagePath: string,
-  outGlbPath: string,
   job: GenerationJobState,
   getWindow: WindowGetter,
-  runtime: Required<Pick<GeneratorRuntime, "scriptPath" | "pythonCommand">>
+  scriptPath: string
 ): Promise<LocalGenerationResult> {
-  const args = [
-    ...runtime.pythonCommand.prefixArgs,
-    runtime.scriptPath,
-    "--out_glb",
-    outGlbPath,
-    "--image",
-    imagePath,
-    "--preset",
-    payload.preset,
-    "--device",
-    "cuda",
-  ];
+  const logs: string[] = [];
 
-  return new Promise<LocalGenerationResult>((resolvePromise) => {
-    const logs: string[] = [];
-    let settled = false;
+  try {
+    const assetsDir = ensureAssetsDir();
+    const outGlb = path.join(assetsDir, "latest.glb");
+    const modelsDir = path.join(assetsDir, "models");
+    const pipDir = path.join(assetsDir, "pip");
+    const tmpDir = path.join(assetsDir, "tmp");
+    fs.mkdirSync(modelsDir, { recursive: true });
+    fs.mkdirSync(pipDir, { recursive: true });
+    fs.mkdirSync(tmpDir, { recursive: true });
 
-    const finish = (result: LocalGenerationResult) => {
-      if (settled) return;
-      settled = true;
-      job.process = null;
-      resolvePromise(result);
+    const spawnEnv: NodeJS.ProcessEnv = {
+      ...process.env,
+      VOLUMIA_CACHE_DIR: assetsDir,
+      HF_HOME: modelsDir,
+      TRANSFORMERS_CACHE: modelsDir,
+      TORCH_HOME: modelsDir,
+      PIP_CACHE_DIR: pipDir,
     };
 
-    const child = spawn(runtime.pythonCommand.command, args, {
-      stdio: ["ignore", "pipe", "pipe"],
+    const { stdout, stderr, code } = await runPython(scriptPath, [
+      "--in", imagePath,
+      "--out", outGlb,
+      "--quality", mapPresetToQuality(payload.preset),
+      "--models-dir", modelsDir,
+    ], spawnEnv, (process) => {
+      job.process = process;
     });
+    job.process = null;
 
-    job.process = child;
+    console.log("[PY] exit:", code);
+    console.log("[PY] stdout:", stdout);
+    console.error("[PY] stderr:", stderr);
 
-    const stdoutInterface = createInterface({ input: child.stdout });
-    const stderrInterface = createInterface({ input: child.stderr });
+    logs.push(`[py] exit: ${code}`);
+    if (stdout.trim()) {
+      logs.push(...stdout.split(/\r?\n/).filter(Boolean).map((line) => `[stdout] ${line}`));
+    }
+    if (stderr.trim()) {
+      logs.push(...stderr.split(/\r?\n/).filter(Boolean).map((line) => `[stderr] ${line}`));
+    }
 
-    stdoutInterface.on("line", (line) => {
-      if (!line.trim()) return;
-
-      logs.push(`[stdout] ${line}`);
-
+    for (const line of stdout.split(/\r?\n/)) {
       const parsedProgress = parseProgressLine(line);
-      if (!parsedProgress) {
-        return;
+      if (parsedProgress) {
+        sendProgress(getWindow, {
+          projectId: payload.projectId,
+          stage: parsedProgress.stage,
+          percent: parsedProgress.percent,
+          message: parsedProgress.message,
+        });
+        continue;
       }
 
-      sendProgress(getWindow, {
-        projectId: payload.projectId,
-        stage: parsedProgress.stage,
-        percent: parsedProgress.percent,
-        message: parsedProgress.message,
-      });
-    });
+      if (line.startsWith("[BOOT]") || line.startsWith("[MODEL]")) {
+        sendProgress(getWindow, {
+          projectId: payload.projectId,
+          stage: "infer",
+          percent: 58,
+          message: line,
+        });
+      }
+    }
 
-    stderrInterface.on("line", (line) => {
-      if (!line.trim()) return;
-      logs.push(`[stderr] ${line}`);
-    });
+    if (job.canceled) {
+      return { ok: false, logs, error: "Generacion cancelada." };
+    }
 
-    child.once("error", (error) => {
-      finish({
+    if (code !== 0) {
+      return {
         ok: false,
         logs,
-        error: `No se pudo iniciar Python: ${error.message}`,
-      });
-    });
+        error: `El generador local finalizo con error (code: ${code}).`,
+      };
+    }
 
-    child.once("close", (code, signal) => {
-      stdoutInterface.close();
-      stderrInterface.close();
+    await ensureGlbOk(outGlb);
 
-      if (job.canceled) {
-        finish({ ok: false, logs, error: "Generacion cancelada." });
-        return;
-      }
-
-      if (code === 0) {
-        if (!existsSync(outGlbPath)) {
-          finish({ ok: false, logs, error: "El generador local no produjo un archivo GLB." });
-          return;
-        }
-
-        const generatedStat = statSync(outGlbPath);
-        if (generatedStat.size < 10_000) {
-          finish({ ok: false, logs, error: "El GLB generado por Python es invalido (<10KB)." });
-          return;
-        }
-
-        finish({ ok: true, logs });
-        return;
-      }
-
-      const signalSuffix = signal ? ` (${signal})` : "";
-      finish({
-        ok: false,
-        logs,
-        error: `El generador local finalizo con codigo ${code ?? "desconocido"}${signalSuffix}.`,
-      });
-    });
-  });
-}
-
-async function copyFallbackGlb(outGlbPath: string) {
-  const templateGlbPath = resolveTemplateGlbPath();
-
-  if (!templateGlbPath) {
-    throw new Error("Fallback template GLB is missing at assets/templates/box.glb");
-  }
-
-  await copyFile(templateGlbPath, outGlbPath);
-
-  if (!existsSync(outGlbPath)) {
-    throw new Error("Failed to create result.glb");
-  }
-
-  const stat = statSync(outGlbPath);
-  if (stat.size < 10_000) {
-    throw new Error("Invalid fallback GLB");
+    return {
+      ok: true,
+      logs,
+      outGlbPath: outGlb,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      logs,
+      error: error instanceof Error ? error.message : "No se pudo ejecutar el generador local.",
+    };
   }
 }
 
@@ -367,14 +299,12 @@ async function runGenerationJob(payload: GenerationRunPayload, getWindow: Window
   const projectId = payload.projectId;
   const safeProjectId = sanitizeProjectId(payload.projectId);
   const userDataPath = app.getPath("userData");
-  const baseDir = join(userDataPath, "project-assets", safeProjectId);
-  const imagesDir = join(baseDir, "images");
-  const outputDir = join(baseDir, "generated", String(Date.now()));
-  const outGlbPath = join(outputDir, "result.glb");
+  const baseDir = path.join(userDataPath, "project-assets", safeProjectId);
+  const imagesDir = path.join(baseDir, "images");
+  const outGlbPath = path.join(ensureAssetsDir(), "latest.glb");
   const copiedImages: string[] = [];
 
-  mkdirSync(imagesDir, { recursive: true });
-  mkdirSync(outputDir, { recursive: true });
+  fs.mkdirSync(imagesDir, { recursive: true });
   console.log("[gen] userData:", userDataPath);
   console.log("[gen] outGlb:", outGlbPath);
 
@@ -398,8 +328,8 @@ async function runGenerationJob(payload: GenerationRunPayload, getWindow: Window
     }
 
     const filename = `${Date.now()}-${index + 1}-${basename(imagePath)}`;
-    const targetPath = join(imagesDir, filename);
-    copyFileSync(resolve(imagePath), targetPath);
+    const targetPath = path.join(imagesDir, filename);
+    fs.copyFileSync(resolve(imagePath), targetPath);
     copiedImages.push(targetPath);
 
     const copyPercent = 10 + Math.round(((index + 1) / Math.max(1, payload.imagePaths.length)) * 35);
@@ -420,93 +350,80 @@ async function runGenerationJob(payload: GenerationRunPayload, getWindow: Window
     return;
   }
 
-  const runtime = resolveGeneratorRuntime();
-  let usedFallback = false;
-
-  if (runtime.pythonCommand && runtime.scriptPath) {
-    sendProgress(getWindow, {
-      projectId,
-      stage: "infer",
-      percent: 55,
-      message: "Ejecutando generador local...",
-    });
-
-    const localResult = await runLocalPythonGeneration(
-      payload,
-      copiedImages[0],
-      outGlbPath,
-      job,
-      getWindow,
-      { scriptPath: runtime.scriptPath, pythonCommand: runtime.pythonCommand }
-    );
-
-    if (!localResult.ok) {
-      if (job.canceled) {
-        sendError(getWindow, { projectId, message: "Generacion cancelada." });
-        return;
-      }
-
-      usedFallback = true;
-      sendProgress(getWindow, {
-        projectId,
-        stage: "infer",
-        percent: 70,
-        message: "Generador local no disponible, usando fallback GLB.",
-      });
+  const mode = resolveGenerationMode(copiedImages[0]);
+  const scriptPath = mode === "furniture" ? resolveFurnitureScriptPath() : resolveGeneratorScriptPath();
+  if (!scriptPath) {
+    if (mode === "furniture") {
+      throw new Error("No se encontro apps/desktop/python/image_to_3d_furniture_tables.py");
     }
-  } else {
-    usedFallback = true;
-    sendProgress(getWindow, {
-      projectId,
-      stage: "infer",
-      percent: 70,
-      message: "Generador local no detectado, usando fallback GLB.",
-    });
+    throw new Error("No se encontro apps/desktop/python/image_to_3d_depth_glb.py");
+  }
+  if (!fs.existsSync(PYTHON)) {
+    throw new Error(`No se encontro Python en: ${PYTHON}`);
   }
 
-  if (usedFallback) {
+  sendProgress(getWindow, {
+    projectId,
+    stage: "infer",
+    percent: 55,
+    message: mode === "furniture"
+      ? "Ejecutando reconstructor parametrico de mesas..."
+      : "Ejecutando generador de profundidad local...",
+  });
+
+  const localResult = await runLocalPythonGeneration(
+    payload,
+    copiedImages[0],
+    job,
+    getWindow,
+    scriptPath
+  );
+
+  if (!localResult.ok || !localResult.outGlbPath) {
     if (job.canceled) {
       sendError(getWindow, { projectId, message: "Generacion cancelada." });
       return;
     }
-
-    sendProgress(getWindow, {
-      projectId,
-      stage: "export",
-      percent: 90,
-      message: "Exportando fallback GLB...",
-    });
-
-    await copyFallbackGlb(outGlbPath);
+    throw new Error(localResult.error ?? "Fallo la generacion Image->3D.");
   }
 
-  latestOutputByProject.set(projectId, outGlbPath);
+  latestOutputByProject.set(projectId, localResult.outGlbPath);
 
   sendProgress(getWindow, {
     projectId,
     stage: "done",
     percent: 100,
-    message: usedFallback ? "Modelo 3D listo (fallback)." : "Modelo 3D listo.",
+    message: "Modelo 3D listo.",
   });
 
   sendDone(getWindow, {
     projectId,
-    glbPath: outGlbPath,
+    glbPath: localResult.outGlbPath,
     sourceImages: copiedImages,
     preset: payload.preset,
   });
 }
 
 function buildGeneratorCheckResult(): GenerationCheckResult {
-  const runtime = resolveGeneratorRuntime();
+  const scriptPath = resolveGeneratorScriptPath();
+  const furnitureScriptPath = resolveFurnitureScriptPath();
+  const pythonFound = fs.existsSync(PYTHON);
+  const logs = [
+    `script: ${scriptPath ?? "not found"}`,
+    `furniture_script: ${furnitureScriptPath ?? "not found"}`,
+    `python: ${PYTHON}`,
+    `pythonFound: ${pythonFound}`,
+    "generator: image_to_3d_depth_glb.py",
+    "generator_mode_switch: filename contains 'table' -> furniture",
+  ];
 
   return {
-    pythonFound: Boolean(runtime.pythonCommand),
-    pythonPath: runtime.pythonCommand?.label,
-    venvPath: runtime.venvPath,
-    scriptFound: Boolean(runtime.scriptPath),
-    scriptPath: runtime.scriptPath,
-    logs: runtime.logs,
+    pythonFound,
+    pythonPath: PYTHON,
+    venvPath: path.dirname(path.dirname(PYTHON)),
+    scriptFound: Boolean(scriptPath),
+    scriptPath,
+    logs,
   };
 }
 
@@ -578,39 +495,27 @@ export function registerGenerationHandlers(getWindow: WindowGetter) {
   });
 
   ipcMain.handle(IPC_CHANNELS.generationTest, async (): Promise<GenerationTestResult> => {
-    const runtime = resolveGeneratorRuntime();
+    const scriptPath = resolveGeneratorScriptPath();
 
-    if (!runtime.scriptPath || !runtime.pythonCommand) {
+    if (!scriptPath || !fs.existsSync(PYTHON)) {
       return {
         ok: false,
         error: "No se encontro un generador local valido.",
-        logs: runtime.logs,
+        logs: buildGeneratorCheckResult().logs,
       };
     }
 
-    const sampleImagePath = resolveSampleImagePath(runtime.scriptPath);
+    const sampleImagePath = resolveSampleImagePath(scriptPath);
     if (!sampleImagePath) {
       return {
         ok: false,
         error: "No se encontro tools/local_generator/sample.jpg.",
-        logs: runtime.logs,
+        logs: buildGeneratorCheckResult().logs,
       };
     }
 
-    const testProjectId = "_generator-test";
-    const userDataPath = app.getPath("userData");
-    const testOutputDir = join(
-      userDataPath,
-      "project-assets",
-      testProjectId,
-      "generated",
-      String(Date.now())
-    );
-    const outGlbPath = join(testOutputDir, "result.glb");
-    mkdirSync(testOutputDir, { recursive: true });
-
     const testPayload: GenerationRunPayload = {
-      projectId: testProjectId,
+      projectId: "_generator-test",
       imagePaths: [sampleImagePath],
       preset: "balanced",
     };
@@ -623,44 +528,38 @@ export function registerGenerationHandlers(getWindow: WindowGetter) {
     const localResult = await runLocalPythonGeneration(
       testPayload,
       sampleImagePath,
-      outGlbPath,
       testJob,
       getWindow,
-      { scriptPath: runtime.scriptPath, pythonCommand: runtime.pythonCommand }
+      scriptPath
     );
 
-    const logs = [...runtime.logs, ...localResult.logs];
-
-    if (!localResult.ok) {
+    if (!localResult.ok || !localResult.outGlbPath) {
       return {
         ok: false,
         error: localResult.error ?? "El test del generador local fallo.",
-        logs,
+        logs: localResult.logs,
       };
     }
 
     return {
       ok: true,
-      glbPath: outGlbPath,
-      logs,
+      glbPath: localResult.outGlbPath,
+      logs: localResult.logs,
     };
   });
 
   ipcMain.handle("gen:read-glb", async (_event, glbPath: string) => {
-    if (!existsSync(glbPath)) {
+    if (!fs.existsSync(glbPath)) {
       throw new Error("GLB file not found");
     }
 
-    const buffer = readFileSync(glbPath);
+    const buffer = fs.readFileSync(glbPath);
     return buffer;
   });
 
   ipcMain.handle("gen:open-output-folder", async (_event, payload: { glbPath?: string } | undefined) => {
-    const fallbackPath = join(app.getPath("userData"), "project-assets");
-    const outGlbPath =
-      payload?.glbPath
-        ? payload.glbPath
-        : fallbackPath;
+    const fallbackPath = path.join(app.getPath("userData"), "project-assets");
+    const outGlbPath = payload?.glbPath ? payload.glbPath : fallbackPath;
     shell.showItemInFolder(outGlbPath);
 
     return {
