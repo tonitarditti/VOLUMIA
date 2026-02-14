@@ -10,7 +10,9 @@
     "lint": "npm --workspace @volumia/desktop run lint",
     "typecheck": "npm --workspace @volumia/desktop run typecheck",
     "test": "npm --workspace @volumia/desktop run test",
-    "format": "prettier --write \"apps/**/*.{ts,tsx,css,json,md,py}\" \"packages/**/*.{ts,json,md}\""
+    "format": "prettier --write \"apps/**/*.{ts,tsx,css,json,md,py}\" \"packages/**/*.{ts,json,md}\"",
+    "clean": "node scripts/clean.js",
+    "clean:deep": "node scripts/clean.js --deep"
   },
   "overrides": {
     "@types/react": "18.3.28",

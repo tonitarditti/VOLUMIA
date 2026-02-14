@@ -21,3 +21,20 @@ Thumbs.db
 
 *.log
 *.err.log
+dist/
+dist-electron/
+electron-dist/
+build/
+out/
+.vite/
+.cache/
+coverage/
+.turbo/
+dev-run-*.log
+dev-run-*.err.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+**/__pycache__/
+**/*.pyc
+**/*.pyo

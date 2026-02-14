@@ -20,6 +20,9 @@ pip install torch torchvision torchaudio
 
 ```powershell
 pip install pillow numpy trimesh
+pip install rembg
+# If rembg backend requires it in your environment:
+# pip install onnxruntime
 pip install git+https://github.com/VAST-AI-Research/TripoSR.git
 ```
 

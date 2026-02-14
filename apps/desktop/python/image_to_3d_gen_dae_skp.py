@@ -1,9 +1,7 @@
 #!/usr/bin/env python3
 import argparse
-import importlib
 import inspect
 import json
-import math
 import os
 import re
 import subprocess
@@ -42,9 +40,10 @@ DENSITY_THRESHOLD_PARAM_NAMES = (
     "level",
 )
 
-MULTIVIEW_COUNT = 6
-FIXED_MC_RESOLUTION = 512
-STRICT_DENSITY_THRESHOLD = 12.0
+TRIPOSR_INSTALL_HINT = (
+    "TripoSR not installed. Run: "
+    "pip install git+https://github.com/VAST-AI-Research/TripoSR.git"
+)
 
 QUALITY_CONFIG: Dict[str, Dict[str, int]] = {
     "fast": {
@@ -143,138 +142,9 @@ def mesh_from_output(mesh_or_scene: Any, trimesh: Any) -> Any:
     if isinstance(mesh_or_scene, trimesh.Scene):
         geometries = [g for g in mesh_or_scene.geometry.values() if isinstance(g, trimesh.Trimesh)]
         if not geometries:
-            raise RuntimeError("InstantMesh returned an empty scene.")
+            raise RuntimeError("TripoSR returned an empty scene.")
         return trimesh.util.concatenate(geometries)
     raise RuntimeError(f"Unsupported mesh output type: {type(mesh_or_scene)!r}")
-
-
-def _as_pil_image(value: Any, image_mod: Any, np_mod: Any) -> Optional[Any]:
-    if value is None:
-        return None
-    if isinstance(value, image_mod.Image):
-        return value.convert("RGB")
-
-    array = None
-    if hasattr(value, "detach") and hasattr(value, "cpu"):
-        try:
-            tensor = value.detach().cpu()
-            if hasattr(tensor, "numpy"):
-                array = tensor.numpy()
-        except Exception:
-            array = None
-    elif isinstance(value, np_mod.ndarray):
-        array = value
-
-    if array is None:
-        return None
-
-    if array.ndim == 4:
-        return None
-    if array.ndim == 3 and array.shape[0] in (1, 3, 4) and array.shape[-1] not in (3, 4):
-        array = np_mod.transpose(array, (1, 2, 0))
-    if array.ndim == 2:
-        array = np_mod.stack([array, array, array], axis=-1)
-    if array.ndim != 3:
-        return None
-    if array.shape[-1] == 1:
-        array = np_mod.repeat(array, 3, axis=-1)
-    if array.shape[-1] > 3:
-        array = array[..., :3]
-
-    if np_mod.issubdtype(array.dtype, np_mod.floating):
-        array = np_mod.clip(array * 255.0 if array.max() <= 1.5 else array, 0, 255).astype(np_mod.uint8)
-    else:
-        array = np_mod.clip(array, 0, 255).astype(np_mod.uint8)
-    return image_mod.fromarray(array, mode="RGB")
-
-
-def _extract_images_from_output(output: Any) -> list[Any]:
-    if output is None:
-        return []
-    if isinstance(output, dict):
-        for key in ("views", "images", "multi_views", "mv_images", "samples"):
-            value = output.get(key)
-            if isinstance(value, (list, tuple)):
-                return list(value)
-            if value is not None:
-                return [value]
-    if isinstance(output, (list, tuple)):
-        if not output:
-            return []
-        if len(output) == 1 and isinstance(output[0], (list, tuple)):
-            return list(output[0])
-        return list(output)
-    return [output]
-
-
-def _to_pil_images(output: Any, image_mod: Any, np_mod: Any) -> list[Any]:
-    extracted = _extract_images_from_output(output)
-    pil_images: list[Any] = []
-    for item in extracted:
-        if isinstance(item, (list, tuple)):
-            for nested in item:
-                image = _as_pil_image(nested, image_mod, np_mod)
-                if image is not None:
-                    pil_images.append(image)
-            continue
-        image = _as_pil_image(item, image_mod, np_mod)
-        if image is not None:
-            pil_images.append(image)
-    return pil_images
-
-
-def _resolve_instantmesh_pipeline_class() -> Any:
-    candidates = (
-        ("instantmesh.pipeline", "InstantMeshPipeline"),
-        ("instantmesh", "InstantMeshPipeline"),
-        ("instant_mesh.pipeline", "InstantMeshPipeline"),
-        ("instant_mesh", "InstantMeshPipeline"),
-    )
-    for module_name, class_name in candidates:
-        try:
-            module = importlib.import_module(module_name)
-        except Exception:
-            continue
-        pipeline_cls = getattr(module, class_name, None)
-        if pipeline_cls is not None:
-            return pipeline_cls
-    raise RuntimeError(
-        "InstantMesh pipeline class was not found. Install InstantMesh runtime and dependencies."
-    )
-
-
-def _load_instantmesh_pipeline(device: str, torch_mod: Any) -> Any:
-    pipeline_cls = _resolve_instantmesh_pipeline_class()
-    model_candidates = (
-        "TencentARC/InstantMesh",
-        "InstantMesh/InstantMesh",
-    )
-
-    pipeline = None
-    if hasattr(pipeline_cls, "from_pretrained"):
-        for model_id in model_candidates:
-            try:
-                pipeline = pipeline_cls.from_pretrained(model_id)
-                break
-            except Exception:
-                continue
-    if pipeline is None:
-        try:
-            pipeline = pipeline_cls()
-        except Exception as error:
-            raise RuntimeError("Unable to initialize InstantMesh pipeline.") from error
-
-    if hasattr(pipeline, "to"):
-        try:
-            pipeline = pipeline.to(device)
-        except Exception:
-            pass
-    if device == "cuda" and hasattr(pipeline, "half"):
-        try:
-            pipeline = pipeline.half()
-        except Exception:
-            pass
-    return pipeline
 
 
 def _extract_mesh_candidate(output: Any, trimesh: Any) -> Optional[Any]:
@@ -304,20 +174,11 @@ def _extract_mesh_candidate(output: Any, trimesh: Any) -> Optional[Any]:
     return None
 
 
-def _safe_call_model_method(method: Any, primary_arg: Any, fallback_arg: Any, kwargs: Dict[str, Any]) -> Any:
-    try:
-        return method(primary_arg, **kwargs)
-    except TypeError:
-        return method(fallback_arg, **kwargs)
-
-
 def _load_optional_preprocess_utils() -> Tuple[Any, Any]:
     try:
-        utils_module = importlib.import_module("tsr.utils")
-        remove_background = getattr(utils_module, "remove_background", None)
-        resize_foreground = getattr(utils_module, "resize_foreground", None)
-        if callable(remove_background) and callable(resize_foreground):
-            return remove_background, resize_foreground
+        from tsr.utils import remove_background, resize_foreground  # type: ignore
+
+        return remove_background, resize_foreground
     except Exception:
         pass
 
@@ -330,116 +191,90 @@ def _load_optional_preprocess_utils() -> Tuple[Any, Any]:
     return _noop_remove_background, _noop_resize_foreground
 
 
-def generate_multiviews_with_instantmesh(
-    pipeline: Any,
-    base_image: Any,
-    config: Dict[str, int],
-    device: str,
-    torch_mod: Any,
-    image_mod: Any,
-    np_mod: Any,
-) -> list[Any]:
-    method_names = (
-        "generate_multiview",
-        "generate_multiviews",
-        "generate_views",
-        "generate_mvs",
-        "infer_views",
-        "create_multiview_images",
-        "__call__",
-    )
-    for name in method_names:
-        method = getattr(pipeline, name, None)
-        if not callable(method):
-            continue
+def _load_triposr_model(device: str) -> Tuple[Any, str]:
+    try:
+        from triposr import TripoSR  # type: ignore
 
-        kwargs: Dict[str, Any] = {}
-        kwargs.update(pick_supported_kwarg(method, STEP_PARAM_NAMES, config["steps"]))
-        kwargs.update(pick_supported_kwarg(method, MULTIVIEW_PARAM_NAMES, MULTIVIEW_COUNT))
-        kwargs.update(pick_supported_kwarg(method, ("device",), device))
-        with torch_mod.no_grad():
-            try:
-                output = _safe_call_model_method(method, base_image, [base_image], kwargs)
-            except Exception:
-                continue
+        model = TripoSR(device=device)
+        return model, "triposr"
+    except Exception:
+        pass
 
-        views = _to_pil_images(output, image_mod, np_mod)
-        if len(views) >= MULTIVIEW_COUNT:
-            return views[:MULTIVIEW_COUNT]
+    try:
+        from tsr.system import TSR  # type: ignore
 
-    raise RuntimeError(
-        "InstantMesh multi-view generation failed. Ensure diffusion multi-view stage is available."
-    )
+        model = TSR.from_pretrained(
+            "stabilityai/TripoSR",
+            config_name="config.yaml",
+            weight_name="model.ckpt",
+        )
+        if hasattr(model, "to"):
+            model.to(device)
+        return model, "tsr"
+    except Exception:
+        raise RuntimeError(TRIPOSR_INSTALL_HINT) from None
 
 
-def reconstruct_mesh_with_instantmesh(
-    pipeline: Any,
-    views: Sequence[Any],
+def reconstruct_mesh_with_triposr(
+    model: Any,
+    backend: str,
+    image: Any,
+    image_path: str,
     config: Dict[str, int],
     device: str,
     torch_mod: Any,
     trimesh: Any,
 ) -> Any:
-    direct_mesh_methods = (
-        "reconstruct_mesh",
-        "generate_mesh",
-        "mesh_from_views",
-        "predict_mesh",
-    )
-    for name in direct_mesh_methods:
-        method = getattr(pipeline, name, None)
-        if not callable(method):
-            continue
+    if backend == "triposr" and hasattr(model, "generate_mesh"):
+        generate_mesh = getattr(model, "generate_mesh")
         kwargs: Dict[str, Any] = {}
-        kwargs.update(pick_supported_kwarg(method, STEP_PARAM_NAMES, config["steps"]))
-        kwargs.update(pick_supported_kwarg(method, RESOLUTION_PARAM_NAMES, FIXED_MC_RESOLUTION))
-        kwargs.update(pick_supported_kwarg(method, DENSITY_THRESHOLD_PARAM_NAMES, STRICT_DENSITY_THRESHOLD))
-        kwargs.update(pick_supported_kwarg(method, ("device",), device))
+        kwargs.update(pick_supported_kwarg(generate_mesh, STEP_PARAM_NAMES, config["steps"]))
+        kwargs.update(pick_supported_kwarg(generate_mesh, RESOLUTION_PARAM_NAMES, config["resolution"]))
+
+        try:
+            signature = inspect.signature(generate_mesh)
+            if "image_path" in signature.parameters:
+                kwargs["image_path"] = image_path
+            elif "image" in signature.parameters:
+                kwargs["image"] = image
+        except Exception:
+            pass
+
         with torch_mod.no_grad():
-            try:
-                output = _safe_call_model_method(method, list(views), views, kwargs)
-            except Exception:
-                continue
+            if "image_path" in kwargs or "image" in kwargs:
+                output = generate_mesh(**kwargs)
+            else:
+                try:
+                    output = generate_mesh(image_path, **kwargs)
+                except TypeError:
+                    output = generate_mesh(image, **kwargs)
+
         mesh = _extract_mesh_candidate(output, trimesh)
         if mesh is not None:
             return mesh
 
-    infer_methods = ("infer", "forward", "__call__", "encode_views", "encode")
-    extract_methods = ("extract_mesh", "decode_mesh", "marching_cubes", "reconstruct")
-    for infer_name in infer_methods:
-        infer_method = getattr(pipeline, infer_name, None)
-        if not callable(infer_method):
-            continue
-        infer_kwargs: Dict[str, Any] = {}
-        infer_kwargs.update(pick_supported_kwarg(infer_method, STEP_PARAM_NAMES, config["steps"]))
-        infer_kwargs.update(pick_supported_kwarg(infer_method, MULTIVIEW_PARAM_NAMES, MULTIVIEW_COUNT))
-        infer_kwargs.update(pick_supported_kwarg(infer_method, ("device",), device))
-        with torch_mod.no_grad():
+    infer_kwargs = pick_supported_kwarg(model.__call__, STEP_PARAM_NAMES, config["steps"])
+    extract_kwargs = pick_supported_kwarg(model.extract_mesh, RESOLUTION_PARAM_NAMES, config["resolution"])
+    if not extract_kwargs:
+        extract_kwargs = {"resolution": config["resolution"]}
+
+    with torch_mod.no_grad():
+        try:
+            scene_codes = model([image], device=device, **infer_kwargs)
+        except TypeError:
+            scene_codes = model([image], device=device)
+
+        try:
+            meshes = model.extract_mesh(scene_codes, **extract_kwargs)
+        except TypeError:
             try:
-                features = _safe_call_model_method(infer_method, list(views), views, infer_kwargs)
-            except Exception:
-                continue
+                meshes = model.extract_mesh(scene_codes, resolution=config["resolution"])
+            except TypeError:
+                meshes = model.extract_mesh(scene_codes)
 
-        for extract_name in extract_methods:
-            extract_method = getattr(pipeline, extract_name, None)
-            if not callable(extract_method):
-                continue
-            extract_kwargs: Dict[str, Any] = {}
-            extract_kwargs.update(pick_supported_kwarg(extract_method, RESOLUTION_PARAM_NAMES, FIXED_MC_RESOLUTION))
-            extract_kwargs.update(pick_supported_kwarg(extract_method, DENSITY_THRESHOLD_PARAM_NAMES, STRICT_DENSITY_THRESHOLD))
-            extract_kwargs.update(pick_supported_kwarg(extract_method, ("device",), device))
-            with torch_mod.no_grad():
-                try:
-                    output = extract_method(features, **extract_kwargs)
-                except Exception:
-                    continue
-            mesh = _extract_mesh_candidate(output, trimesh)
-            if mesh is not None:
-                return mesh
-
-    raise RuntimeError(
-        "InstantMesh reconstruction failed. No compatible mesh extraction method found for multi-view output."
-    )
+    if not meshes:
+        raise RuntimeError("TripoSR did not return any mesh.")
+    return mesh_from_output(meshes[0], trimesh)
 
 
 def ensure_texture_uv(mesh: Any, np_mod: Any, trimesh: Any) -> Any:
@@ -794,50 +629,42 @@ def run_pipeline(args: argparse.Namespace) -> str:
         from PIL import Image  # type: ignore
     except Exception as error:
         raise RuntimeError(
-            "Missing dependencies. Install torch, pillow, trimesh and InstantMesh runtime in your environment."
+            "Missing dependencies. Install torch, pillow and trimesh in your environment."
         ) from error
 
     remove_background, resize_foreground = _load_optional_preprocess_utils()
     device = resolve_device(args.device)
-    pipeline = _load_instantmesh_pipeline(device, torch)
+    model, backend = _load_triposr_model(device)
 
     emit_progress("texture", 20, "Building texture map")
     texture_image = load_primary_texture(input_paths, Image)
     texture_image.save(texture_path, format="PNG")
 
-    emit_progress("infer", 30, "Preparing InstantMesh inputs")
+    emit_progress("infer", 30, "Preparing TripoSR input")
     config = QUALITY_CONFIG[args.quality]
     base_image = Image.open(input_paths[0]).convert("RGB")
     base_image = remove_background(base_image)
     base_image = resize_foreground(base_image, 0.95)
-    if hasattr(pipeline, "to"):
+    if hasattr(model, "to"):
         try:
-            pipeline.to(device)
+            model.to(device)
         except Exception:
             pass
-    if hasattr(pipeline, "renderer") and hasattr(pipeline.renderer, "set_chunk_size"):
-        pipeline.renderer.set_chunk_size(config["chunk_size"])
+    if hasattr(model, "renderer") and hasattr(model.renderer, "set_chunk_size"):
+        model.renderer.set_chunk_size(config["chunk_size"])
 
-    emit_progress("multiview", 44, f"Generating {MULTIVIEW_COUNT} orthographic views")
-    multiview_images = generate_multiviews_with_instantmesh(
-        pipeline=pipeline,
-        base_image=base_image,
-        config=config,
-        device=device,
-        torch_mod=torch,
-        image_mod=Image,
-        np_mod=np,
-    )
-
-    emit_progress("infer", 56, f"Reconstructing mesh from {len(multiview_images)} views")
-    mesh = reconstruct_mesh_with_instantmesh(
-        pipeline=pipeline,
-        views=multiview_images,
+    emit_progress("infer", 44, f"Running TripoSR reconstruction on {device} ({backend})")
+    mesh = reconstruct_mesh_with_triposr(
+        model=model,
+        backend=backend,
+        image=base_image,
+        image_path=input_paths[0],
         config=config,
         device=device,
         torch_mod=torch,
         trimesh=trimesh,
     )
+    emit_progress("infer", 56, "Mesh reconstruction complete")
 
     emit_progress("mesh_cleanup", 62, "Cleaning mesh and completing open areas")
     mesh = cleanup_mesh(mesh, args.quality, trimesh, smoothing)
@@ -873,7 +700,9 @@ def main() -> int:
         emit_done(skp_path)
         return 0
     except Exception as error:
-        emit_error(str(error), traceback.format_exc())
+        debug_mode = os.environ.get("VOLUMIA_DEBUG", "").strip().lower() in {"1", "true", "yes", "on"}
+        detail = traceback.format_exc() if debug_mode else ""
+        emit_error(str(error), detail)
         return 1
 
 

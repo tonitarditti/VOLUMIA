@@ -6,6 +6,7 @@ import os
 import shutil
 import sys
 import traceback
+from io import BytesIO
 from typing import Any, Dict, Optional
 
 
@@ -37,6 +38,7 @@ PRESET_CONFIG: Dict[str, Dict[str, int]] = {
     "fast": {
         "steps": 20,
         "resolution": 256,
+        "input_size": 512,
         "chunk_size": 16384,
         "smooth_iterations": 5,
         "refine_passes": 1,
@@ -44,6 +46,7 @@ PRESET_CONFIG: Dict[str, Dict[str, int]] = {
     "balanced": {
         "steps": 40,
         "resolution": 384,
+        "input_size": 768,
         "chunk_size": 8192,
         "smooth_iterations": 10,
         "refine_passes": 2,
@@ -51,6 +54,7 @@ PRESET_CONFIG: Dict[str, Dict[str, int]] = {
     "quality": {
         "steps": 60,
         "resolution": 512,
+        "input_size": 1024,
         "chunk_size": 4096,
         "smooth_iterations": 20,
         "refine_passes": 3,
@@ -210,9 +214,102 @@ def export_glb_with_fallback(mesh: Any, out_glb: str, trimesh: Any) -> tuple[boo
         return True, f"Primary export failed; fallback template used: {template_glb}"
 
 
-def run_triposr(image_path: str, out_glb: str, preset: str, requested_device: str) -> None:
-    emit("preprocess", 10, "Loading image")
+def _get_lanczos_resample(pil_image_module: Any) -> Any:
+    if hasattr(pil_image_module, "Resampling"):
+        return pil_image_module.Resampling.LANCZOS
+    return pil_image_module.LANCZOS
 
+
+def _load_rembg_result_as_rgba(result: Any, pil_image_module: Any) -> Any:
+    if isinstance(result, bytes):
+        return pil_image_module.open(BytesIO(result)).convert("RGBA")
+    if hasattr(result, "read"):
+        return pil_image_module.open(result).convert("RGBA")
+    if hasattr(result, "mode") and hasattr(result, "size"):
+        return result.convert("RGBA")
+    raise RuntimeError("Unsupported rembg output type")
+
+
+def preprocess_image_for_inference(
+    image_path: str,
+    out_glb: str,
+    preset: str,
+    pil_image_module: Any,
+) -> str:
+    emit("preprocess", 5, "Loading image")
+    original_image = pil_image_module.open(image_path).convert("RGB")
+    working_rgba = original_image.convert("RGBA")
+
+    emit("bg_remove", 15, "Removing background")
+    try:
+        from rembg import remove as rembg_remove  # type: ignore
+
+        source_buffer = BytesIO()
+        original_image.save(source_buffer, format="PNG")
+        rembg_result = rembg_remove(source_buffer.getvalue())
+        working_rgba = _load_rembg_result_as_rgba(rembg_result, pil_image_module)
+        emit("bg_remove", 20, "Background removal complete")
+    except Exception as error:
+        working_rgba = original_image.convert("RGBA")
+        emit("bg_remove", 20, f"Background removal unavailable, using original image ({error.__class__.__name__})")
+
+    emit("crop", 25, "Cropping subject")
+    cropped_rgba = working_rgba
+    try:
+        alpha = working_rgba.getchannel("A")
+        alpha_extrema = alpha.getextrema()
+        has_alpha_mask = bool(alpha_extrema) and alpha_extrema[0] < 255
+        if has_alpha_mask:
+            bbox = alpha.getbbox()
+            if bbox:
+                left, top, right, bottom = bbox
+                width, height = working_rgba.size
+                pad_x = max(1, int((right - left) * 0.12))
+                pad_y = max(1, int((bottom - top) * 0.12))
+                crop_box = (
+                    max(0, left - pad_x),
+                    max(0, top - pad_y),
+                    min(width, right + pad_x),
+                    min(height, bottom + pad_y),
+                )
+                cropped_rgba = working_rgba.crop(crop_box)
+                emit("crop", 30, f"Cropped to subject bounds ({cropped_rgba.width}x{cropped_rgba.height})")
+            else:
+                emit("crop", 30, "Subject mask empty; crop skipped")
+        else:
+            emit("crop", 30, "No alpha mask detected; crop skipped")
+    except Exception as error:
+        cropped_rgba = working_rgba
+        emit("crop", 30, f"Crop failed; using uncropped image ({error.__class__.__name__})")
+
+    emit("normalize", 35, "Resizing and padding")
+    target_size = int(PRESET_CONFIG[preset]["input_size"])
+    target_size = max(64, target_size)
+
+    resample = _get_lanczos_resample(pil_image_module)
+    source_width, source_height = cropped_rgba.size
+    if source_width <= 0 or source_height <= 0:
+        source_width, source_height = original_image.size
+        cropped_rgba = original_image.convert("RGBA")
+
+    scale = min(target_size / float(source_width), target_size / float(source_height))
+    resized_w = max(1, int(round(source_width * scale)))
+    resized_h = max(1, int(round(source_height * scale)))
+    resized_rgba = cropped_rgba.resize((resized_w, resized_h), resample=resample)
+
+    neutral_bg = (242, 240, 234)
+    normalized = pil_image_module.new("RGB", (target_size, target_size), neutral_bg)
+    paste_x = (target_size - resized_w) // 2
+    paste_y = (target_size - resized_h) // 2
+    normalized.paste(resized_rgba, (paste_x, paste_y), resized_rgba)
+
+    preprocessed_path = os.path.join(os.path.dirname(out_glb), "preprocessed.png")
+    normalized.save(preprocessed_path, format="PNG")
+    emit("normalize", 40, f"Preprocessed image ready: {preprocessed_path}")
+    return preprocessed_path
+
+
+def run_triposr(image_path: str, out_glb: str, preset: str, requested_device: str) -> None:
     if not os.path.exists(image_path):
         raise RuntimeError(f"Input image not found: {image_path}")
 
@@ -222,15 +319,18 @@ def run_triposr(image_path: str, out_glb: str, preset: str, requested_device: st
         import trimesh  # type: ignore
         import trimesh.smoothing as smoothing  # type: ignore
         from tsr.system import TSR  # type: ignore
-        from tsr.utils import remove_background, resize_foreground  # type: ignore
     except Exception as error:
         raise RuntimeError(
             "TripoSR dependencies are not installed. Install torch, pillow and triposr runtime first."
         ) from error
 
-    image = Image.open(image_path).convert("RGB")
-    image = remove_background(image)
-    image = resize_foreground(image, 0.85)
+    try:
+        preprocessed_image_path = preprocess_image_for_inference(image_path, out_glb, preset, Image)
+    except Exception as error:
+        preprocessed_image_path = image_path
+        emit("preprocess", 40, f"Preprocess failed; using original image ({error.__class__.__name__})")
+
+    image = Image.open(preprocessed_image_path).convert("RGB")
 
     device = resolve_device(requested_device)
     preset_config = PRESET_CONFIG[preset]
