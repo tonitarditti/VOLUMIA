@@ -1,0 +1,10 @@
+VOLUMIA Third-Party Notice File
+===============================
+
+This file is reserved for notice text required by dependencies distributed under
+licenses that include attribution/notice obligations (for example Apache-2.0).
+
+At release time:
+- Include required upstream NOTICE entries for bundled Apache-licensed components.
+- Keep attribution text intact where required by upstream licenses.
+- Ensure this notice file ships with distribution artifacts when obligations apply.

@@ -6,9 +6,11 @@ import { basename, extname, resolve } from "path";
 import {
   IPC_CHANNELS,
   type GenerationCheckResult,
+  type GenerationAutoEngine,
   type GenerationDevice,
   type GenerationDonePayload,
   type GenerationErrorPayload,
+  type GenerationMode,
   type GenerationPipeline,
   type GenerationProgressPayload,
   type GenerationPreset,
@@ -29,8 +31,10 @@ type LocalGenerationResult = {
   error?: string;
   outGlbPath?: string;
   device?: GenerationDevice;
+  autoUsed?: GenerationAutoEngine;
   stdout?: string;
   stderr?: string;
+  logPath?: string;
 };
 
 type PythonRunError = Error & {
@@ -38,6 +42,8 @@ type PythonRunError = Error & {
   signal?: NodeJS.Signals | null;
   stdout?: string;
   stderr?: string;
+  logPath?: string;
+  structuredMessage?: string;
 };
 
 type GenerationRunErrorResult = {
@@ -46,6 +52,7 @@ type GenerationRunErrorResult = {
   stderr?: string;
   stdout?: string;
   logFile: string;
+  logPath?: string;
 };
 
 type GenerationRunSuccessResult = {
@@ -53,6 +60,7 @@ type GenerationRunSuccessResult = {
   outPath: string;
   device?: GenerationDevice;
   logFile: string;
+  logPath?: string;
 };
 
 type GenerationRunHandlerResult = GenerationRunSuccessResult | GenerationRunErrorResult;
@@ -79,13 +87,14 @@ type GenSkpPythonResult = {
   error?: string;
   stdout?: string;
   stderr?: string;
+  logPath?: string;
 };
 
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp"]);
 const activeJobs = new Map<string, GenerationJobState>();
 const latestOutputByProject = new Map<string, string>();
-const MAX_STDOUT_CHARS = 200_000;
-const MAX_STDERR_CHARS = 200_000;
+const MAX_STDOUT_CHARS = 10_000_000;
+const MAX_STDERR_CHARS = 10_000_000;
 const TRUNCATION_SUFFIX = "\n...truncated";
 const STDOUT_TAIL_LINES = 8;
 const STDERR_PREVIEW_CHARS = 2_000;
@@ -176,6 +185,69 @@ function lastNonEmptyLines(text: string, count: number) {
   return lines.slice(-count).join("\n");
 }
 
+type ParsedPythonError = {
+  message: string;
+  traceback?: string;
+};
+
+function parsePythonErrorLine(rawLine: string): ParsedPythonError | null {
+  const line = rawLine.trim();
+  if (!line.startsWith("{")) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(line) as Record<string, unknown>;
+    if (parsed.type !== "error" || typeof parsed.message !== "string") {
+      return null;
+    }
+    return {
+      message: parsed.message,
+      traceback: typeof parsed.traceback === "string" ? parsed.traceback : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function extractPythonStructuredError(stdout: string, stderr: string): ParsedPythonError | null {
+  const stdoutLines = stdout.split(/\r?\n/);
+  for (let index = stdoutLines.length - 1; index >= 0; index -= 1) {
+    const parsed = parsePythonErrorLine(stdoutLines[index] ?? "");
+    if (parsed) {
+      return parsed;
+    }
+  }
+  const stderrLines = stderr.split(/\r?\n/);
+  for (let index = stderrLines.length - 1; index >= 0; index -= 1) {
+    const parsed = parsePythonErrorLine(stderrLines[index] ?? "");
+    if (parsed) {
+      return parsed;
+    }
+  }
+  return null;
+}
+
+function buildPythonRunLog(stdout: string, stderr: string) {
+  return `[STDOUT]\n${stdout || "(empty)"}\n\n[STDERR]\n${stderr || "(empty)"}\n`;
+}
+
+function writePythonRunLog(logDir: string, stdout: string, stderr: string) {
+  const fallbackPath = getGenerationLogFilePath();
+  try {
+    fs.mkdirSync(logDir, { recursive: true });
+    const logPath = path.join(logDir, "python-last-run.log");
+    fs.writeFileSync(logPath, buildPythonRunLog(stdout, stderr), "utf8");
+    return logPath;
+  } catch {
+    try {
+      fs.appendFileSync(fallbackPath, `\n${buildPythonRunLog(stdout, stderr)}`, "utf8");
+    } catch {
+      // No-op by design.
+    }
+    return fallbackPath;
+  }
+}
+
 function asErrorMessage(error: unknown) {
   if (typeof error === "string" && error.trim().length > 0) {
     return error;
@@ -190,14 +262,19 @@ function createPythonError(
   code: number,
   signal: NodeJS.Signals | null,
   stdout: string,
-  stderr: string
+  stderr: string,
+  structuredError?: ParsedPythonError | null
 ): PythonRunError {
+  const shortMessage = structuredError?.message?.trim() || "";
   const stderrText = stderr.trim() || "(empty)";
   const stdoutTail = lastNonEmptyLines(stdout, STDOUT_TAIL_LINES);
   const detailParts = [
-    `Python exited with code ${code}${signal ? `, signal ${signal}` : ""}.`,
+    shortMessage || `Python exited with code ${code}${signal ? `, signal ${signal}` : ""}.`,
     `stderr:\n${stderrText}`,
   ];
+  if (structuredError?.traceback?.trim()) {
+    detailParts.push(`traceback:\n${structuredError.traceback}`);
+  }
   if (stdoutTail) {
     detailParts.push(`stdout tail:\n${stdoutTail}`);
   }
@@ -206,6 +283,9 @@ function createPythonError(
   error.signal = signal;
   error.stdout = stdout;
   error.stderr = stderr;
+  if (shortMessage) {
+    error.structuredMessage = shortMessage;
+  }
   return error;
 }
 
@@ -216,13 +296,16 @@ function createGenerationRunErrorResult(error: unknown): GenerationRunErrorResul
     typeof pyError?.stdout === "string"
       ? lastNonEmptyLines(pyError.stdout, STDOUT_TAIL_LINES) || pyError.stdout
       : undefined;
+  const logPath = typeof pyError?.logPath === "string" ? pyError.logPath : undefined;
+  const shortMessage = pyError?.structuredMessage?.trim() || asErrorMessage(error);
 
   return {
     ok: false,
-    error: asErrorMessage(error),
+    error: shortMessage,
     stderr,
     stdout,
-    logFile: getGenerationLogFilePath(),
+    logFile: logPath ?? getGenerationLogFilePath(),
+    logPath,
   };
 }
 
@@ -280,7 +363,7 @@ function runPython(
     p.on("error", (error) => {
       stderr = capOutput(stderr, `\n${asErrorMessage(error)}`, MAX_STDERR_CHARS);
       logErr("[VOLUMIA][PY] spawn error", `python=${pythonPath}`, `script=${scriptPath}`, `out=${outPath || "n/a"}`);
-      rejectOnce(createPythonError(-1, null, stdout, stderr));
+      rejectOnce(createPythonError(-1, null, stdout, stderr, extractPythonStructuredError(stdout, stderr)));
     });
 
     p.stdout?.on("data", (data) => {
@@ -305,7 +388,7 @@ function runPython(
         if (stderrPreview.trim()) {
           logErr("[VOLUMIA][PY] stderr preview:", stderrPreview);
         }
-        rejectOnce(createPythonError(exitCode, signal, stdout, stderr));
+        rejectOnce(createPythonError(exitCode, signal, stdout, stderr, extractPythonStructuredError(stdout, stderr)));
         return;
       }
       resolveOnce({ stdout, stderr, code: exitCode });
@@ -341,6 +424,10 @@ function isGenerationPipeline(value: unknown): value is GenerationPipeline {
 
 function isGenerationSkpQuality(value: unknown): value is GenerationSkpQuality {
   return value === "fast" || value === "high";
+}
+
+function isGenerationMode(value: unknown): value is GenerationMode {
+  return value === "auto" || value === "neural" || value === "architectural";
 }
 
 function isPathLikePython(value: string) {
@@ -428,6 +515,7 @@ function validateRunPayload(payload: unknown): payload is GenerationRunPayload {
     Array.isArray(candidate.imagePaths) &&
     candidate.imagePaths.every((item) => typeof item === "string") &&
     isPreset(candidate.preset) &&
+    (typeof candidate.mode === "undefined" || isGenerationMode(candidate.mode)) &&
     (typeof candidate.pythonPath === "undefined" || typeof candidate.pythonPath === "string")
   );
 }
@@ -507,8 +595,32 @@ function mapPresetToQuality(preset: GenerationPreset): "fast" | "balanced" | "hi
   return preset;
 }
 
-function resolveGenerationMode(_imagePath: string): "furniture" | "generic" {
-  return "generic";
+function resolveGenerationMode(mode: GenerationMode | undefined): GenerationMode {
+  if (mode === "architectural" || mode === "neural" || mode === "auto") {
+    return mode;
+  }
+  return "auto";
+}
+
+function parseAutoEngine(value: unknown): GenerationAutoEngine | undefined {
+  if (value === "triposr" || value === "arch" || value === "blockout") {
+    return value;
+  }
+  return undefined;
+}
+
+function readAutoMetaUsed(outGlbPath: string): GenerationAutoEngine | undefined {
+  const metaPath = path.join(path.dirname(outGlbPath), "auto-meta.json");
+  if (!fs.existsSync(metaPath)) {
+    return undefined;
+  }
+
+  try {
+    const parsed = JSON.parse(fs.readFileSync(metaPath, "utf8")) as Record<string, unknown>;
+    return parseAutoEngine(parsed.used);
+  } catch {
+    return undefined;
+  }
 }
 
 type ParsedProgressLine = {
@@ -605,6 +717,7 @@ type ParsedGenSkpLine =
       type: "error";
       message: string;
       detail?: string;
+      traceback?: string;
     };
 
 function parseGenSkpLine(rawLine: string): ParsedGenSkpLine | null {
@@ -640,6 +753,7 @@ function parseGenSkpLine(rawLine: string): ParsedGenSkpLine | null {
         type: "error",
         message: parsed.message,
         detail: typeof parsed.detail === "string" ? parsed.detail : undefined,
+        traceback: typeof parsed.traceback === "string" ? parsed.traceback : undefined,
       };
     }
     return null;
@@ -658,10 +772,11 @@ async function runLocalPythonGeneration(
 ): Promise<LocalGenerationResult> {
   const logs: string[] = [];
   let device: GenerationDevice | undefined;
+  let outGlb = "";
 
   try {
     const assetsDir = ensureAssetsDir();
-    const outGlb = path.join(assetsDir, "latest.glb");
+    outGlb = path.join(assetsDir, "latest.glb");
     const modelsDir = path.join(assetsDir, "models");
     const pipDir = path.join(assetsDir, "pip");
     const tmpDir = path.join(assetsDir, "tmp");
@@ -672,6 +787,9 @@ async function runLocalPythonGeneration(
     const spawnEnv: NodeJS.ProcessEnv = {
       ...process.env,
       KMP_DUPLICATE_LIB_OK: "TRUE",
+      PYTHONUNBUFFERED: "1",
+      TQDM_DISABLE: "1",
+      HF_HUB_DISABLE_PROGRESS_BARS: "1",
       VOLUMIA_CACHE_DIR: assetsDir,
       HF_HOME: modelsDir,
       TRANSFORMERS_CACHE: modelsDir,
@@ -680,11 +798,23 @@ async function runLocalPythonGeneration(
       VOLUMIA_FORCE_DEVICE: "cuda",
     };
     logInfo("[VOLUMIA] OpenMP duplicate workaround enabled");
+    const generationMode = resolveGenerationMode(payload.mode);
 
     const { stdout, stderr, code } = await runPython(
       pythonCommand.cmd,
       scriptPath,
-      ["--in", imagePath, "--out", outGlb, "--quality", mapPresetToQuality(payload.preset), "--models-dir", modelsDir],
+      [
+        "--in",
+        imagePath,
+        "--out",
+        outGlb,
+        "--quality",
+        mapPresetToQuality(payload.preset),
+        "--mode",
+        generationMode,
+        "--models-dir",
+        modelsDir,
+      ],
       spawnEnv,
       (process) => {
         job.process = process;
@@ -697,6 +827,7 @@ async function runLocalPythonGeneration(
     logInfo("[PY] exit:", code);
     logInfo("[PY] stdout:", stdout);
     logErr("[PY] stderr:", stderr);
+    const logPath = writePythonRunLog(path.dirname(outGlb), stdout, stderr);
 
     logs.push(`[py] exit: ${code}`);
     if (stdout.trim()) {
@@ -752,15 +883,21 @@ async function runLocalPythonGeneration(
     }
 
     await ensureGlbOk(outGlb);
+    const autoUsed = readAutoMetaUsed(outGlb);
 
     return {
       ok: true,
       logs,
       outGlbPath: outGlb,
       device,
+      autoUsed,
+      logPath,
     };
   } catch (error) {
     const pyError = error as PythonRunError;
+    const stdoutText = typeof pyError.stdout === "string" ? pyError.stdout : "";
+    const stderrText = typeof pyError.stderr === "string" ? pyError.stderr : "";
+    const logPath = writePythonRunLog(path.dirname(outGlb || ensureAssetsDir()), stdoutText, stderrText);
     if (typeof pyError.stdout === "string" && pyError.stdout.trim()) {
       logs.push(...pyError.stdout.split(/\r?\n/).filter(Boolean).map((line) => `[stdout] ${line}`));
     }
@@ -771,9 +908,10 @@ async function runLocalPythonGeneration(
     return {
       ok: false,
       logs,
-      error: asErrorMessage(error) || "No se pudo ejecutar el generador local.",
-      stdout: typeof pyError.stdout === "string" ? pyError.stdout : undefined,
-      stderr: typeof pyError.stderr === "string" ? pyError.stderr : undefined,
+      error: pyError.structuredMessage || "Fallo el generador local.",
+      stdout: stdoutText,
+      stderr: stderrText,
+      logPath,
     };
   }
 }
@@ -786,6 +924,8 @@ async function runGenSkpPythonGeneration(
   pythonCommand: ResolvedPythonCommand
 ): Promise<GenSkpPythonResult> {
   const logs: string[] = [];
+  const outputDir = resolve(payload.outputDir);
+  const logDir = outputDir || ensureAssetsDir();
 
   try {
     const inputs = payload.inputs.map((value) => resolve(value));
@@ -808,6 +948,9 @@ async function runGenSkpPythonGeneration(
     const spawnEnv: NodeJS.ProcessEnv = {
       ...process.env,
       KMP_DUPLICATE_LIB_OK: "TRUE",
+      PYTHONUNBUFFERED: "1",
+      TQDM_DISABLE: "1",
+      HF_HUB_DISABLE_PROGRESS_BARS: "1",
       VOLUMIA_FORCE_DEVICE: "cuda",
     };
 
@@ -823,6 +966,7 @@ async function runGenSkpPythonGeneration(
     ).finally(() => {
       job.process = null;
     });
+    const logPath = writePythonRunLog(logDir, stdout, stderr);
 
     if (stdout.trim()) {
       logs.push(...stdout.split(/\r?\n/).filter(Boolean).map((line) => `[stdout] ${line}`));
@@ -848,7 +992,8 @@ async function runGenSkpPythonGeneration(
       } else if (parsed.type === "done") {
         doneSkpPath = resolve(parsed.skpPath);
       } else if (parsed.type === "error") {
-        parserError = parsed.detail ? `${parsed.message}\n${parsed.detail}` : parsed.message;
+        const detailParts = [parsed.detail, parsed.traceback].filter((item): item is string => Boolean(item));
+        parserError = detailParts.length > 0 ? `${parsed.message}\n${detailParts.join("\n")}` : parsed.message;
       }
     }
 
@@ -859,6 +1004,7 @@ async function runGenSkpPythonGeneration(
         error: parserError,
         stdout,
         stderr,
+        logPath,
       };
     }
 
@@ -871,6 +1017,7 @@ async function runGenSkpPythonGeneration(
         error: `No se encontro SKP generado en: ${resolvedSkpPath}`,
         stdout,
         stderr,
+        logPath,
       };
     }
 
@@ -880,9 +1027,13 @@ async function runGenSkpPythonGeneration(
       skpPath: resolvedSkpPath,
       stdout,
       stderr,
+      logPath,
     };
   } catch (error) {
     const pyError = error as PythonRunError;
+    const stdoutText = typeof pyError.stdout === "string" ? pyError.stdout : "";
+    const stderrText = typeof pyError.stderr === "string" ? pyError.stderr : "";
+    const logPath = writePythonRunLog(logDir, stdoutText, stderrText);
     if (typeof pyError.stdout === "string" && pyError.stdout.trim()) {
       logs.push(...pyError.stdout.split(/\r?\n/).filter(Boolean).map((line) => `[stdout] ${line}`));
     }
@@ -893,9 +1044,10 @@ async function runGenSkpPythonGeneration(
     return {
       ok: false,
       logs,
-      error: asErrorMessage(error) || "No se pudo ejecutar el generador SKP IA.",
-      stdout: typeof pyError.stdout === "string" ? pyError.stdout : undefined,
-      stderr: typeof pyError.stderr === "string" ? pyError.stderr : undefined,
+      error: pyError.structuredMessage || "Fallo el generador SKP IA.",
+      stdout: stdoutText,
+      stderr: stderrText,
+      logPath,
     };
   }
 }
@@ -904,7 +1056,7 @@ async function runGenerationJob(
   payload: GenerationRunPayload,
   getWindow: WindowGetter,
   job: GenerationJobState
-): Promise<{ outPath: string; device?: GenerationDevice }> {
+): Promise<{ outPath: string; device?: GenerationDevice; logPath?: string }> {
   if ((payload.pipeline ?? "depth_glb") === "gen_skp") {
     const genPayload = payload as GenerationRunPayloadGenSkp;
     const projectId = genPayload.projectId;
@@ -937,6 +1089,9 @@ async function runGenerationJob(
       if (typeof skpResult.stderr === "string") {
         generationError.stderr = skpResult.stderr;
       }
+      if (typeof skpResult.logPath === "string") {
+        generationError.logPath = skpResult.logPath;
+      }
       throw generationError;
     }
 
@@ -956,6 +1111,7 @@ async function runGenerationJob(
 
     return {
       outPath: skpResult.skpPath,
+      logPath: skpResult.logPath,
     };
   }
 
@@ -1014,12 +1170,9 @@ async function runGenerationJob(
     throw new Error("Generacion cancelada.");
   }
 
-  const mode = resolveGenerationMode(copiedImages[0]);
-  const scriptPath = mode === "furniture" ? resolveFurnitureScriptPath() : resolveGeneratorScriptPath();
+  const mode = resolveGenerationMode(depthPayload.mode);
+  const scriptPath = resolveGeneratorScriptPath();
   if (!scriptPath) {
-    if (mode === "furniture") {
-      throw new Error("No se encontro apps/desktop/python/image_to_3d_furniture_tables.py");
-    }
     throw new Error("No se encontro apps/desktop/python/image_to_3d_depth_glb.py");
   }
 
@@ -1035,9 +1188,12 @@ async function runGenerationJob(
     projectId,
     stage: "infer",
     percent: 55,
-    message: mode === "furniture"
-      ? "Ejecutando reconstructor parametrico de mesas..."
-      : "Ejecutando generador de profundidad local...",
+    message:
+      mode === "architectural"
+        ? "Ejecutando modo arquitectonico (primitivas + blockout)..."
+        : mode === "neural"
+          ? "Ejecutando generador neural local..."
+          : "Ejecutando modo AUTO (TripoSR con fallbacks locales)...",
   });
 
   const localResult = await runLocalPythonGeneration(
@@ -1061,6 +1217,10 @@ async function runGenerationJob(
     if (typeof localResult.stderr === "string") {
       generationError.stderr = localResult.stderr;
     }
+    if (typeof localResult.logPath === "string") {
+      generationError.logPath = localResult.logPath;
+      generationError.structuredMessage = localResult.error;
+    }
     throw generationError;
   }
 
@@ -1080,12 +1240,15 @@ async function runGenerationJob(
     outGlbPath: localResult.outGlbPath,
     sourceImages: copiedImages,
     preset: depthPayload.preset,
+    mode,
+    autoUsed: localResult.autoUsed,
     device: localResult.device,
   });
 
   return {
     outPath: localResult.outGlbPath,
     device: localResult.device,
+    logPath: localResult.logPath,
   };
 }
 
@@ -1105,7 +1268,7 @@ function buildGeneratorCheckResult(pythonPath?: string): GenerationCheckResult {
     `python: ${pythonCommand}`,
     `pythonFound: ${pythonFound}`,
     "generator: image_to_3d_depth_glb.py",
-    "generator_mode_switch: handled inside image_to_3d_depth_glb.py via object detection",
+    "generator_modes: auto | neural | architectural",
   ];
 
   return {
@@ -1170,6 +1333,7 @@ export function registerGenerationHandlers(getWindow: WindowGetter) {
         outPath: jobResult.outPath,
         device: jobResult.device,
         logFile: getGenerationLogFilePath(),
+        logPath: jobResult.logPath,
       };
     } catch (error) {
       const runError = createGenerationRunErrorResult(error);
@@ -1178,6 +1342,7 @@ export function registerGenerationHandlers(getWindow: WindowGetter) {
         sendError(getWindow, {
           projectId,
           message: runError.error,
+          logPath: runError.logPath,
         });
       }
       return runError;
@@ -1298,6 +1463,24 @@ export function registerGenerationHandlers(getWindow: WindowGetter) {
     return {
       ok: true,
       path: outGlbPath,
+    };
+  });
+
+  ipcMain.handle("gen:open-log-path", async (_event, payload: { logPath?: string } | undefined) => {
+    const targetPath = payload?.logPath ? resolve(payload.logPath) : "";
+    if (!targetPath || !fs.existsSync(targetPath)) {
+      return {
+        ok: false,
+        path: targetPath,
+        error: "Log file not found.",
+      };
+    }
+
+    const openError = await shell.openPath(targetPath);
+    return {
+      ok: openError.length === 0,
+      path: targetPath,
+      error: openError || undefined,
     };
   });
 }

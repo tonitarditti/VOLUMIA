@@ -6,6 +6,7 @@ import os
 import shutil
 import sys
 import traceback
+import types
 from io import BytesIO
 from typing import Any, Dict, Optional
 
@@ -32,6 +33,45 @@ def resolve_device(requested: str) -> str:
         return "cuda" if torch.cuda.is_available() else "cpu"
     except Exception:
         return "cpu"
+
+
+def install_torchmcubes_compat_shim() -> None:
+    try:
+        import torchmcubes  # type: ignore  # noqa: F401
+
+        return
+    except Exception:
+        pass
+
+    try:
+        import mcubes  # type: ignore
+        import numpy as np  # type: ignore
+        import torch  # type: ignore
+    except Exception as error:
+        raise RuntimeError(
+            "PyMCubes is required when torchmcubes is unavailable. Install with: pip install PyMCubes"
+        ) from error
+
+    shim_module = types.ModuleType("torchmcubes")
+
+    def marching_cubes(volume: Any, level: Any):  # type: ignore[no-untyped-def]
+        if not torch.is_tensor(volume):
+            raise TypeError("torchmcubes shim expected a torch.Tensor volume")
+
+        volume_np = volume.detach().float().cpu().numpy()
+        iso_level = float(level.detach().item()) if torch.is_tensor(level) else float(level)
+        vertices_np, faces_np = mcubes.marching_cubes(volume_np, iso_level)
+
+        vertices_arr = np.asarray(vertices_np, dtype=np.float32)
+        faces_arr = np.asarray(faces_np, dtype=np.int64)
+        vertex_dtype = volume.dtype if getattr(volume, "is_floating_point", lambda: False)() else torch.float32
+
+        vertices = torch.from_numpy(vertices_arr).to(device=volume.device, dtype=vertex_dtype)
+        faces = torch.from_numpy(faces_arr).to(device=volume.device, dtype=torch.int64)
+        return vertices, faces
+
+    shim_module.marching_cubes = marching_cubes  # type: ignore[attr-defined]
+    sys.modules["torchmcubes"] = shim_module
 
 
 PRESET_CONFIG: Dict[str, Dict[str, int]] = {
@@ -318,7 +358,10 @@ def run_triposr(image_path: str, out_glb: str, preset: str, requested_device: st
         from PIL import Image  # type: ignore
         import trimesh  # type: ignore
         import trimesh.smoothing as smoothing  # type: ignore
+        install_torchmcubes_compat_shim()
         from tsr.system import TSR  # type: ignore
+    except RuntimeError:
+        raise
     except Exception as error:
         raise RuntimeError(
             "TripoSR dependencies are not installed. Install torch, pillow and triposr runtime first."

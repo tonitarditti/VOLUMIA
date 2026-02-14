@@ -130,14 +130,17 @@ export type ModelMetadata = {
 };
 
 export type GenerationPreset = "fast" | "balanced" | "quality";
+export type GenerationMode = "auto" | "neural" | "architectural";
 export type GenerationPipeline = "depth_glb" | "gen_skp";
 export type GenerationSkpQuality = "fast" | "high";
+export type GenerationAutoEngine = "triposr" | "arch" | "blockout";
 
 export type ProjectModel = {
   sourceImages: string[];
   glbPath?: string;
   generatedAt?: number;
   preset?: GenerationPreset;
+  mode?: GenerationMode;
 };
 
 export type Project = {
@@ -218,6 +221,7 @@ export type GenerationRunPayload = {
   projectId: string;
   imagePaths: string[];
   preset: GenerationPreset;
+  mode?: GenerationMode;
   pythonPath?: string;
   pipeline?: GenerationPipeline;
   inputs?: string[];
@@ -231,10 +235,13 @@ export type GenerationRunPayload = {
 export type GenerationRunResult =
   | {
       ok: true;
+      outPath?: string;
+      logPath?: string;
     }
   | {
       ok: false;
       error: string;
+      logPath?: string;
     };
 
 export type GenerationProgressPayload = {
@@ -258,12 +265,15 @@ export type GenerationDonePayload = {
   outGlbPath?: string;
   sourceImages?: string[];
   preset?: GenerationPreset;
+  mode?: GenerationMode;
+  autoUsed?: GenerationAutoEngine;
   device?: GenerationDevice;
 };
 
 export type GenerationErrorPayload = {
   projectId: string;
   message: string;
+  logPath?: string;
 };
 
 export type GenerationCheckResult = {

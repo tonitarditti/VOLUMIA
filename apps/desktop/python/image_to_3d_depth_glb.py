@@ -8,7 +8,13 @@ import sys
 import time
 import traceback
 from dataclasses import dataclass
-from typing import Dict, List, Sequence, Tuple
+from io import BytesIO
+from typing import Any, Dict, List, Optional, Sequence, Tuple
+
+os.environ.setdefault("PYTHONUNBUFFERED", "1")
+os.environ.setdefault("TQDM_DISABLE", "1")
+os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+os.environ.setdefault("TRANSFORMERS_NO_ADVISORY_WARNINGS", "1")
 
 from _bootstrap import ensure_cache_dirs, ensure_packages, get_cache_root
 from _device import detect_device
@@ -31,6 +37,14 @@ MIN_BYTES_ABSOLUTE = 40 * 1024
 SOFT_WARN_BYTES = 200 * 1024
 BROKEN_MIN_VERTS = 500
 BROKEN_MIN_FACES = 800
+ARCH_MIN_GLB_BYTES = 10 * 1024
+ARCH_TARGET_MAX_DIM = 2.0
+AUTO_MIN_GLB_BYTES = 30 * 1024
+AUTO_MIN_FACES = 3000
+AUTO_MAX_BBOX_RATIO = 25.0
+AUTO_MIN_MAX_DIM = 0.1
+AUTO_GROUND_EPSILON = 0.05
+TRIPOSR_INSTALL_HINT = "TripoSR not installed. Install: pip install git+https://github.com/VAST-AI-Research/TripoSR.git"
 
 
 @dataclass
@@ -83,6 +97,997 @@ def log_cuda_check() -> None:
         print("[CUDA CHECK] available= False", flush=True)
         print("[CUDA CHECK] count= 0", flush=True)
         print(f"[CUDA CHECK] error= {error}", flush=True)
+
+
+def _try_remove_background(rgba_image):
+    try:
+        from PIL import Image
+        from rembg import remove  # type: ignore
+
+        buffer = BytesIO()
+        rgba_image.save(buffer, format="PNG")
+        result = remove(buffer.getvalue())
+        if isinstance(result, bytes):
+            return Image.open(BytesIO(result)).convert("RGBA"), True
+        if hasattr(result, "read"):
+            return Image.open(result).convert("RGBA"), True
+        if hasattr(result, "mode") and hasattr(result, "size"):
+            return result.convert("RGBA"), True
+    except Exception as error:
+        log(f"[ARCH] background removal unavailable: {error}")
+    return rgba_image, False
+
+
+def _largest_component_numpy(mask_uint8):
+    height, width = mask_uint8.shape
+    visited = np.zeros((height, width), dtype=np.uint8)
+    best_component = []
+
+    for y in range(height):
+        for x in range(width):
+            if mask_uint8[y, x] == 0 or visited[y, x] == 1:
+                continue
+
+            stack = [(y, x)]
+            visited[y, x] = 1
+            component = []
+
+            while stack:
+                cy, cx = stack.pop()
+                component.append((cy, cx))
+
+                ny = cy - 1
+                if ny >= 0 and mask_uint8[ny, cx] == 1 and visited[ny, cx] == 0:
+                    visited[ny, cx] = 1
+                    stack.append((ny, cx))
+                ny = cy + 1
+                if ny < height and mask_uint8[ny, cx] == 1 and visited[ny, cx] == 0:
+                    visited[ny, cx] = 1
+                    stack.append((ny, cx))
+                nx = cx - 1
+                if nx >= 0 and mask_uint8[cy, nx] == 1 and visited[cy, nx] == 0:
+                    visited[cy, nx] = 1
+                    stack.append((cy, nx))
+                nx = cx + 1
+                if nx < width and mask_uint8[cy, nx] == 1 and visited[cy, nx] == 0:
+                    visited[cy, nx] = 1
+                    stack.append((cy, nx))
+
+            if len(component) > len(best_component):
+                best_component = component
+
+    if not best_component:
+        return mask_uint8
+
+    output = np.zeros_like(mask_uint8, dtype=np.uint8)
+    ys, xs = zip(*best_component)
+    output[np.asarray(ys, dtype=np.int32), np.asarray(xs, dtype=np.int32)] = 1
+    return output
+
+
+def _largest_component(mask):
+    mask_uint8 = (mask > 0).astype(np.uint8)
+    if int(np.count_nonzero(mask_uint8)) == 0:
+        return mask_uint8
+
+    try:
+        import cv2
+
+        num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask_uint8, connectivity=8)
+        if num_labels <= 1:
+            return mask_uint8
+        largest_label = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
+        return (labels == largest_label).astype(np.uint8)
+    except Exception:
+        return _largest_component_numpy(mask_uint8)
+
+
+def _extract_subject_mask(rgb_image, rgba_image):
+    alpha = rgba_image[:, :, 3].astype(np.uint8)
+    if int(alpha.max()) > 5 and int(alpha.max()) != int(alpha.min()):
+        raw_mask = (alpha > 10).astype(np.uint8)
+    else:
+        border_pixels = np.concatenate(
+            [
+                rgb_image[0, :, :],
+                rgb_image[-1, :, :],
+                rgb_image[:, 0, :],
+                rgb_image[:, -1, :],
+            ],
+            axis=0,
+        ).astype(np.float32)
+        background_color = np.median(border_pixels, axis=0)
+        distance = np.linalg.norm(rgb_image.astype(np.float32) - background_color[None, None, :], axis=2)
+        threshold = float(np.percentile(distance, 72))
+        raw_mask = (distance >= threshold).astype(np.uint8)
+
+        if int(np.count_nonzero(raw_mask)) < int(raw_mask.size * 0.04):
+            gray = (0.299 * rgb_image[:, :, 0] + 0.587 * rgb_image[:, :, 1] + 0.114 * rgb_image[:, :, 2]).astype(
+                np.float32
+            )
+            gray_threshold = float(np.percentile(gray, 52))
+            raw_mask = (gray < gray_threshold).astype(np.uint8)
+
+    subject_mask = _largest_component(raw_mask)
+    try:
+        import cv2
+
+        kernel = np.ones((5, 5), dtype=np.uint8)
+        subject_mask = cv2.morphologyEx(subject_mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+        subject_mask = cv2.morphologyEx(subject_mask, cv2.MORPH_OPEN, kernel, iterations=1)
+        subject_mask = _largest_component(subject_mask)
+    except Exception:
+        pass
+
+    if int(np.count_nonzero(subject_mask)) < int(subject_mask.size * 0.02):
+        subject_mask = np.ones_like(subject_mask, dtype=np.uint8)
+
+    return subject_mask
+
+
+def _compute_edges(rgb_image, subject_mask):
+    gray = (0.299 * rgb_image[:, :, 0] + 0.587 * rgb_image[:, :, 1] + 0.114 * rgb_image[:, :, 2]).astype(np.uint8)
+
+    try:
+        import cv2
+
+        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+        edges = cv2.Canny(blurred, 55, 155)
+        edges = ((edges > 0).astype(np.uint8) * subject_mask).astype(np.uint8)
+        return edges, gray
+    except Exception:
+        grayf = gray.astype(np.float32)
+        gx = np.zeros_like(grayf)
+        gy = np.zeros_like(grayf)
+        gx[:, 1:-1] = grayf[:, 2:] - grayf[:, :-2]
+        gy[1:-1, :] = grayf[2:, :] - grayf[:-2, :]
+        magnitude = np.sqrt(gx * gx + gy * gy)
+        masked_values = magnitude[subject_mask > 0]
+        if masked_values.size == 0:
+            threshold = float(np.percentile(magnitude, 78))
+        else:
+            threshold = float(np.percentile(masked_values, 75))
+        edges = ((magnitude >= threshold).astype(np.uint8) * subject_mask).astype(np.uint8)
+        return edges, gray
+
+
+def _fit_tabletop(subject_mask, edges, quality: str):
+    ys, xs = np.where(subject_mask > 0)
+    if xs.size == 0 or ys.size == 0:
+        raise RuntimeError("Subject silhouette is empty.")
+
+    x1 = int(xs.min())
+    y1 = int(ys.min())
+    x2 = int(xs.max()) + 1
+    y2 = int(ys.max()) + 1
+    width = max(1, x2 - x1)
+    height = max(1, y2 - y1)
+
+    cx = float((x1 + x2) * 0.5)
+    cy = float(y1 + height * 0.32)
+    rx = float(max(6.0, width * 0.32))
+    ry = float(max(5.0, width * 0.16))
+    angle = 0.0
+    found = False
+
+    top_limit = int(y1 + height * 0.58)
+    top_edges = edges.copy()
+    top_edges[top_limit:, :] = 0
+
+    try:
+        import cv2
+
+        top_edges_u8 = (top_edges * 255).astype(np.uint8)
+        min_radius = max(8, int(width * 0.14))
+        max_radius = max(min_radius + 2, int(width * 0.5))
+        circles = cv2.HoughCircles(
+            top_edges_u8,
+            cv2.HOUGH_GRADIENT,
+            dp=1.2,
+            minDist=max(10, width // 5),
+            param1=120,
+            param2=16 if quality == "high" else 14,
+            minRadius=min_radius,
+            maxRadius=max_radius,
+        )
+        if circles is not None and circles.size > 0:
+            circles_rounded = np.round(circles[0]).astype(np.int32)
+            best_circle = max(circles_rounded, key=lambda item: int(item[2]))
+            cx = float(best_circle[0])
+            cy = float(best_circle[1])
+            rx = float(best_circle[2])
+            ry = float(best_circle[2])
+            found = True
+        else:
+            contours, _ = cv2.findContours(top_edges_u8, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
+            contours = sorted(contours, key=cv2.contourArea, reverse=True)
+            for contour in contours[:10]:
+                if len(contour) < 5:
+                    continue
+                (fit_cx, fit_cy), (major, minor), fit_angle = cv2.fitEllipse(contour)
+                fit_rx = max(float(major), float(minor)) * 0.5
+                fit_ry = min(float(major), float(minor)) * 0.5
+                if fit_rx < 6.0 or fit_ry < 4.0:
+                    continue
+                cx = float(fit_cx)
+                cy = float(fit_cy)
+                rx = float(fit_rx)
+                ry = float(fit_ry)
+                angle = float(fit_angle)
+                found = True
+                break
+    except Exception:
+        pass
+
+    return {
+        "cx": float(np.clip(cx, x1, x2)),
+        "cy": float(np.clip(cy, y1, y2)),
+        "rx": float(max(6.0, min(rx, width * 0.5))),
+        "ry": float(max(4.0, min(ry, height * 0.35))),
+        "angle": float(angle),
+        "found": found,
+        "bbox": (x1, y1, x2, y2),
+    }
+
+
+def _fit_leg_boxes(subject_mask, edges, top_fit):
+    x1, y1, x2, y2 = top_fit["bbox"]
+    subject_w = max(1, x2 - x1)
+    subject_h = max(1, y2 - y1)
+    lower_start = int(max(y1 + subject_h * 0.46, top_fit["cy"] + top_fit["ry"] * 0.42))
+
+    lower_mask = np.zeros_like(subject_mask, dtype=np.uint8)
+    lower_mask[lower_start:y2, :] = subject_mask[lower_start:y2, :]
+
+    boxes = []
+    try:
+        import cv2
+
+        kernel = np.ones((3, 3), dtype=np.uint8)
+        lower_clean = cv2.morphologyEx(lower_mask, cv2.MORPH_OPEN, kernel, iterations=1)
+        num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(lower_clean, connectivity=8)
+        min_area = max(40, int(subject_h * subject_w * 0.012))
+
+        for label in range(1, num_labels):
+            area = int(stats[label, cv2.CC_STAT_AREA])
+            if area < min_area:
+                continue
+
+            lx = int(stats[label, cv2.CC_STAT_LEFT])
+            ly = int(stats[label, cv2.CC_STAT_TOP])
+            lw = int(stats[label, cv2.CC_STAT_WIDTH])
+            lh = int(stats[label, cv2.CC_STAT_HEIGHT])
+            if lh < int(subject_h * 0.16):
+                continue
+            if lw > int(subject_w * 0.55) and lh < int(subject_h * 0.45):
+                continue
+
+            edge_crop = edges[ly : ly + lh, lx : lx + lw]
+            tilt = 0.0
+            edge_points = np.column_stack(np.where(edge_crop > 0))
+            if edge_points.shape[0] >= 10:
+                points_xy = np.column_stack((edge_points[:, 1], edge_points[:, 0])).astype(np.float64)
+                covariance = np.cov(points_xy.T)
+                eigenvalues, eigenvectors = np.linalg.eigh(covariance)
+                principal = eigenvectors[:, int(np.argmax(eigenvalues))]
+                angle = float(np.arctan2(principal[1], principal[0]))
+                vertical = np.pi * 0.5 if angle >= 0 else -np.pi * 0.5
+                tilt = float(np.clip(angle - vertical, -0.35, 0.35))
+
+            boxes.append(
+                {
+                    "cx": float(lx + lw * 0.5),
+                    "cy": float(ly + lh * 0.5),
+                    "w": float(max(4, lw)),
+                    "h": float(max(8, lh)),
+                    "area": float(area),
+                    "tilt": tilt,
+                }
+            )
+    except Exception:
+        pass
+
+    if not boxes:
+        profile = np.sum((edges > 0).astype(np.float32) * lower_mask.astype(np.float32), axis=0)
+        threshold = float(np.percentile(profile, 82)) if np.any(profile > 0) else 0.0
+        active = np.where(profile >= threshold)[0]
+        if active.size >= 2:
+            groups = [[int(active[0])]]
+            for index in active[1:]:
+                current = int(index)
+                if current - groups[-1][-1] <= 3:
+                    groups[-1].append(current)
+                else:
+                    groups.append([current])
+
+            for group in groups:
+                gx1 = int(group[0])
+                gx2 = int(group[-1] + 1)
+                column_mask = lower_mask[:, gx1:gx2]
+                ys, xs = np.where(column_mask > 0)
+                if ys.size == 0:
+                    continue
+                gy1 = int(ys.min() + lower_start)
+                gy2 = int(ys.max() + lower_start + 1)
+                lw = max(4, gx2 - gx1)
+                lh = max(8, gy2 - gy1)
+                if lh < int(subject_h * 0.16):
+                    continue
+                boxes.append(
+                    {
+                        "cx": float((gx1 + gx2) * 0.5),
+                        "cy": float((gy1 + gy2) * 0.5),
+                        "w": float(lw),
+                        "h": float(lh),
+                        "area": float(lw * lh),
+                        "tilt": 0.0,
+                    }
+                )
+
+    if not boxes:
+        fallback_offsets = (-0.62, -0.22, 0.22, 0.62)
+        fallback_h = max(subject_h * 0.42, 22.0)
+        fallback_w = max(subject_w * 0.08, 8.0)
+        for offset in fallback_offsets:
+            boxes.append(
+                {
+                    "cx": float(top_fit["cx"] + top_fit["rx"] * offset),
+                    "cy": float(lower_start + fallback_h * 0.5),
+                    "w": float(fallback_w),
+                    "h": float(fallback_h),
+                    "area": float(fallback_w * fallback_h),
+                    "tilt": 0.0,
+                }
+            )
+
+    boxes.sort(key=lambda item: item["area"], reverse=True)
+    return boxes[:8]
+
+
+def _normalize_scene_to_ground(scene, target_max_dim: float = ARCH_TARGET_MAX_DIM):
+    import trimesh
+
+    meshes = [geom for geom in scene.geometry.values() if isinstance(geom, trimesh.Trimesh)]
+    if not meshes:
+        raise RuntimeError("Architectural scene has no geometry.")
+
+    combined = trimesh.util.concatenate([mesh.copy() for mesh in meshes])
+    mins, maxs = combined.bounds
+    center_x = float((mins[0] + maxs[0]) * 0.5)
+    center_z = float((mins[2] + maxs[2]) * 0.5)
+    to_origin = trimesh.transformations.translation_matrix([-center_x, -float(mins[1]), -center_z])
+    scene.apply_transform(to_origin)
+
+    meshes = [geom for geom in scene.geometry.values() if isinstance(geom, trimesh.Trimesh)]
+    combined = trimesh.util.concatenate([mesh.copy() for mesh in meshes])
+    mins, maxs = combined.bounds
+    extents = np.maximum(maxs - mins, 1e-6)
+    max_dim = float(np.max(extents))
+    if max_dim > 1e-6:
+        scale = float(target_max_dim / max_dim)
+        scene.apply_transform(np.array([[scale, 0, 0, 0], [0, scale, 0, 0], [0, 0, scale, 0], [0, 0, 0, 1]]))
+
+    meshes = [geom for geom in scene.geometry.values() if isinstance(geom, trimesh.Trimesh)]
+    combined = trimesh.util.concatenate([mesh.copy() for mesh in meshes])
+    mins = combined.bounds[0]
+    if abs(float(mins[1])) > 1e-6:
+        scene.apply_transform(trimesh.transformations.translation_matrix([0.0, -float(mins[1]), 0.0]))
+
+
+def _estimate_arch_leg_count(subject_mask, top_fit, leg_boxes):
+    x1, y1, x2, y2 = top_fit["bbox"]
+    subject_w = max(1, int(x2 - x1))
+    subject_h = max(1, int(y2 - y1))
+    lower_start = int(y1 + subject_h * 0.4)
+
+    lower_mask = np.zeros_like(subject_mask, dtype=np.uint8)
+    lower_mask[lower_start:y2, :] = subject_mask[lower_start:y2, :]
+
+    prominent = 0
+    try:
+        import cv2
+
+        kernel = np.ones((3, 3), dtype=np.uint8)
+        lower_clean = cv2.morphologyEx(lower_mask, cv2.MORPH_OPEN, kernel, iterations=1)
+        num_labels, _, stats, _ = cv2.connectedComponentsWithStats(lower_clean, connectivity=8)
+        min_area = max(24, int(subject_h * subject_w * 0.008))
+        min_height = max(8, int(subject_h * 0.14))
+        for label in range(1, num_labels):
+            area = int(stats[label, cv2.CC_STAT_AREA])
+            width = int(stats[label, cv2.CC_STAT_WIDTH])
+            height = int(stats[label, cv2.CC_STAT_HEIGHT])
+            if area < min_area:
+                continue
+            if height < min_height:
+                continue
+            if width > int(subject_w * 0.48) and height < int(subject_h * 0.4):
+                continue
+            prominent += 1
+    except Exception:
+        profile = lower_mask.sum(axis=0).astype(np.float64)
+        non_zero = profile[profile > 0.0]
+        if non_zero.size > 0:
+            threshold = float(np.percentile(non_zero, 72))
+            active = np.where(profile >= threshold)[0]
+            if active.size > 0:
+                groups = [[int(active[0])]]
+                for idx in active[1:]:
+                    value = int(idx)
+                    if value - groups[-1][-1] <= 3:
+                        groups[-1].append(value)
+                    else:
+                        groups.append([value])
+                min_group_width = max(2, int(subject_w * 0.035))
+                prominent = sum(1 for group in groups if len(group) >= min_group_width)
+
+    if prominent == 3:
+        return 3
+    if 3 <= prominent <= 6:
+        return 4
+
+    if leg_boxes:
+        areas = sorted((float(box.get("area", 0.0)) for box in leg_boxes), reverse=True)
+        if areas:
+            pivot = max(areas[0] * 0.22, 1.0)
+            refined = sum(1 for area in areas if area >= pivot)
+            if refined == 3:
+                return 3
+            if refined >= 4:
+                return 4
+
+    return 4
+
+
+def _estimate_arch_leg_tilt(leg_boxes):
+    if not leg_boxes:
+        return 0.0
+    tilts = []
+    for box in leg_boxes:
+        try:
+            value = float(box.get("tilt", 0.0))
+        except Exception:
+            continue
+        if np.isfinite(value):
+            tilts.append(value)
+    if not tilts:
+        return 0.0
+    inferred = float(np.median(np.asarray(tilts, dtype=np.float64)))
+    max_tilt = float(np.deg2rad(12.0))
+    if abs(inferred) < float(np.deg2rad(2.0)):
+        return 0.0
+    return float(np.clip(inferred, -max_tilt, max_tilt))
+
+
+def _center_scene_xz_ground(scene):
+    import trimesh
+
+    meshes = [geom for geom in scene.geometry.values() if isinstance(geom, trimesh.Trimesh)]
+    if not meshes:
+        raise RuntimeError("Architectural scene has no geometry.")
+    combined = trimesh.util.concatenate([mesh.copy() for mesh in meshes])
+    mins, maxs = combined.bounds
+    center_x = float((mins[0] + maxs[0]) * 0.5)
+    center_z = float((mins[2] + maxs[2]) * 0.5)
+    scene.apply_transform(trimesh.transformations.translation_matrix([-center_x, -float(mins[1]), -center_z]))
+
+
+def _build_architectural_scene(rgb_image, subject_mask, top_fit, leg_boxes, quality: str):
+    import trimesh
+
+    x1, y1, x2, y2 = top_fit["bbox"]
+    subject_h = max(1.0, float(y2 - y1))
+    subject_w = max(1.0, float(x2 - x1))
+
+    raw_top_radius_px = float(max((top_fit["rx"] + top_fit["ry"]) * 0.5, 6.0))
+    radius_ratio = float(raw_top_radius_px / max(subject_w, 1.0))
+    quality_radius_scale = {"fast": 0.95, "balanced": 1.0, "high": 1.05}
+    top_radius = float(
+        np.clip((0.35 + 0.55 * radius_ratio) * quality_radius_scale.get(quality, 1.0), 0.28, 0.72)
+    )
+    ellipse_ratio = float(np.clip(top_fit["ry"] / max(top_fit["rx"], 1.0), 0.45, 1.0))
+    table_height = float(np.clip(0.75 + 0.08 * ((subject_h / max(subject_w, 1.0)) - 1.0), 0.68, 0.95))
+    top_thickness = float(np.clip(0.03 * top_radius, 0.02, 0.06))
+
+    top_sections = {"fast": 160, "balanced": 192, "high": 224}
+    top_mesh = trimesh.creation.cylinder(
+        radius=top_radius,
+        height=top_thickness,
+        sections=top_sections.get(quality, 32),
+    )
+    top_mesh.apply_transform(trimesh.transformations.rotation_matrix(-np.pi * 0.5, [1.0, 0.0, 0.0]))
+    top_mesh.apply_scale([1.0, 1.0, ellipse_ratio])
+    top_mesh.apply_transform(trimesh.transformations.rotation_matrix(np.deg2rad(top_fit["angle"]), [0.0, 1.0, 0.0]))
+    top_mesh.apply_translation([0.0, table_height + top_thickness * 0.5, 0.0])
+    apply_mesh_color(top_mesh, np.array([56.0, 50.0, 46.0], dtype=np.float64))
+
+    scene = trimesh.Scene()
+    scene.add_geometry(top_mesh, node_name="top", geom_name="top")
+
+    leg_count = _estimate_arch_leg_count(subject_mask, top_fit, leg_boxes)
+    inferred_tilt = _estimate_arch_leg_tilt(leg_boxes)
+    leg_radius = float(0.60 * top_radius)
+    leg_width = float(np.clip(0.08 * top_radius, 0.03, 0.10))
+    leg_names = []
+    for index in range(leg_count):
+        angle = float(index * (2.0 * np.pi / max(leg_count, 1)))
+        center_x = float(leg_radius * np.cos(angle))
+        center_z = float(leg_radius * np.sin(angle))
+        leg_length = float(table_height / max(np.cos(abs(inferred_tilt)), 0.55))
+        leg_mesh = trimesh.creation.box(extents=[leg_width, leg_length, leg_width])
+        leg_mesh.apply_translation([center_x, leg_length * 0.5, center_z])
+        if abs(inferred_tilt) > 1e-6:
+            axis = np.array([np.sin(angle), 0.0, -np.cos(angle)], dtype=np.float64)
+            axis_norm = float(np.linalg.norm(axis))
+            if axis_norm > 1e-6:
+                axis = axis / axis_norm
+                leg_mesh.apply_transform(
+                    trimesh.transformations.rotation_matrix(-inferred_tilt, axis, [center_x, 0.0, center_z])
+                )
+        leg_bounds = leg_mesh.bounds
+        leg_mesh.apply_translation([0.0, -float(leg_bounds[0][1]), 0.0])
+        top_y = float(leg_mesh.bounds[1][1])
+        if top_y > 1e-6:
+            leg_mesh.apply_scale([1.0, table_height / top_y, 1.0])
+        leg_mesh.apply_translation([0.0, -float(leg_mesh.bounds[0][1]), 0.0])
+        apply_mesh_color(leg_mesh, np.array([145.0, 108.0, 74.0], dtype=np.float64))
+        node_name = f"leg_{index + 1}"
+        scene.add_geometry(leg_mesh, node_name=node_name, geom_name=node_name)
+        leg_names.append(node_name)
+
+    if leg_count == 4:
+        brace_thickness = float(max(0.6 * leg_width, 0.015))
+        brace_span = float(max(2.0 * leg_radius - leg_width * 1.2, leg_width * 2.2))
+        brace_y = float(0.25 * table_height)
+        brace_x = trimesh.creation.box(extents=[brace_span, brace_thickness, brace_thickness])
+        brace_x.apply_translation([0.0, brace_y, 0.0])
+        apply_mesh_color(brace_x, np.array([118.0, 88.0, 60.0], dtype=np.float64))
+        scene.add_geometry(brace_x, node_name="brace_x", geom_name="brace_x")
+
+        brace_z = trimesh.creation.box(extents=[brace_thickness, brace_thickness, brace_span])
+        brace_z.apply_translation([0.0, brace_y, 0.0])
+        apply_mesh_color(brace_z, np.array([118.0, 88.0, 60.0], dtype=np.float64))
+        scene.add_geometry(brace_z, node_name="brace_z", geom_name="brace_z")
+
+    _center_scene_xz_ground(scene)
+    if not scene.geometry or len(scene.geometry) == 0:
+        raise RuntimeError("ARCH scene has no geometry")
+    total_faces = sum(int(len(geometry.faces)) for geometry in scene.geometry.values() if hasattr(geometry, "faces"))
+    if total_faces < 500:
+        raise RuntimeError(f"ARCH primitive assembly has insufficient faces ({total_faces}).")
+
+    combined = trimesh.util.concatenate([mesh.copy() for mesh in scene.geometry.values() if isinstance(mesh, trimesh.Trimesh)])
+    if abs(float(combined.bounds[0][1])) > 1e-4:
+        raise RuntimeError("ARCH coherence failed: mesh does not rest on ground.")
+    top_bottom = float(scene.geometry["top"].bounds[0][1]) if "top" in scene.geometry else float("nan")
+    if not np.isfinite(top_bottom) or abs(top_bottom - table_height) > 0.08:
+        raise RuntimeError(f"ARCH coherence failed: tabletop bottom mismatch ({top_bottom:.4f} vs {table_height:.4f}).")
+    for leg_name in leg_names:
+        leg_bounds = scene.geometry[leg_name].bounds
+        if float(leg_bounds[0][1]) < -1e-4:
+            raise RuntimeError(f"ARCH coherence failed: {leg_name} below ground.")
+        if float(leg_bounds[1][1]) > table_height + 0.08:
+            raise RuntimeError(f"ARCH coherence failed: {leg_name} exceeds tabletop.")
+    return scene
+
+
+def _export_architectural_scene(scene, out_path: str):
+    if not scene.geometry or len(scene.geometry) == 0:
+        raise RuntimeError("ARCH scene has no geometry")
+    for geom_name, geometry in scene.geometry.items():
+        vertices = getattr(geometry, "vertices", None)
+        faces = getattr(geometry, "faces", None)
+        if vertices is None or faces is None or len(vertices) == 0 or len(faces) == 0:
+            raise RuntimeError(f"ARCH mesh empty: {geom_name}")
+
+    scene.export(out_path, file_type="glb")
+
+    size_bytes = int(os.path.getsize(out_path)) if os.path.exists(out_path) else 0
+    vertices = 0
+    faces = 0
+    for geometry in scene.geometry.values():
+        if hasattr(geometry, "vertices"):
+            vertices += int(len(geometry.vertices))
+        if hasattr(geometry, "faces"):
+            faces += int(len(geometry.faces))
+
+    if size_bytes < 10_000:
+        raise RuntimeError(f"Architectural GLB too small ({size_bytes} bytes).")
+    if faces < 500:
+        raise RuntimeError(f"Architectural GLB has insufficient geometry (v={vertices}, f={faces}).")
+
+    return size_bytes, vertices, faces
+
+
+def run_architectural_pipeline(image_path: str, out_path: str, quality: str):
+    from PIL import Image
+
+    emit_progress("preprocess", 8, "Preparando imagen para blockout arquitectonico")
+    source_rgba = Image.open(image_path).convert("RGBA")
+    processed_rgba, used_rembg = _try_remove_background(source_rgba)
+    if used_rembg:
+        emit_progress("preprocess", 10, "Background removal aplicado")
+    else:
+        emit_progress("preprocess", 10, "Background removal no disponible, continuando")
+
+    rgba_np = np.asarray(processed_rgba, dtype=np.uint8)
+    rgb_np = rgba_np[:, :, :3].copy()
+
+    emit_progress("silhouette", 12, "Extrayendo silueta principal")
+    subject_mask = _extract_subject_mask(rgb_np, rgba_np)
+    silhouette_pixels = int(np.count_nonzero(subject_mask))
+    if silhouette_pixels < 32:
+        raise RuntimeError("No se pudo extraer una silueta valida para modo arquitectonico.")
+
+    emit_progress("edges", 16, "Calculando bordes estructurales")
+    edges, _ = _compute_edges(rgb_np, subject_mask)
+
+    emit_progress("arch_top", 20, "Fitting tabletop")
+    top_fit = _fit_tabletop(subject_mask, edges, quality)
+
+    emit_progress("arch_legs", 45, "Generating legs (parametric)")
+    leg_boxes = _fit_leg_boxes(subject_mask, edges, top_fit)
+
+    emit_progress("arch_assemble", 70, "Assembling primitives")
+    scene = _build_architectural_scene(rgb_np, subject_mask, top_fit, leg_boxes, quality)
+
+    emit_progress("export", 95, "Exporting GLB")
+    size_bytes, vertices, faces = _export_architectural_scene(scene, out_path)
+    log(
+        f"[ARCH] exported primitives={len(scene.geometry)} silhouette_px={silhouette_pixels} "
+        f"verts={vertices} faces={faces} bytes={size_bytes}"
+    )
+
+
+def _resolve_triposr_runner_script() -> str:
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    candidates = [
+        os.path.abspath(os.path.join(current_dir, "..", "..", "..", "tools", "local_generator", "run_triposr.py")),
+        os.path.abspath(os.path.join(current_dir, "run_triposr.py")),
+        os.path.abspath(os.path.join(os.getcwd(), "tools", "local_generator", "run_triposr.py")),
+    ]
+    for candidate in candidates:
+        if os.path.exists(candidate):
+            return candidate
+    raise RuntimeError("TripoSR runner not found at tools/local_generator/run_triposr.py")
+
+
+def _map_quality_to_triposr_preset(quality: str) -> str:
+    if quality == "fast":
+        return "fast"
+    if quality == "high":
+        return "quality"
+    return "balanced"
+
+
+def run_triposr(image_path: str, out_glb_path: str, preset: str, device: str) -> None:
+    try:
+        script_path = _resolve_triposr_runner_script()
+    except Exception as error:
+        raise RuntimeError(f"{TRIPOSR_INSTALL_HINT} ({error})") from None
+    preset_value = _map_quality_to_triposr_preset(preset)
+    requested_device = "cuda" if device == "cuda" else "auto"
+    command = [
+        sys.executable,
+        script_path,
+        "--image",
+        os.path.abspath(image_path),
+        "--out_glb",
+        os.path.abspath(out_glb_path),
+        "--preset",
+        preset_value,
+        "--device",
+        requested_device,
+    ]
+
+    process = subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+    )
+    stdout_text, stderr_text = process.communicate()
+    stdout_lines = [line for line in stdout_text.splitlines() if line.strip()]
+    stderr_lines = [line for line in stderr_text.splitlines() if line.strip()]
+
+    for line in stdout_lines:
+        log(f"[TRIPOSR] {line}")
+    for line in stderr_lines:
+        log_error(f"[TRIPOSR][stderr] {line}")
+
+    return_code = int(process.returncode or 0)
+    if return_code != 0:
+        joined_output = "\n".join(stdout_lines + stderr_lines)
+        normalized_output = joined_output.lower()
+        if "triposr not installed" in normalized_output or "github.com/vast-ai-research/triposr" in normalized_output:
+            raise RuntimeError(TRIPOSR_INSTALL_HINT)
+        raise RuntimeError(f"TripoSR generation failed (code={return_code}).")
+
+    if not os.path.exists(out_glb_path):
+        raise RuntimeError("TripoSR did not produce output GLB.")
+
+
+def _load_glb_mesh_for_gate(glb_path: str):
+    import trimesh
+
+    loaded = trimesh.load(glb_path, force="scene")
+    if isinstance(loaded, trimesh.Trimesh):
+        mesh = loaded.copy()
+    elif isinstance(loaded, trimesh.Scene):
+        meshes = [geom for geom in loaded.geometry.values() if isinstance(geom, trimesh.Trimesh)]
+        if not meshes:
+            loaded_mesh = trimesh.load(glb_path, force="mesh")
+            if isinstance(loaded_mesh, trimesh.Trimesh):
+                mesh = loaded_mesh.copy()
+            else:
+                raise RuntimeError("No mesh geometry in GLB.")
+        else:
+            mesh = trimesh.util.concatenate([m.copy() for m in meshes]) if len(meshes) > 1 else meshes[0].copy()
+    else:
+        raise RuntimeError(f"Unsupported GLB type: {type(loaded)!r}")
+
+    return mesh, trimesh
+
+
+def _safe_mesh_components(mesh, trimesh_module):
+    try:
+        components = mesh.split(only_watertight=False)
+    except TypeError:
+        components = mesh.split()
+    except Exception:
+        components = []
+
+    if not components:
+        return [mesh]
+
+    valid = []
+    for component in components:
+        if isinstance(component, trimesh_module.Trimesh) and hasattr(component, "faces"):
+            valid.append(component)
+    return valid or [mesh]
+
+
+def quality_gate(glb_path: str) -> Dict[str, Any]:
+    metrics: Dict[str, Any] = {
+        "file_kb": 0.0,
+        "faces": 0,
+        "components": 0,
+        "largest_ratio": 0.0,
+        "bbox": {
+            "min": [0.0, 0.0, 0.0],
+            "max": [0.0, 0.0, 0.0],
+            "size": [0.0, 0.0, 0.0],
+            "ratio": float("inf"),
+            "max_dim": 0.0,
+            "min_dim": 0.0,
+        },
+        "grounded": False,
+        "min_y": 0.0,
+    }
+
+    if not os.path.exists(glb_path):
+        return {"ok": False, "metrics": metrics, "reason": "GLB missing"}
+
+    size_bytes = int(os.path.getsize(glb_path))
+    metrics["file_kb"] = float(size_bytes) / 1024.0
+    if size_bytes < AUTO_MIN_GLB_BYTES:
+        return {"ok": False, "metrics": metrics, "reason": f"file too small ({size_bytes} bytes)"}
+
+    try:
+        mesh, trimesh = _load_glb_mesh_for_gate(glb_path)
+    except Exception as error:
+        return {"ok": False, "metrics": metrics, "reason": f"mesh load failed: {error}"}
+
+    try:
+        mesh = _sanitize_invalid_mesh(mesh, trimesh)
+    except Exception:
+        pass
+
+    faces = int(len(mesh.faces)) if hasattr(mesh, "faces") else 0
+    metrics["faces"] = faces
+    if faces < AUTO_MIN_FACES:
+        return {"ok": False, "metrics": metrics, "reason": f"insufficient faces ({faces})"}
+
+    components = _safe_mesh_components(mesh, trimesh)
+    face_counts = [int(len(component.faces)) for component in components if hasattr(component, "faces")]
+    total_component_faces = int(sum(face_counts))
+    largest_component_faces = int(max(face_counts)) if face_counts else 0
+    largest_ratio = float(largest_component_faces / max(total_component_faces, 1))
+    metrics["components"] = int(len(face_counts))
+    metrics["largest_ratio"] = largest_ratio
+    if largest_ratio < 0.70:
+        return {"ok": False, "metrics": metrics, "reason": f"fragmented mesh ratio ({largest_ratio:.3f})"}
+
+    try:
+        bounds = np.asarray(mesh.bounds, dtype=np.float64)
+        size = bounds[1] - bounds[0]
+        max_dim = float(np.max(size))
+        min_dim = float(np.min(np.maximum(size, 1e-8)))
+        ratio = float(max_dim / max(min_dim, 1e-8))
+    except Exception as error:
+        return {"ok": False, "metrics": metrics, "reason": f"bbox failed: {error}"}
+
+    metrics["bbox"] = {
+        "min": [float(bounds[0][0]), float(bounds[0][1]), float(bounds[0][2])],
+        "max": [float(bounds[1][0]), float(bounds[1][1]), float(bounds[1][2])],
+        "size": [float(size[0]), float(size[1]), float(size[2])],
+        "ratio": ratio,
+        "max_dim": max_dim,
+        "min_dim": min_dim,
+    }
+    if max_dim <= AUTO_MIN_MAX_DIM:
+        return {"ok": False, "metrics": metrics, "reason": f"max dimension too small ({max_dim:.4f})"}
+    if ratio >= AUTO_MAX_BBOX_RATIO:
+        return {"ok": False, "metrics": metrics, "reason": f"bbox ratio too extreme ({ratio:.4f})"}
+
+    min_y = float(bounds[0][1])
+    grounded = abs(min_y) <= AUTO_GROUND_EPSILON
+    metrics["grounded"] = grounded
+    metrics["min_y"] = min_y
+    if not grounded:
+        return {"ok": False, "metrics": metrics, "reason": f"not grounded (minY={min_y:.5f})"}
+
+    return {"ok": True, "metrics": metrics}
+
+
+def _normalize_exported_glb(glb_path: str, target_size: float = 2.0) -> None:
+    mesh, trimesh = _load_glb_mesh_for_gate(glb_path)
+    scene = trimesh.Scene()
+    scene.add_geometry(mesh, node_name="normalized_mesh", geom_name="normalized_mesh")
+    normalized = normalize_scene_mesh_for_export(scene, target_size=target_size)
+    normalized.export(glb_path, file_type="glb")
+
+
+def _write_auto_meta(out_path: str, used: str, gate: Dict[str, Any], errors: Sequence[str]) -> str:
+    meta_path = os.path.join(os.path.dirname(out_path), "auto-meta.json")
+    payload = {
+        "used": used,
+        "gate": gate.get("metrics", {}),
+        "gate_ok": bool(gate.get("ok", False)),
+        "gate_reason": gate.get("reason"),
+        "errors": list(errors),
+    }
+    with open(meta_path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, ensure_ascii=False, indent=2)
+    return meta_path
+
+
+def run_simple_blockout_pipeline(image_path: str, out_path: str, quality: str) -> None:
+    import trimesh
+    from PIL import Image
+
+    source_rgba = Image.open(image_path).convert("RGBA")
+    processed_rgba, _ = _try_remove_background(source_rgba)
+    rgba_np = np.asarray(processed_rgba, dtype=np.uint8)
+    rgb_np = rgba_np[:, :, :3].copy()
+    subject_mask = _extract_subject_mask(rgb_np, rgba_np)
+    ys, xs = np.where(subject_mask > 0)
+
+    if ys.size == 0 or xs.size == 0:
+        bbox_w = 1.0
+        bbox_h = 1.0
+    else:
+        bbox_w = float(xs.max() - xs.min() + 1)
+        bbox_h = float(ys.max() - ys.min() + 1)
+
+    aspect = float(bbox_w / max(bbox_h, 1.0))
+    width = float(np.clip(0.85 * aspect, 0.32, 1.5))
+    depth = float(np.clip(0.55 + 0.25 * aspect, 0.35, 1.2))
+    height = float(np.clip(1.05 + 0.08 * (bbox_h / max(bbox_w, 1.0) - 1.0), 0.8, 1.45))
+
+    mesh = trimesh.creation.box(extents=[width, height, depth])
+    subdiv_loops = {"fast": 4, "balanced": 4, "high": 5}.get(quality, 4)
+    for _ in range(subdiv_loops):
+        if hasattr(mesh, "subdivide"):
+            mesh = mesh.subdivide()
+        else:
+            vertices, faces = trimesh.remesh.subdivide(mesh.vertices, mesh.faces)
+            mesh = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
+
+    mesh.apply_translation([0.0, height * 0.5, 0.0])
+    apply_mesh_color(mesh, np.array([140.0, 118.0, 92.0], dtype=np.float64))
+
+    scene = trimesh.Scene()
+    scene.add_geometry(mesh, node_name="blockout", geom_name="blockout")
+    normalized_mesh = normalize_scene_mesh_for_export(scene, target_size=2.0)
+    normalized_mesh.export(out_path, file_type="glb")
+
+
+def run_auto_pipeline(image_path: str, out_path: str, quality: str, runtime_device: str) -> str:
+    errors: List[str] = []
+    auto_meta_path = os.path.join(os.path.dirname(out_path), "auto-meta.json")
+    if os.path.exists(auto_meta_path):
+        try:
+            os.remove(auto_meta_path)
+        except Exception:
+            pass
+
+    emit_progress("validate", 6, "Validating AUTO pipeline input")
+    if not os.path.exists(image_path):
+        raise RuntimeError(f"Input image does not exist: {image_path}")
+
+    emit_progress("neural_bootstrap", 12, "Bootstrapping TripoSR runtime")
+    try:
+        emit_progress("neural_generate", 24, "Generating with TripoSR")
+        run_triposr(image_path=image_path, out_glb_path=out_path, preset=quality, device=runtime_device)
+        try:
+            _normalize_exported_glb(out_path, target_size=2.0)
+        except Exception as normalize_error:
+            errors.append(f"triposr normalize warning: {normalize_error}")
+            log_error(f"[AUTO] triposr normalize warning: {normalize_error}")
+
+        emit_progress("gate1", 40, "Evaluating neural quality gate")
+        gate1 = quality_gate(out_path)
+        if gate1.get("ok"):
+            emit_progress("export", 95, "Exporting GLB")
+            _write_auto_meta(out_path, "triposr", gate1, errors)
+            return "triposr"
+
+        gate1_reason = str(gate1.get("reason", "unknown"))
+        errors.append(f"triposr gate failed: {gate1_reason}")
+        log_error(f"[AUTO] triposr gate failed: {gate1_reason}")
+    except Exception as triposr_error:
+        errors.append(f"triposr failed: {triposr_error}")
+        log_error(f"[AUTO] triposr failed: {triposr_error}")
+
+    emit_progress("arch_generate", 58, "Generating ARCH fallback")
+    try:
+        run_architectural_pipeline(image_path, out_path, quality)
+        try:
+            _normalize_exported_glb(out_path, target_size=2.0)
+        except Exception as normalize_error:
+            errors.append(f"arch normalize warning: {normalize_error}")
+            log_error(f"[AUTO] arch normalize warning: {normalize_error}")
+
+        emit_progress("gate2", 74, "Evaluating ARCH quality gate")
+        gate2 = quality_gate(out_path)
+        if gate2.get("ok"):
+            emit_progress("export", 95, "Exporting GLB")
+            _write_auto_meta(out_path, "arch", gate2, errors)
+            return "arch"
+
+        gate2_reason = str(gate2.get("reason", "unknown"))
+        errors.append(f"arch gate failed: {gate2_reason}")
+        log_error(f"[AUTO] arch gate failed: {gate2_reason}")
+    except Exception as arch_error:
+        errors.append(f"arch failed: {arch_error}")
+        log_error(f"[AUTO] arch failed: {arch_error}")
+
+    emit_progress("blockout", 88, "Generating simple blockout fallback")
+    try:
+        run_simple_blockout_pipeline(image_path, out_path, quality)
+        try:
+            _normalize_exported_glb(out_path, target_size=2.0)
+        except Exception as normalize_error:
+            errors.append(f"blockout normalize warning: {normalize_error}")
+            log_error(f"[AUTO] blockout normalize warning: {normalize_error}")
+
+        gate3 = quality_gate(out_path)
+        if not gate3.get("ok"):
+            gate3_reason = str(gate3.get("reason", "unknown"))
+            errors.append(f"blockout gate failed: {gate3_reason}")
+            log_error(f"[AUTO] blockout gate failed: {gate3_reason}")
+            _write_auto_meta(out_path, "blockout", gate3, errors)
+            raise RuntimeError(gate3_reason)
+
+        emit_progress("export", 95, "Exporting GLB")
+        _write_auto_meta(out_path, "blockout", gate3, errors)
+        return "blockout"
+    except Exception as blockout_error:
+        errors.append(f"blockout failed: {blockout_error}")
+        log_error(f"[AUTO] blockout failed: {blockout_error}")
+        _write_auto_meta(
+            out_path,
+            "blockout",
+            {
+                "ok": False,
+                "metrics": {},
+                "reason": str(blockout_error),
+            },
+            errors,
+        )
+        raise RuntimeError("AUTO pipeline failed after TripoSR, ARCH and blockout fallbacks.")
 
 
 def _map_detection_label(label: str) -> str:
@@ -888,19 +1893,138 @@ def build_multi_object_textured_scene(rgb, depth, objects: Sequence[ObjectCandid
     return scene, metadata_objects, total_triangles
 
 
-def export_scene_with_metadata(scene, out_path: str, metadata_objects: Sequence[dict], total_triangles: int):
-    if len(scene.geometry) == 0:
+def _sanitize_invalid_mesh(mesh, trimesh_module):
+    mesh_work = mesh.copy() if hasattr(mesh, "copy") else mesh
+
+    if hasattr(mesh_work, "remove_infinite_values"):
+        try:
+            mesh_work.remove_infinite_values()
+        except Exception:
+            pass
+
+    vertices = np.asarray(mesh_work.vertices, dtype=np.float64)
+    faces = np.asarray(mesh_work.faces, dtype=np.int64)
+    if vertices.size == 0 or faces.size == 0:
+        raise RuntimeError("Mesh is empty before invalid-value cleanup")
+
+    valid_vertices = np.isfinite(vertices).all(axis=1)
+    if not np.all(valid_vertices):
+        remap = np.full(vertices.shape[0], -1, dtype=np.int64)
+        remap[valid_vertices] = np.arange(int(np.count_nonzero(valid_vertices)), dtype=np.int64)
+        valid_faces = np.all(valid_vertices[faces], axis=1)
+        faces = remap[faces[valid_faces]]
+        vertices = vertices[valid_vertices]
+        if vertices.shape[0] == 0 or faces.shape[0] == 0:
+            raise RuntimeError("Mesh became empty after removing invalid vertices")
+        mesh_work = trimesh_module.Trimesh(vertices=vertices, faces=faces, process=False)
+
+    vertices = np.asarray(mesh_work.vertices, dtype=np.float64)
+    faces = np.asarray(mesh_work.faces, dtype=np.int64)
+    face_index_valid = np.all((faces >= 0) & (faces < vertices.shape[0]), axis=1)
+    if not np.all(face_index_valid):
+        faces = faces[face_index_valid]
+        if faces.shape[0] == 0:
+            raise RuntimeError("Mesh has no valid faces after index cleanup")
+        mesh_work = trimesh_module.Trimesh(vertices=vertices, faces=faces, process=False)
+
+    return mesh_work
+
+
+def normalize_scene_mesh_for_export(scene, target_size: float = 2.0):
+    import trimesh
+
+    meshes = [geom for geom in scene.geometry.values() if isinstance(geom, trimesh.Trimesh)]
+    if not meshes:
+        raise RuntimeError("No mesh primitives to normalize")
+
+    mesh = trimesh.util.concatenate([m.copy() for m in meshes])
+    mesh = _sanitize_invalid_mesh(mesh, trimesh)
+
+    # 1) Keep only the largest connected component.
+    try:
+        mesh = _largest_connected_component(mesh, trimesh)
+    except Exception as e:
+        print(f"[WARN] largest component cleanup failed: {e}", flush=True)
+
+    # 2) Recompute normals and remove degenerates.
+    try:
+        mesh.rezero()
+        if hasattr(mesh, "remove_degenerate_faces"):
+            mesh.remove_degenerate_faces()
+        else:
+            try:
+                mask = mesh.nondegenerate_faces()
+            except TypeError:
+                mask = mesh.nondegenerate_faces
+            mesh.update_faces(mask)
+        if hasattr(mesh, "remove_unreferenced_vertices"):
+            mesh.remove_unreferenced_vertices()
+        mesh.fix_normals()
+    except Exception as e:
+        print(f"[WARN] cleanup skipped: {e}", flush=True)
+
+    # 6) Remove NaN/invalid vertices if present.
+    mesh = _sanitize_invalid_mesh(mesh, trimesh)
+
+    # 3) Center mesh at origin.
+    bbox = mesh.bounds
+    center = (bbox[0] + bbox[1]) * 0.5
+    mesh.apply_translation(-center)
+
+    # 4) Put object on ground plane (Y = 0).
+    min_y = float(mesh.bounds[0][1])
+    mesh.apply_translation([0.0, -min_y, 0.0])
+
+    # 5) Uniform scale normalization.
+    bbox = mesh.bounds
+    size = bbox[1] - bbox[0]
+    max_dim = float(np.max(size))
+    if np.isfinite(max_dim) and max_dim > 1e-8:
+        scale_factor = float(target_size) / max_dim
+        mesh.apply_scale(scale_factor)
+
+    mesh = _sanitize_invalid_mesh(mesh, trimesh)
+    try:
+        if hasattr(mesh, "remove_degenerate_faces"):
+            mesh.remove_degenerate_faces()
+        else:
+            try:
+                mask = mesh.nondegenerate_faces()
+            except TypeError:
+                mask = mesh.nondegenerate_faces
+            mesh.update_faces(mask)
+        if hasattr(mesh, "remove_unreferenced_vertices"):
+            mesh.remove_unreferenced_vertices()
+        mesh.fix_normals()
+    except Exception as e:
+        print(f"[WARN] cleanup skipped: {e}", flush=True)
+    return mesh
+
+
+def export_scene_with_metadata(
+    scene,
+    out_path: str,
+    metadata_objects: Sequence[dict],
+    total_triangles: int,
+    export_mesh=None,
+):
+    if len(scene.geometry) == 0 and export_mesh is None:
         raise RuntimeError("No mesh primitives to export")
 
-    total_vertices = 0
-    total_faces = 0
-    for geometry in scene.geometry.values():
-        if hasattr(geometry, "vertices"):
-            total_vertices += int(len(geometry.vertices))
-        if hasattr(geometry, "faces"):
-            total_faces += int(len(geometry.faces))
+    if export_mesh is not None:
+        total_vertices = int(len(export_mesh.vertices))
+        total_faces = int(len(export_mesh.faces))
+        export_mesh.export(out_path, file_type="glb")
+    else:
+        total_vertices = 0
+        total_faces = 0
+        for geometry in scene.geometry.values():
+            if hasattr(geometry, "vertices"):
+                total_vertices += int(len(geometry.vertices))
+            if hasattr(geometry, "faces"):
+                total_faces += int(len(geometry.faces))
+        scene.export(out_path, file_type="glb")
 
-    scene.export(out_path, file_type="glb")
     glb_size = os.path.getsize(out_path) if os.path.exists(out_path) else 0
     metadata_path = os.path.join(os.path.dirname(out_path), "latest.json")
     metadata_payload = {
@@ -1437,6 +2561,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--in", dest="in_path", required=True, help="Input image path")
     parser.add_argument("--out", dest="out_path", required=True, help="Output GLB path")
     parser.add_argument("--quality", choices=["fast", "balanced", "high"], default="balanced")
+    parser.add_argument("--mode", choices=["auto", "neural", "architectural"], default="auto")
     parser.add_argument("--models-dir", default="", help="Optional cache directory for model weights")
     return parser.parse_args()
 
@@ -1468,25 +2593,43 @@ def main() -> int:
     os.environ["PIP_CACHE_DIR"] = cache_dirs["pip"]
 
     emit_progress("preprocess", 5, "Bootstrap de dependencias")
-    try:
-        ensure_packages([
-            "numpy",
-            "pillow",
-            "opencv-python",
-            "trimesh",
-            "open3d",
-            "pygltflib",
-            "torch",
-            "torchvision",
-            "transformers",
-            "timm",
-            "accelerate",
-            "safetensors",
-            "huggingface_hub",
-        ])
-    except Exception as error:
-        log_error(f"[BOOT] failed: {error}")
-        return 1
+    if args.mode in {"architectural", "auto"}:
+        try:
+            ensure_packages(
+                [
+                    "numpy",
+                    "pillow",
+                    "trimesh",
+                ]
+            )
+            _ensure_runtime_package("opencv-python", required=False)
+            _ensure_runtime_package("rembg", required=False)
+            _ensure_runtime_package("onnxruntime", required=False)
+        except Exception as error:
+            log_error(f"[BOOT] failed: {error}")
+            return 1
+    else:
+        try:
+            ensure_packages(
+                [
+                    "numpy",
+                    "pillow",
+                    "opencv-python",
+                    "trimesh",
+                    "open3d",
+                    "pygltflib",
+                    "torch",
+                    "torchvision",
+                    "transformers",
+                    "timm",
+                    "accelerate",
+                    "safetensors",
+                    "huggingface_hub",
+                ]
+            )
+        except Exception as error:
+            log_error(f"[BOOT] failed: {error}")
+            return 1
 
     global np
     global Image
@@ -1496,6 +2639,7 @@ def main() -> int:
     log(f"in: {in_path}")
     log(f"out: {out_path}")
     log(f"quality: {args.quality}")
+    log(f"mode: {args.mode}")
     log(f"cache_root: {cache_root}")
     log(f"models_dir: {models_dir}")
     log_cuda_check()
@@ -1506,6 +2650,48 @@ def main() -> int:
     try:
         image = Image.open(in_path).convert("RGB")
         rgb = np.asarray(image, dtype=np.uint8)
+
+        if args.mode == "auto":
+            used_engine = run_auto_pipeline(
+                image_path=in_path,
+                out_path=out_path,
+                quality=args.quality,
+                runtime_device=runtime_device,
+            )
+            emit_progress("done", 100, f"Modelo 3D listo (auto: {used_engine})")
+            return 0
+
+        if args.mode == "architectural":
+            emit_progress("preprocess", 9, "Modo arquitectonico activo")
+            try:
+                run_architectural_pipeline(in_path, out_path, args.quality)
+                emit_progress("done", 100, "Modelo 3D listo (arquitectonico)")
+                return 0
+            except Exception as arch_error:
+                log_error(f"[ARCH] failed, fallback to neural mode: {arch_error}")
+                emit_progress("infer", 16, f"Fallback a neural: {arch_error}")
+                try:
+                    ensure_packages(
+                        [
+                            "numpy",
+                            "pillow",
+                            "opencv-python",
+                            "trimesh",
+                            "open3d",
+                            "pygltflib",
+                            "torch",
+                            "torchvision",
+                            "transformers",
+                            "timm",
+                            "accelerate",
+                            "safetensors",
+                            "huggingface_hub",
+                        ]
+                    )
+                except Exception as fallback_error:
+                    log_error(f"[BOOT] neural fallback failed: {fallback_error}")
+                    return 1
+
         _ensure_runtime_package("ultralytics", required=False)
 
         emit_progress("detect", 20, "Detectando muebles")
@@ -1540,12 +2726,16 @@ def main() -> int:
             quality=args.quality,
         )
 
+        emit_progress("normalize", 88, "Normalizando malla para export")
+        normalized_mesh = normalize_scene_mesh_for_export(scene, target_size=2.0)
+
         emit_progress("export", 92, "Exportando GLB")
         glb_size, metadata_path, total_triangles, total_vertices, total_faces = export_scene_with_metadata(
             scene=scene,
             out_path=out_path,
             metadata_objects=metadata_objects,
             total_triangles=total_triangles,
+            export_mesh=normalized_mesh,
         )
         detail_low = total_vertices < MIN_VERTS or total_faces < MIN_FACES
         if detail_low:
@@ -1561,12 +2751,15 @@ def main() -> int:
                 objects=objects,
                 quality=retry_quality,
             )
+            emit_progress("normalize", 92, "Normalizando malla de reintento")
+            normalized_mesh = normalize_scene_mesh_for_export(scene, target_size=2.0)
             emit_progress("export", 95, "Reexportando GLB")
             glb_size, metadata_path, total_triangles, total_vertices, total_faces = export_scene_with_metadata(
                 scene=scene,
                 out_path=out_path,
                 metadata_objects=metadata_objects,
                 total_triangles=total_triangles,
+                export_mesh=normalized_mesh,
             )
 
         if glb_size < SOFT_WARN_BYTES:
@@ -1594,8 +2787,19 @@ def main() -> int:
         emit_progress("done", 100, "Modelo 3D listo")
         return 0
     except Exception as error:
+        tb = traceback.format_exc()
+        print(
+            json.dumps(
+                {
+                    "type": "error",
+                    "message": str(error),
+                    "traceback": tb,
+                }
+            ),
+            flush=True,
+        )
         log_error(f"image_to_3d failed: {error}")
-        traceback.print_exc(file=sys.stderr)
+        print(tb, file=sys.stderr, flush=True)
         return 1
 
 

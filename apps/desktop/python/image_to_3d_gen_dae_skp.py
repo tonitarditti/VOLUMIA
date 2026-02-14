@@ -8,8 +8,14 @@ import subprocess
 import sys
 import time
 import traceback
+import types
 from pathlib import Path
 from typing import Any, Dict, Optional, Sequence, Tuple
+
+os.environ.setdefault("PYTHONUNBUFFERED", "1")
+os.environ.setdefault("TQDM_DISABLE", "1")
+os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+os.environ.setdefault("TRANSFORMERS_NO_ADVISORY_WARNINGS", "1")
 
 
 DEFAULT_SKETCHUP_2025 = r"C:\Program Files\SketchUp\SketchUp 2025\SketchUp.exe"
@@ -44,6 +50,43 @@ TRIPOSR_INSTALL_HINT = (
     "TripoSR not installed. Run: "
     "pip install git+https://github.com/VAST-AI-Research/TripoSR.git"
 )
+
+
+def _install_torchmcubes_compat_shim() -> None:
+    try:
+        import torchmcubes  # type: ignore  # noqa: F401
+
+        return
+    except Exception:
+        pass
+
+    try:
+        import mcubes  # type: ignore
+        import numpy as np  # type: ignore
+        import torch  # type: ignore
+    except Exception as error:
+        raise RuntimeError("PyMCubes not installed. Run: pip install PyMCubes") from error
+
+    shim_module = types.ModuleType("torchmcubes")
+
+    def marching_cubes(volume: Any, level: Any):  # type: ignore[no-untyped-def]
+        if not torch.is_tensor(volume):
+            raise TypeError("torchmcubes shim expected a torch.Tensor volume")
+
+        volume_np = volume.detach().float().cpu().numpy()
+        iso_level = float(level.detach().item()) if torch.is_tensor(level) else float(level)
+        vertices_np, faces_np = mcubes.marching_cubes(volume_np, iso_level)
+
+        vertices_arr = np.asarray(vertices_np, dtype=np.float32)
+        faces_arr = np.asarray(faces_np, dtype=np.int64)
+        vertex_dtype = volume.dtype if getattr(volume, "is_floating_point", lambda: False)() else torch.float32
+
+        vertices = torch.from_numpy(vertices_arr).to(device=volume.device, dtype=vertex_dtype)
+        faces = torch.from_numpy(faces_arr).to(device=volume.device, dtype=torch.int64)
+        return vertices, faces
+
+    shim_module.marching_cubes = marching_cubes  # type: ignore[attr-defined]
+    sys.modules["torchmcubes"] = shim_module
 
 QUALITY_CONFIG: Dict[str, Dict[str, int]] = {
     "fast": {
@@ -201,6 +244,7 @@ def _load_triposr_model(device: str) -> Tuple[Any, str]:
         pass
 
     try:
+        _install_torchmcubes_compat_shim()
         from tsr.system import TSR  # type: ignore
 
         model = TSR.from_pretrained(
@@ -212,7 +256,7 @@ def _load_triposr_model(device: str) -> Tuple[Any, str]:
             model.to(device)
         return model, "tsr"
     except Exception:
-        raise RuntimeError(TRIPOSR_INSTALL_HINT) from None
+        raise RuntimeError(f"{TRIPOSR_INSTALL_HINT} (and install PyMCubes: pip install PyMCubes)") from None
 
 
 def reconstruct_mesh_with_triposr(
@@ -700,9 +744,19 @@ def main() -> int:
         emit_done(skp_path)
         return 0
     except Exception as error:
-        debug_mode = os.environ.get("VOLUMIA_DEBUG", "").strip().lower() in {"1", "true", "yes", "on"}
-        detail = traceback.format_exc() if debug_mode else ""
-        emit_error(str(error), detail)
+        tb = traceback.format_exc()
+        print(
+            json.dumps(
+                {
+                    "type": "error",
+                    "message": str(error),
+                    "traceback": tb,
+                },
+                ensure_ascii=False,
+            ),
+            flush=True,
+        )
+        print(tb, file=sys.stderr, flush=True)
         return 1
 
 

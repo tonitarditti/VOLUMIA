@@ -15,12 +15,14 @@ export type ModelMetadata = {
 };
 
 export type GenerationPreset = "fast" | "balanced" | "quality";
+export type GenerationMode = "auto" | "neural" | "architectural";
 
 export type ProjectModel = {
   sourceImages: string[];
   glbPath?: string;
   generatedAt?: number;
   preset?: GenerationPreset;
+  mode?: GenerationMode;
 };
 
 export type Project = {
@@ -64,6 +66,10 @@ const isGenerationPreset = (value: unknown): value is GenerationPreset => {
   return value === "fast" || value === "balanced" || value === "quality";
 };
 
+const isGenerationMode = (value: unknown): value is GenerationMode => {
+  return value === "auto" || value === "neural" || value === "architectural";
+};
+
 export const isChatMessage = (value: unknown): value is ChatMessage => {
   if (!isRecord(value)) return false;
   return (
@@ -94,7 +100,8 @@ export const isProjectModel = (value: unknown): value is ProjectModel => {
   return (
     (value.glbPath === undefined || isString(value.glbPath)) &&
     (value.generatedAt === undefined || typeof value.generatedAt === "number") &&
-    (value.preset === undefined || isGenerationPreset(value.preset))
+    (value.preset === undefined || isGenerationPreset(value.preset)) &&
+    (value.mode === undefined || isGenerationMode(value.mode))
   );
 };
 

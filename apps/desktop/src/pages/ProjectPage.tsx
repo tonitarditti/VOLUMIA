@@ -16,6 +16,7 @@ type GenerationDevice = {
   device: "cuda" | "cpu";
   name: string;
 };
+type AutoEngine = "triposr" | "arch" | "blockout";
 
 function formatMessageTime(value: string, locale: string) {
   return new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit" }).format(new Date(value));
@@ -57,12 +58,23 @@ function parseDeviceLine(value: string): GenerationDevice | null {
   };
 }
 
+function formatAutoEngineLabel(engine: AutoEngine) {
+  if (engine === "triposr") {
+    return "TripoSR";
+  }
+  if (engine === "arch") {
+    return "ARCH";
+  }
+  return "BLOCKOUT";
+}
+
 function getProjectModel(model: ProjectModel | undefined): ProjectModel {
   return {
     sourceImages: model?.sourceImages ? [...model.sourceImages] : [],
     glbPath: model?.glbPath,
     generatedAt: model?.generatedAt,
     preset: model?.preset,
+    mode: model?.mode ?? "auto",
   };
 }
 
@@ -81,6 +93,8 @@ export function ProjectPage() {
   const [generationMessage, setGenerationMessage] = useState("Selecciona imagenes para iniciar.");
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationDevice, setGenerationDevice] = useState<GenerationDevice | null>(null);
+  const [autoUsedEngine, setAutoUsedEngine] = useState<AutoEngine | null>(null);
+  const [generationLogPath, setGenerationLogPath] = useState("");
   const [imagePreviews, setImagePreviews] = useState<Record<string, string>>({});
   const [isAssistantOpen, setIsAssistantOpen] = useState(false);
   const [isNotesOpen, setIsNotesOpen] = useState(false);
@@ -105,6 +119,8 @@ export function ProjectPage() {
     setGenerationMessage("Selecciona imagenes para iniciar.");
     setIsGenerating(false);
     setGenerationDevice(null);
+    setAutoUsedEngine(null);
+    setGenerationLogPath("");
     setImagePreviews({});
   }, [project?.id]);
 
@@ -167,6 +183,12 @@ export function ProjectPage() {
       setGenerationStage(payload.stage);
       setGenerationPercent(Math.max(0, Math.min(100, payload.percent)));
       setGenerationMessage(payload.message);
+      if (payload.stage !== "error") {
+        setGenerationLogPath("");
+      }
+      if (payload.stage !== "done") {
+        setAutoUsedEngine(null);
+      }
       if (payload.device) {
         setGenerationDevice({
           device: payload.device,
@@ -189,6 +211,8 @@ export function ProjectPage() {
         setGenerationStage("done");
         setGenerationPercent(100);
         setGenerationMessage(payload.skpPath ? `SKP generado: ${payload.skpPath}` : "SKP generado correctamente.");
+        setAutoUsedEngine(null);
+        setGenerationLogPath("");
         return;
       }
 
@@ -198,6 +222,7 @@ export function ProjectPage() {
         glbPath: payload.glbPath ?? project.model?.glbPath,
         generatedAt: Date.now(),
         preset: payload.preset ?? preset,
+        mode: payload.mode ?? "auto",
       };
 
       updateProjectModel(project.id, nextModel);
@@ -205,8 +230,14 @@ export function ProjectPage() {
       setIsGenerating(false);
       setGenerationStage("done");
       setGenerationPercent(100);
-      setGenerationMessage("Modelo 3D generado correctamente.");
+      setGenerationMessage(
+        payload.autoUsed
+          ? `Modelo 3D generado correctamente. AUTO used: ${formatAutoEngineLabel(payload.autoUsed)}`
+          : "Modelo 3D generado correctamente."
+      );
       setGenerationDevice(payload.device ?? null);
+      setAutoUsedEngine(payload.autoUsed ?? null);
+      setGenerationLogPath("");
     });
 
     const cleanupError = desktopApi.onGenerationError((payload) => {
@@ -216,7 +247,9 @@ export function ProjectPage() {
 
       setIsGenerating(false);
       setGenerationStage("error");
-      setGenerationMessage(payload.message);
+      setGenerationMessage(payload.logPath ? `${payload.message} Ver log: ${payload.logPath}` : payload.message);
+      setAutoUsedEngine(null);
+      setGenerationLogPath(payload.logPath ?? "");
     });
 
     return () => {
@@ -284,11 +317,14 @@ export function ProjectPage() {
     setGenerationPercent(1);
     setGenerationMessage("Iniciando generacion...");
     setGenerationDevice(null);
+    setAutoUsedEngine(null);
+    setGenerationLogPath("");
 
     const result = await desktopApi.runGeneration({
       projectId: project.id,
       imagePaths: selectedImages,
       preset,
+      mode: "auto",
       pythonPath: settings.pythonPath,
       pipeline: "depth_glb",
     });
@@ -296,7 +332,8 @@ export function ProjectPage() {
     if (!result.ok) {
       setIsGenerating(false);
       setGenerationStage("error");
-      setGenerationMessage(result.error);
+      setGenerationMessage(result.logPath ? `${result.error} Ver log: ${result.logPath}` : result.error);
+      setGenerationLogPath(result.logPath ?? "");
       return;
     }
 
@@ -304,6 +341,7 @@ export function ProjectPage() {
       ...projectModel,
       sourceImages: selectedImages,
       preset,
+      mode: "auto",
     });
   };
 
@@ -327,6 +365,8 @@ export function ProjectPage() {
     setGenerationPercent(1);
     setGenerationMessage("Iniciando generacion SKP IA...");
     setGenerationDevice(null);
+    setAutoUsedEngine(null);
+    setGenerationLogPath("");
 
     const result = await desktopApi.runGeneration({
       projectId: project.id,
@@ -344,7 +384,8 @@ export function ProjectPage() {
     if (!result.ok) {
       setIsGenerating(false);
       setGenerationStage("error");
-      setGenerationMessage(result.error);
+      setGenerationMessage(result.logPath ? `${result.error} Ver log: ${result.logPath}` : result.error);
+      setGenerationLogPath(result.logPath ?? "");
     }
   };
 
@@ -365,6 +406,13 @@ export function ProjectPage() {
     }
 
     await desktopApi.openGenerationOutputFolder(project.model.glbPath);
+  };
+
+  const handleOpenGenerationLog = async () => {
+    if (!hasDesktopBridge() || !generationLogPath) {
+      return;
+    }
+    await desktopApi.openGenerationLogPath(generationLogPath);
   };
 
   const panelClass = `${getSurfaceClass(settings.glassStyle, "panel")} text-[var(--text)]`;
@@ -417,6 +465,13 @@ export function ProjectPage() {
               <p className="text-xs text-[var(--text-muted)]">
                 {generationStage}: {generationMessage}
               </p>
+              {generationStage === "error" && generationLogPath ? (
+                <div className="pt-1">
+                  <Button variant="secondary" onClick={() => void handleOpenGenerationLog()}>
+                    Abrir log
+                  </Button>
+                </div>
+              ) : null}
             </div>
           </div>
         </aside>
@@ -448,12 +503,22 @@ export function ProjectPage() {
                 Cancelar
               </Button>
               <span className="rounded-md border border-[var(--border)] bg-[var(--surface-2)] px-2.5 py-1.5 text-xs text-[var(--text-muted)]">
-                {generationDevice
-                  ? generationDevice.device === "cuda"
-                    ? `GPU: ${shortDeviceName(generationDevice.name)}`
-                    : "CPU"
-                  : "Detectando..."}
+                MODE: AUTO
               </span>
+              {autoUsedEngine ? (
+                <span className="rounded-md border border-[var(--border)] bg-[var(--surface-2)] px-2.5 py-1.5 text-xs text-[var(--text-muted)]">
+                  AUTO used: {formatAutoEngineLabel(autoUsedEngine)}
+                </span>
+              ) : null}
+              {generationDevice ? (
+                <span className="rounded-md border border-[var(--border)] bg-[var(--surface-2)] px-2.5 py-1.5 text-xs text-[var(--text-muted)]">
+                  {generationDevice
+                    ? generationDevice.device === "cuda"
+                      ? `GPU: ${shortDeviceName(generationDevice.name)}`
+                      : "CPU"
+                    : "Detectando..."}
+                </span>
+              ) : null}
               <Button variant="secondary" className="ml-auto" onClick={() => setIsAssistantOpen((current) => !current)}>
                 {isAssistantOpen ? "Ocultar asistente" : "Asistente"}
               </Button>

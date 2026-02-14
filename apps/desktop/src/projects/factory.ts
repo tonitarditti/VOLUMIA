@@ -36,6 +36,7 @@ export function createProject(name = DEFAULT_PROJECT_NAME): Project {
     modelMetadata: buildDefaultModelMetadata(),
     model: {
       sourceImages: [],
+      mode: "auto",
     },
   };
 }
@@ -84,6 +85,7 @@ export function duplicateProject(source: Project, existingNames: string[]): Proj
       glbPath: source.model?.glbPath,
       generatedAt: source.model?.generatedAt,
       preset: source.model?.preset,
+      mode: source.model?.mode,
     },
   };
 }

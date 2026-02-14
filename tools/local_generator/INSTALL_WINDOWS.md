@@ -10,19 +10,17 @@ python -m pip install --upgrade pip
 
 ## 2) Install PyTorch
 
-Install the proper wheel for your GPU/CPU from official PyTorch instructions. Generic example:
+CUDA 12.1 (recommended for NVIDIA):
 
 ```powershell
-pip install torch torchvision torchaudio
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 ```
 
 ## 3) Install TripoSR runtime deps
 
 ```powershell
-pip install pillow numpy trimesh
-pip install rembg
-# If rembg backend requires it in your environment:
-# pip install onnxruntime
+pip install trimesh pillow numpy
+pip install PyMCubes
 pip install git+https://github.com/VAST-AI-Research/TripoSR.git
 ```
 

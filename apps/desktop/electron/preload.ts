@@ -97,6 +97,8 @@ const bridge = {
     test: () => ipcRenderer.invoke(IPC_CHANNELS.generationTest) as Promise<GenerationTestResult>,
     readGlb: (glbPath: string) => ipcRenderer.invoke("gen:read-glb", glbPath),
     readImageAsDataUrl: (imagePath: string) => ipcRenderer.invoke("gen:read-image-data-url", imagePath) as Promise<string>,
+    openLogPath: (logPath: string) =>
+      ipcRenderer.invoke("gen:open-log-path", { logPath }) as Promise<{ ok: boolean; path: string; error?: string }>,
     openOutputFolder: (glbPath: string) =>
       ipcRenderer.invoke("gen:open-output-folder", { glbPath }) as Promise<{ ok: boolean; path: string; error?: string }>,
     onProgress: (callback: (payload: GenerationProgressPayload) => void) => {
