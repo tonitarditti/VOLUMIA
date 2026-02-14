@@ -39,6 +39,7 @@ type SettingsContextValue = {
   setThemeMode: (themeMode: ThemeMode) => void;
   setTheme: (theme: Theme) => void;
   setTimeTheme: (timeTheme: Partial<TimeTheme>) => void;
+  setGlassStyle: (glassStyle: boolean) => void;
   setWindowMode: (windowMode: WindowMode) => void;
   setRememberWindowBounds: (rememberWindowBounds: boolean) => void;
   setPerformancePreset: (performancePreset: PerformancePreset) => void;
@@ -97,6 +98,10 @@ export function SettingsProvider({ children }: PropsWithChildren) {
   useEffect(() => {
     document.documentElement.classList.toggle("reduce-motion", settings.reduceMotion);
   }, [settings.reduceMotion]);
+
+  useEffect(() => {
+    document.documentElement.dataset.glass = settings.glassStyle ? "on" : "off";
+  }, [settings.glassStyle]);
 
   useEffect(() => {
     if (!hasDesktopBridge()) {
@@ -218,6 +223,7 @@ export function SettingsProvider({ children }: PropsWithChildren) {
           )
         );
       },
+      setGlassStyle: (glassStyle) => updateSettings({ glassStyle }),
       setWindowMode: (windowMode) => updateSettings({ windowMode }),
       setRememberWindowBounds: (rememberWindowBounds) => updateSettings({ rememberWindowBounds }),
       setPerformancePreset: (performancePreset) => {

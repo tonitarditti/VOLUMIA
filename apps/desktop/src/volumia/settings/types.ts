@@ -16,6 +16,7 @@ export interface AppSettings {
   themeMode: ThemeMode;
   theme: Theme;
   timeTheme: TimeTheme;
+  glassStyle: boolean;
   windowMode: WindowMode;
   rememberWindowBounds: boolean;
   performancePreset: PerformancePreset;

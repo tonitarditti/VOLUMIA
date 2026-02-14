@@ -55,6 +55,18 @@
   color-scheme: dark;
 }
 
+:root[data-glass="off"][data-theme="light"] {
+  --surface-1: #ffffff;
+  --surface-2: #f6f2ef;
+  --surface-3: #f9f8f7;
+}
+
+:root[data-glass="off"][data-theme="dark"] {
+  --surface-1: #161311;
+  --surface-2: #1c1917;
+  --surface-3: #26211d;
+}
+
 @layer base {
   * {
     @apply box-border;

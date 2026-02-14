@@ -69,10 +69,14 @@ type ViewportThemeConfig = {
   hemisphereIntensity: number;
   keyIntensity: number;
   fillIntensity: number;
+  rimIntensity: number;
   envMapIntensity: number;
 };
 
 const VIEW_TARGET = new THREE.Vector3(0, 0.4, 0);
+const SHADOW_CAMERA_BOUNDS = 12;
+const SHADOW_CAMERA_NEAR = 0.5;
+const SHADOW_CAMERA_FAR = 40;
 const DEFAULT_CAMERA_SNAPSHOT: CameraSnapshot = {
   position: new THREE.Vector3(2.8, 2.2, 2.8),
   target: VIEW_TARGET.clone(),
@@ -432,6 +436,7 @@ function getViewportThemeConfig(theme: ViewportTheme): ViewportThemeConfig {
       hemisphereIntensity: 0.6,
       keyIntensity: 1.6,
       fillIntensity: 0.8,
+      rimIntensity: 0.45,
       envMapIntensity: 0.9,
     };
   }
@@ -447,6 +452,7 @@ function getViewportThemeConfig(theme: ViewportTheme): ViewportThemeConfig {
     hemisphereIntensity: 0.9,
     keyIntensity: 2.2,
     fillIntensity: 1.1,
+    rimIntensity: 0.6,
     envMapIntensity: 1.1,
   };
 }
@@ -565,6 +571,30 @@ export function ProjectViewport({
   const viewportTheme = resolveViewportTheme(resolvedTheme);
   const themeConfig = getViewportThemeConfig(viewportTheme);
   const bgClass = themeConfig.isDark ? "bg-[#0c0a09]" : "bg-[#f4f1ee]";
+  const shadowMapSize = settings.fpsLimit >= 120 ? 1024 : 2048;
+  const headerClass = settings.glassStyle
+    ? "shrink-0 border-b border-white/10 bg-white/[0.03] px-3 py-2 backdrop-blur-md"
+    : "shrink-0 border-b border-[var(--border)] bg-[var(--surface-1)] px-3 py-2";
+  const chipClass = settings.glassStyle
+    ? "rounded-md border border-white/10 bg-white/[0.03] px-2 py-1"
+    : "rounded-md border border-[var(--border)] bg-[var(--surface-1)] px-2 py-1";
+  const hintChipClass = settings.glassStyle
+    ? "rounded-md border border-white/10 bg-white/[0.03] px-2 py-1"
+    : "rounded-md border border-[var(--border)] bg-[var(--surface-2)] px-2 py-1";
+  const utilityButtonBaseClass = settings.glassStyle
+    ? "rounded-md border border-white/10 bg-white/[0.03] px-2 py-1 text-[10px] uppercase tracking-[0.08em] text-[var(--text-muted)] transition-colors hover:bg-white/[0.06] hover:text-[var(--text)]"
+    : "rounded-md border border-[var(--border)] bg-[var(--surface-1)] px-2 py-1 text-[10px] uppercase tracking-[0.08em] text-[var(--text-muted)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text)]";
+  const utilityWireframeClass = settings.glassStyle
+    ? `rounded-md border border-[var(--border)] px-2 py-1 text-[10px] uppercase tracking-[0.08em] transition-colors ${
+        wireframe
+          ? "border-white/15 bg-white/[0.1] text-[var(--text)]"
+          : "border-white/10 bg-white/[0.03] text-[var(--text-muted)] hover:bg-white/[0.06] hover:text-[var(--text)]"
+      }`
+    : `rounded-md border border-[var(--border)] px-2 py-1 text-[10px] uppercase tracking-[0.08em] transition-colors ${
+        wireframe
+          ? "bg-[var(--surface-3)] text-[var(--text)]"
+          : "bg-[var(--surface-1)] text-[var(--text-muted)] hover:bg-[var(--surface-2)] hover:text-[var(--text)]"
+      }`;
 
   useEffect(() => {
     if (glbPath) {
@@ -619,151 +649,169 @@ export function ProjectViewport({
   }, [onToggleWireframe]);
 
   return (
-    <div className="absolute inset-0 z-0 h-full w-full overflow-hidden">
+    <div className="relative flex h-full min-h-0 w-full min-w-0 overflow-hidden">
       <div
         ref={hostRef}
-        className={`relative h-full w-full min-h-0 min-w-0 overflow-hidden ${bgClass}`}
+        className={`relative flex h-full w-full min-h-0 min-w-0 flex-col overflow-hidden ${bgClass}`}
       >
-        <div className="pointer-events-none absolute left-3 top-3 z-10 rounded-md border border-[var(--border)] bg-[var(--surface-1)] px-2 py-1 text-[10px] uppercase tracking-[0.16em] text-[var(--text-muted)]">
-          {t("project.viewport")}
-        </div>
-        <div className="pointer-events-none absolute bottom-3 left-3 z-10 rounded-md border border-[var(--border)] bg-[var(--surface-2)] px-2 py-1 text-[10px] text-[var(--text-muted)]">
-          {t("project.viewportHint")}
-        </div>
-        {showUtilityButtons ? (
-          <div className="absolute right-3 top-3 z-20 flex items-center gap-2">
-            <button
-              type="button"
-              onClick={handleResetView}
-              className="rounded-md border border-[var(--border)] bg-[var(--surface-1)] px-2 py-1 text-[10px] uppercase tracking-[0.08em] text-[var(--text-muted)] transition-colors hover:text-[var(--text)]"
-            >
-              Reset View
-            </button>
-            <button
-              type="button"
-              onClick={handleToggleWireframe}
-              className={`rounded-md border border-[var(--border)] px-2 py-1 text-[10px] uppercase tracking-[0.08em] transition-colors ${
-                wireframe
-                  ? "bg-[var(--surface-3)] text-[var(--text)]"
-                  : "bg-[var(--surface-1)] text-[var(--text-muted)] hover:text-[var(--text)]"
-              }`}
-            >
-              Wireframe
-            </button>
-            <button
-              type="button"
-              onClick={handleScreenshot}
-              className="rounded-md border border-[var(--border)] bg-[var(--surface-1)] px-2 py-1 text-[10px] uppercase tracking-[0.08em] text-[var(--text-muted)] transition-colors hover:text-[var(--text)]"
-            >
-              Screenshot
-            </button>
+        <div className={headerClass}>
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <span className={`${chipClass} text-[10px] uppercase tracking-[0.16em] text-[var(--text-muted)]`}>
+                {t("project.viewport")}
+              </span>
+              <span className={`${hintChipClass} text-[10px] text-[var(--text-muted)]`}>
+                {t("project.viewportHint")}
+              </span>
+            </div>
+            {showUtilityButtons ? (
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleResetView}
+                  className={utilityButtonBaseClass}
+                >
+                  Reset View
+                </button>
+                <button
+                  type="button"
+                  onClick={handleToggleWireframe}
+                  className={utilityWireframeClass}
+                >
+                  Wireframe
+                </button>
+                <button
+                  type="button"
+                  onClick={handleScreenshot}
+                  className={utilityButtonBaseClass}
+                >
+                  Screenshot
+                </button>
+              </div>
+            ) : null}
           </div>
-        ) : null}
-        {loadError ? (
-          <div className="pointer-events-none absolute inset-x-3 bottom-12 z-20 rounded-md border border-[#7e2d2d] bg-[#3c1515]/90 px-3 py-2 text-[11px] leading-snug text-[#ffd7d7]">
-            {loadError}
-          </div>
-        ) : null}
-        {canRenderCanvas ? (
-          <div className="absolute inset-0 min-h-0 min-w-0 overflow-hidden">
-            <Canvas
-              key={`viewport-fps-${settings.fpsLimit}`}
-              className="block h-full w-full"
-              style={{ display: "block", width: "100%", height: "100%" }}
-              camera={{ position: [8, 6, 8], fov: 48, near: 0.1, far: 200 }}
-              dpr={[1, 2]}
-              frameloop="demand"
-              shadows
-              gl={{ antialias: true, alpha: false, preserveDrawingBuffer: true }}
-              onCreated={({ gl, camera }) => {
-                rendererRef.current = gl;
-                if ("outputColorSpace" in gl) {
-                  gl.outputColorSpace = THREE.SRGBColorSpace;
-                } else {
-                  const legacyEncoding = (THREE as unknown as { sRGBEncoding?: number }).sRGBEncoding;
-                  if (legacyEncoding !== undefined) {
-                    (gl as THREE.WebGLRenderer & { outputEncoding: number }).outputEncoding = legacyEncoding;
+        </div>
+        <div className="relative flex-1 min-h-0 w-full overflow-hidden">
+          {loadError ? (
+            <div className="pointer-events-none absolute inset-x-3 top-3 z-20 rounded-md border border-[#7e2d2d] bg-[#3c1515]/90 px-3 py-2 text-[11px] leading-snug text-[#ffd7d7]">
+              {loadError}
+            </div>
+          ) : null}
+          {canRenderCanvas ? (
+            <div className="relative h-full w-full min-h-0 overflow-hidden">
+              <Canvas
+                key={`viewport-fps-${settings.fpsLimit}`}
+                className="block h-full w-full"
+                style={{ display: "block", width: "100%", height: "100%" }}
+                camera={{ position: [8, 6, 8], fov: 48, near: 0.1, far: 200 }}
+                dpr={[1, 2]}
+                frameloop="demand"
+                shadows
+                gl={{ antialias: true, alpha: false, preserveDrawingBuffer: true }}
+                onCreated={({ gl, camera }) => {
+                  rendererRef.current = gl;
+                  if ("outputColorSpace" in gl) {
+                    gl.outputColorSpace = THREE.SRGBColorSpace;
+                  } else {
+                    const legacyEncoding = (THREE as unknown as { sRGBEncoding?: number }).sRGBEncoding;
+                    if (legacyEncoding !== undefined) {
+                      (gl as THREE.WebGLRenderer & { outputEncoding: number }).outputEncoding = legacyEncoding;
+                    }
                   }
-                }
-                gl.toneMapping = THREE.ACESFilmicToneMapping;
-                gl.toneMappingExposure = viewportTheme === "dark" ? 1.15 : 1.0;
-                gl.shadowMap.enabled = true;
-                gl.shadowMap.type = THREE.PCFSoftShadowMap;
-                if ("physicallyCorrectLights" in gl) {
-                  (gl as THREE.WebGLRenderer & { physicallyCorrectLights: boolean }).physicallyCorrectLights = true;
-                }
+                  gl.toneMapping = THREE.ACESFilmicToneMapping;
+                  gl.toneMappingExposure = viewportTheme === "dark" ? 1.15 : 1.0;
+                  gl.shadowMap.enabled = true;
+                  gl.shadowMap.type = THREE.PCFSoftShadowMap;
+                  if ("physicallyCorrectLights" in gl) {
+                    (gl as THREE.WebGLRenderer & { physicallyCorrectLights: boolean }).physicallyCorrectLights = true;
+                  }
 
-                if (camera instanceof THREE.PerspectiveCamera) {
-                  const host = hostRef.current;
-                  if (host) {
-                    const width = Math.max(1, host.clientWidth);
-                    const height = Math.max(1, host.clientHeight);
-                    gl.setSize(width, height, false);
-                    camera.aspect = width / height;
-                    camera.updateProjectionMatrix();
-                    setSize({ width, height });
+                  if (camera instanceof THREE.PerspectiveCamera) {
+                    const host = hostRef.current;
+                    if (host) {
+                      const width = Math.max(1, host.clientWidth);
+                      const height = Math.max(1, host.clientHeight);
+                      gl.setSize(width, height, false);
+                      camera.aspect = width / height;
+                      camera.updateProjectionMatrix();
+                      setSize({ width, height });
+                    }
+                    cameraRef.current = camera;
+                    applyCameraSnapshot(camera, controlsRef, cameraSnapshotRef.current);
                   }
-                  cameraRef.current = camera;
-                  applyCameraSnapshot(camera, controlsRef, cameraSnapshotRef.current);
-                }
-              }}
-            >
-              <ViewportResizeSync width={size.width} height={size.height} />
-              <SceneRendererSetup
-                theme={viewportTheme}
-                background={themeConfig.background}
-              />
-              <FrameLimiter fpsLimit={settings.fpsLimit} />
-              <color attach="background" args={[themeConfig.background]} />
-              <ambientLight intensity={themeConfig.ambientIntensity} color="#efe5d5" />
-              <hemisphereLight args={["#f2e8d8", "#7f7468", themeConfig.hemisphereIntensity]} />
-              <directionalLight
-                intensity={themeConfig.keyIntensity}
-                color="#f8f0e3"
-                position={[5, 10, 5]}
-                castShadow
-                shadow-mapSize-width={1024}
-                shadow-mapSize-height={1024}
-              />
-              <directionalLight
-                intensity={themeConfig.fillIntensity}
-                color="#ece2d1"
-                position={[-6, 6, -4]}
-              />
-              <SceneMassing
-                showMassing={!glbPath}
-                groundColor={themeConfig.ground}
-                gridMain={themeConfig.gridMain}
-                gridSub={themeConfig.gridSub}
-                gridOpacity={themeConfig.gridOpacity}
-              />
-              <LoadedModel
-                glbPath={glbPath}
-                glbVersion={glbVersion}
-                controlsRef={controlsRef}
-                envMapIntensity={themeConfig.envMapIntensity}
-                wireframe={wireframe}
-                onLoadError={setLoadError}
-                onCameraFit={(snapshot) => {
-                  cameraSnapshotRef.current = snapshot;
                 }}
-              />
-              <OrbitControls
-                ref={controlsRef}
-                makeDefault
-                target={[0, 0.4, 0]}
-                enableDamping
-                dampingFactor={0.08}
-                minDistance={0.3}
-                maxDistance={20}
-                minPolarAngle={0}
-                maxPolarAngle={Math.PI * 0.49}
-                screenSpacePanning={false}
-              />
-              <OrbitTargetClamp controlsRef={controlsRef} radius={4} minY={0} maxY={2.5} />
-            </Canvas>
-          </div>
-        ) : null}
+              >
+                <ViewportResizeSync width={size.width} height={size.height} />
+                <SceneRendererSetup
+                  theme={viewportTheme}
+                  background={themeConfig.background}
+                />
+                <FrameLimiter fpsLimit={settings.fpsLimit} />
+                <color attach="background" args={[themeConfig.background]} />
+                <ambientLight intensity={themeConfig.ambientIntensity} color="#efe5d5" />
+                <hemisphereLight args={["#f2e8d8", "#7f7468", themeConfig.hemisphereIntensity]} />
+                <directionalLight
+                  intensity={themeConfig.keyIntensity}
+                  color="#f8f0e3"
+                  position={[6, 10, 4]}
+                  castShadow
+                  shadow-mapSize-width={shadowMapSize}
+                  shadow-mapSize-height={shadowMapSize}
+                  shadow-camera-near={SHADOW_CAMERA_NEAR}
+                  shadow-camera-far={SHADOW_CAMERA_FAR}
+                  shadow-camera-left={-SHADOW_CAMERA_BOUNDS}
+                  shadow-camera-right={SHADOW_CAMERA_BOUNDS}
+                  shadow-camera-top={SHADOW_CAMERA_BOUNDS}
+                  shadow-camera-bottom={-SHADOW_CAMERA_BOUNDS}
+                  shadow-bias={-0.00012}
+                  shadow-normalBias={0.025}
+                  shadow-radius={2.2}
+                />
+                <directionalLight
+                  intensity={themeConfig.fillIntensity}
+                  color="#ece2d1"
+                  position={[-8, 5, 6]}
+                />
+                <directionalLight
+                  intensity={themeConfig.rimIntensity}
+                  color="#fff6e8"
+                  position={[-5, 7, -8]}
+                />
+                <SceneMassing
+                  showMassing={!glbPath}
+                  groundColor={themeConfig.ground}
+                  gridMain={themeConfig.gridMain}
+                  gridSub={themeConfig.gridSub}
+                  gridOpacity={themeConfig.gridOpacity}
+                />
+                <LoadedModel
+                  glbPath={glbPath}
+                  glbVersion={glbVersion}
+                  controlsRef={controlsRef}
+                  envMapIntensity={themeConfig.envMapIntensity}
+                  wireframe={wireframe}
+                  onLoadError={setLoadError}
+                  onCameraFit={(snapshot) => {
+                    cameraSnapshotRef.current = snapshot;
+                  }}
+                />
+                <OrbitControls
+                  ref={controlsRef}
+                  makeDefault
+                  target={[0, 0.4, 0]}
+                  enableDamping
+                  dampingFactor={0.08}
+                  minDistance={0.3}
+                  maxDistance={20}
+                  minPolarAngle={0}
+                  maxPolarAngle={Math.PI * 0.49}
+                  screenSpacePanning={false}
+                />
+                <OrbitTargetClamp controlsRef={controlsRef} radius={4} minY={0} maxY={2.5} />
+              </Canvas>
+            </div>
+          ) : null}
+        </div>
       </div>
     </div>
   );

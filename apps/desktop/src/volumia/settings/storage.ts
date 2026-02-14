@@ -20,6 +20,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   themeMode: "system",
   theme: "dark",
   timeTheme: { ...DEFAULT_TIME_THEME },
+  glassStyle: true,
   windowMode: "windowed",
   rememberWindowBounds: true,
   performancePreset: "balanced",
@@ -145,6 +146,7 @@ export function sanitizeAppSettings(value: unknown, fallback: AppSettings = DEFA
         : fallback.themeMode,
     theme: migratedTheme ?? (isTheme(value.theme) ? value.theme : fallback.theme),
     timeTheme: sanitizeTimeTheme(value.timeTheme, fallback.timeTheme),
+    glassStyle: typeof value.glassStyle === "boolean" ? value.glassStyle : fallback.glassStyle,
     windowMode: migrateLegacyWindowMode(value.windowMode) ?? fallback.windowMode,
     rememberWindowBounds:
       typeof value.rememberWindowBounds === "boolean"

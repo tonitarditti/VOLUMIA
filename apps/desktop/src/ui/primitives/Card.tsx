@@ -1,4 +1,6 @@
 import type { PropsWithChildren } from "react";
+import { useSettings } from "@/volumia/settings/context";
+import { getSurfaceClass } from "@/ui/surfaceClass";
 
 type CardPadding = "none" | "sm" | "md" | "lg";
 
@@ -16,9 +18,12 @@ const paddingClasses: Record<CardPadding, string> = {
 };
 
 export function Card({ className = "", children, padding = "none", hoverElevation = false }: CardProps) {
+  const { settings } = useSettings();
+  const surfaceClass = getSurfaceClass(settings.glassStyle, "panel");
+
   return (
     <section
-      className={`rounded-xl border border-[var(--border)] bg-[var(--surface-1)] backdrop-blur-md shadow-[var(--shadow)] transition-[transform,border-color] duration-150 ease-out ${hoverElevation ? "hover:-translate-y-px hover:border-[var(--accent)]" : ""} ${paddingClasses[padding]} ${className}`}
+      className={`rounded-xl transition-[transform,border-color] duration-150 ease-out ${surfaceClass} ${hoverElevation ? "hover:-translate-y-px hover:border-[var(--accent)]" : ""} ${paddingClasses[padding]} ${className}`}
     >
       {children}
     </section>

@@ -39,6 +39,7 @@ export function SettingsPage({
     setThemeMode,
     setTheme,
     setTimeTheme,
+    setGlassStyle,
     setReduceMotion,
     setWindowMode,
     setRememberWindowBounds,
@@ -414,6 +415,12 @@ export function SettingsPage({
           </Button>
 
           <Toggle checked={settings.reduceMotion} onChange={setReduceMotion} label={t("settings.reduceMotion")} />
+          <Toggle
+            checked={settings.glassStyle}
+            onChange={setGlassStyle}
+            label={t("settings.glassStyle")}
+            helperText={t("settings.glassStyleHint")}
+          />
         </div>
       </Card>
 

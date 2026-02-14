@@ -10,6 +10,15 @@ type SceneMassingProps = {
   gridOpacity: number;
 };
 
+const DEFAULT_MASSING_SCALE = 0.25;
+const MASSING_BASE_SIZE: [number, number, number] = [4.6, 3.2, 2.8];
+const MASSING_SIZE: [number, number, number] = [
+  MASSING_BASE_SIZE[0] * DEFAULT_MASSING_SCALE,
+  MASSING_BASE_SIZE[1] * DEFAULT_MASSING_SCALE,
+  MASSING_BASE_SIZE[2] * DEFAULT_MASSING_SCALE,
+];
+const MASSING_CENTER_Y = MASSING_SIZE[1] * 0.5;
+
 function applyGridOpacity(grid: THREE.GridHelper, opacity: number) {
   const materials = Array.isArray(grid.material) ? grid.material : [grid.material];
   for (const material of materials) {
@@ -41,8 +50,8 @@ export function SceneMassing({ showMassing, groundColor, gridMain, gridSub, grid
         <meshStandardMaterial color={groundColor} roughness={0.95} metalness={0.0} />
       </mesh>
       {showMassing ? (
-        <mesh position={[0, 1.6, 0]} castShadow receiveShadow>
-          <boxGeometry args={[4.6, 3.2, 2.8]} />
+        <mesh position={[0, MASSING_CENTER_Y, 0]} castShadow receiveShadow>
+          <boxGeometry args={MASSING_SIZE} />
           <meshStandardMaterial color="#8f8679" metalness={0.12} roughness={0.72} />
         </mesh>
       ) : null}

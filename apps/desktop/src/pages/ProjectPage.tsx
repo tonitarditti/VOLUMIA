@@ -7,6 +7,7 @@ import type { GenerationPreset, ProjectModel } from "@/projects/types";
 import { buildMockAssistantReply, summarizeReply } from "@/projects/mockAssistant";
 import { desktopApi, hasDesktopBridge } from "@/electron/desktopApi";
 import { Button, TextArea, TextField } from "@/ui/primitives";
+import { getSurfaceClass } from "@/ui/surfaceClass";
 import { ProjectViewport } from "@/three/ProjectViewport";
 import { useT } from "@/volumia/i18n/useT";
 import { useSettings } from "@/volumia/settings/context";
@@ -67,7 +68,7 @@ function getProjectModel(model: ProjectModel | undefined): ProjectModel {
 
 export function ProjectPage() {
   const { t, language } = useT();
-  const { settings, resolvedTheme } = useSettings();
+  const { settings } = useSettings();
   const { projectId = "" } = useParams();
   const { state, hydrated, renameProject, updateNotes, appendChatMessage, updateModelMetadata, updateProjectModel } = useProjects();
 
@@ -366,221 +367,176 @@ export function ProjectPage() {
     await desktopApi.openGenerationOutputFolder(project.model.glbPath);
   };
 
-  const isLightTheme = resolvedTheme === "light";
-  const warmPanelClass = isLightTheme
-    ? "border border-[#d6d3d1] bg-white/70 text-[#2d2a26] backdrop-blur-md shadow-[0_8px_32px_rgba(0,0,0,0.14)]"
-    : "border border-[#44403c] bg-[#1c1917]/70 text-[#e7e5e4] backdrop-blur-2xl shadow-[0_8px_32px_rgba(0,0,0,0.5)]";
-  const warmGlassClass = isLightTheme
-    ? "border border-[#d6d3d1] bg-white/70 text-[#2d2a26] backdrop-blur-md shadow-[0_8px_32px_rgba(0,0,0,0.14)]"
-    : "border border-[#44403c] bg-[#1c1917]/70 text-[#e7e5e4] backdrop-blur-2xl shadow-[0_8px_32px_rgba(0,0,0,0.5)]";
-  const floatingButtonClass = isLightTheme
-    ? "rounded-lg border border-[#d6d3d1] bg-white/70 px-3 py-2 text-xs text-[#2d2a26] backdrop-blur-md transition-all duration-200 ease-out hover:bg-white/80"
-    : "rounded-lg border border-[#44403c] bg-[#1c1917]/70 px-3 py-2 text-xs text-[#e7e5e4] backdrop-blur-2xl transition-all duration-200 ease-out hover:bg-[#292420]";
+  const panelClass = `${getSurfaceClass(settings.glassStyle, "panel")} text-[var(--text)]`;
+  const panelSoftClass = getSurfaceClass(settings.glassStyle, "soft");
+  const selectClass = "border-[var(--border)] bg-[var(--surface-3)] text-[var(--text)] hover:border-[var(--accent)] focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--focus-ring)]";
 
   return (
-    <div className="relative h-full min-h-0 w-full min-w-0 overflow-hidden">
-      <div className="absolute inset-0 z-0 h-full w-full">
-        <ProjectViewport glbPath={project.model?.glbPath} glbVersion={project.model?.generatedAt} showUtilityButtons />
-      </div>
+    <div className="h-full min-h-0 w-full min-w-0 overflow-hidden p-4">
+      <div className={`grid h-full min-h-0 w-full min-w-0 gap-4 ${isAssistantOpen ? "grid-cols-[320px_minmax(0,1fr)_340px]" : "grid-cols-[320px_minmax(0,1fr)]"}`}>
+        <aside className={`flex min-h-0 flex-col rounded-2xl p-4 ${panelClass}`}>
+          <TextField
+            value={project.name}
+            onChange={(event) => renameProject(project.id, event.target.value)}
+            aria-label={t("dashboard.projectNameLabel")}
+            label={t("project.projectName")}
+          />
 
-      <div className="pointer-events-none absolute inset-0 z-10">
-        <div className="relative flex h-full min-h-0 w-full min-w-0 gap-4 py-4 pl-4 pr-0">
-          <aside className={`pointer-events-auto flex h-full min-h-0 w-[320px] flex-col rounded-2xl p-4 ${warmPanelClass}`}>
-            <TextField
-              value={project.name}
-              onChange={(event) => renameProject(project.id, event.target.value)}
-              aria-label={t("dashboard.projectNameLabel")}
-              label={t("project.projectName")}
-            />
-
-            <div className="mt-4 flex min-h-0 flex-1 flex-col">
-              <h2 className="mb-3 text-[11px] font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">Image to 3D</h2>
-              <div className="mb-3 flex flex-wrap items-center gap-2">
-                <Button variant="secondary" onClick={() => void handleSelectImages()} disabled={isGenerating}>
-                  Agregar imagenes
-                </Button>
-                <Button variant="secondary" onClick={() => void handleOpenOutputFolder()} disabled={!project.model?.glbPath}>
-                  Abrir salida
-                </Button>
-              </div>
-
-              {selectedImages.length > 0 ? (
-                <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
-                  {selectedImages.map((imagePath) => (
-                    <figure
-                      key={imagePath}
-                      className={`flex items-center gap-2 overflow-hidden rounded-lg border p-2 ${
-                        isLightTheme ? "border-[#d6d3d1] bg-white/70" : "border-[#44403c] bg-[#1c1917]/70"
-                      }`}
-                    >
-                      {imagePreviews[imagePath] ? (
-                        <img src={imagePreviews[imagePath]} alt={filenameFromPath(imagePath)} className="h-16 w-16 shrink-0 rounded object-cover" />
-                      ) : (
-                        <div className="h-16 w-16 shrink-0 rounded bg-[var(--surface-3)]" />
-                      )}
-                      <figcaption className="truncate text-[11px] text-[var(--text-muted)]">{filenameFromPath(imagePath)}</figcaption>
-                    </figure>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-xs text-[var(--text-muted)]">No hay imagenes seleccionadas.</p>
-              )}
-
-              <div className="mt-3 space-y-1">
-                <div className="h-2 w-full overflow-hidden rounded-full bg-[var(--surface-3)]">
-                  <div className="h-full bg-[var(--accent)] transition-all duration-150 ease-out" style={{ width: `${generationPercent}%` }} />
-                </div>
-                <p className="text-xs text-[var(--text-muted)]">
-                  {generationStage}: {generationMessage}
-                </p>
-              </div>
-            </div>
-          </aside>
-
-          <div className="relative min-h-0 min-w-0 flex-1">
-            <div className="pointer-events-none absolute left-1/2 top-0 z-10 -translate-x-1/2">
-              <div className={`pointer-events-auto flex items-center gap-2 rounded-full px-3 py-2 transition-all duration-200 ease-out ${isLightTheme ? "hover:bg-[#ded9d2]" : "hover:bg-[#292420]"} ${warmGlassClass}`}>
-                <select
-                  value={preset}
-                  onChange={(event) => setPreset(event.target.value as GenerationPreset)}
-                  className={`h-9 min-w-32 appearance-none rounded-lg border px-3 text-sm outline-none transition duration-150 ease-out focus:ring-2 focus:ring-[#8c7e6d]/50 ${
-                    isLightTheme
-                      ? "border-[#e5e5e3] bg-[#fcfafa] text-[#2d2a26] hover:bg-white focus:border-[#8c7e6d] focus:bg-[#fcfafa] focus:text-[#2d2a26]"
-                      : "border-[#44403c] bg-[#1c1917]/80 text-[#e7e5e4] hover:bg-[#44403c] hover:text-[#e7e5e4] focus:border-[#8c7e6d] focus:bg-[#44403c] focus:text-[#e7e5e4]"
-                  }`}
-                  disabled={isGenerating}
-                >
-                  <option value="fast">Fast</option>
-                  <option value="balanced">Balanced</option>
-                  <option value="quality">Quality</option>
-                </select>
-                <Button variant="primary" onClick={() => void handleRunGeneration()} disabled={selectedImages.length === 0 || isGenerating}>
-                  Generar 3D
-                </Button>
-                <Button
-                  variant="primary"
-                  onClick={() => void handleRunGenerationSkp()}
-                  disabled={selectedImages.length < 1 || selectedImages.length > 4 || isGenerating}
-                >
-                  Generar SKP
-                </Button>
-                <Button variant="ghost" onClick={() => void handleCancelGeneration()} disabled={!isGenerating}>
-                  Cancelar
-                </Button>
-              </div>
+          <div className="mt-4 flex min-h-0 flex-1 flex-col">
+            <h2 className="mb-3 text-[11px] font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">Image to 3D</h2>
+            <div className="mb-3 flex flex-wrap items-center gap-2">
+              <Button variant="secondary" onClick={() => void handleSelectImages()} disabled={isGenerating}>
+                Agregar imagenes
+              </Button>
+              <Button variant="secondary" onClick={() => void handleOpenOutputFolder()} disabled={!project.model?.glbPath}>
+                Abrir salida
+              </Button>
             </div>
 
-            <div className="pointer-events-none absolute right-0 top-12 z-10">
-              <div className="flex items-center gap-2">
-                <span className={`${floatingButtonClass}`}>
-                  {generationDevice
-                    ? generationDevice.device === "cuda"
-                      ? `GPU: ${shortDeviceName(generationDevice.name)}`
-                      : "CPU"
-                    : "Detectando..."}
-                </span>
-                <button
-                  type="button"
-                  className={`pointer-events-auto ${floatingButtonClass}`}
-                  onClick={() => setIsAssistantOpen((current) => !current)}
-                >
-                  {isAssistantOpen ? "Ocultar asistente" : "Asistente"}
-                </button>
+            {selectedImages.length > 0 ? (
+              <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
+                {selectedImages.map((imagePath) => (
+                  <figure key={imagePath} className={`flex items-center gap-2 overflow-hidden rounded-xl p-2 ${panelSoftClass}`}>
+                    {imagePreviews[imagePath] ? (
+                      <img src={imagePreviews[imagePath]} alt={filenameFromPath(imagePath)} className="h-16 w-16 shrink-0 rounded object-cover" />
+                    ) : (
+                      <div className="h-16 w-16 shrink-0 rounded bg-[var(--surface-3)]" />
+                    )}
+                    <figcaption className="truncate text-[11px] text-[var(--text-muted)]">{filenameFromPath(imagePath)}</figcaption>
+                  </figure>
+                ))}
               </div>
-            </div>
+            ) : (
+              <p className="text-xs text-[var(--text-muted)]">No hay imagenes seleccionadas.</p>
+            )}
 
-            <div className="pointer-events-none absolute bottom-16 right-0 top-12 z-10">
-              <aside
-                className={`pointer-events-auto h-full w-[340px] rounded-2xl p-4 transition-all duration-500 ease-in-out ${
-                  isAssistantOpen ? "translate-x-0 opacity-100" : "translate-x-[120%] opacity-0"
-                } ${warmPanelClass}`}
-              >
-                <h2 className="mb-3 text-[11px] font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">{t("project.assistant")}</h2>
-
-                <div
-                  className={`min-h-0 h-[calc(100%-4.5rem)] space-y-3 overflow-y-auto rounded-xl border p-3.5 ${
-                    isLightTheme ? "border-[#d6d3d1] bg-white/70" : "border-[#44403c] bg-[#1c1917]/70"
-                  }`}
-                >
-                  {project.chatHistory.length === 0 ? <p className="text-sm leading-relaxed text-[var(--text-muted)]">{t("project.noMessages")}</p> : null}
-
-                  {project.chatHistory.map((message) => {
-                    const isAssistant = message.role === "assistant";
-
-                    return (
-                      <article
-                        key={message.id}
-                        className={`rounded-xl border p-3 ${
-                          isAssistant
-                            ? isLightTheme
-                              ? "border-[#d6d3d1] bg-white/70 text-[#2d2a26]"
-                              : "border-[#44403c] bg-[#1c1917]/70 text-[#e7e5e4]"
-                            : isLightTheme
-                              ? "border-[#d6d3d1] bg-[#ece8e3] text-[#2d2a26]"
-                              : "border-[#8c7e6d] bg-[#292420] text-[#e7e5e4]"
-                        }`}
-                      >
-                        <header className="mb-1.5 flex items-center justify-between text-[10px] uppercase tracking-[0.16em] text-[var(--text-muted)]">
-                          <span>{isAssistant ? t("project.assistantRole") : t("project.userRole")}</span>
-                          <time>{formatMessageTime(message.createdAt, language)}</time>
-                        </header>
-                        <p className="whitespace-pre-wrap text-sm leading-relaxed">{message.content}</p>
-                      </article>
-                    );
-                  })}
-                  <div ref={historyBottomRef} />
-                </div>
-
-                <div className="mt-3 flex gap-2">
-                  <TextField
-                    value={chatInput}
-                    onChange={(event) => setChatInput(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") {
-                        event.preventDefault();
-                        submitChat();
-                      }
-                    }}
-                    placeholder={t("project.promptPlaceholder")}
-                    aria-label={t("project.assistant")}
-                  />
-                  <Button variant="primary" className="min-w-24" onClick={submitChat}>
-                    {t("project.send")}
-                  </Button>
-                </div>
-              </aside>
-            </div>
-
-            <div className="pointer-events-none absolute bottom-0 left-0 right-0 z-10">
-              <div
-                className={`pointer-events-auto overflow-hidden rounded-2xl transition-all duration-500 ease-in-out ${
-                  isNotesOpen ? "h-56" : "h-10"
-                } ${warmGlassClass}`}
-              >
-                <button
-                  type="button"
-                  className={`pointer-events-auto flex h-10 w-full items-center justify-between px-4 text-left text-xs font-medium uppercase tracking-[0.16em] transition-all duration-200 ease-out ${
-                    isLightTheme ? "text-[#57534e] hover:bg-[#ded9d2]" : "text-[#a8a29e] hover:bg-[#292420]"
-                  }`}
-                  onClick={() => setIsNotesOpen((current) => !current)}
-                >
-                  <span>{t("project.notes")}</span>
-                  <span>{isNotesOpen ? "Ocultar" : "Mostrar"}</span>
-                </button>
-                <div className="h-[calc(100%-2.5rem)] px-4 pb-4">
-                  <TextArea
-                    value={project.notes}
-                    onChange={(event) => updateNotes(project.id, event.target.value)}
-                    rows={7}
-                    className="h-full min-h-0 leading-relaxed"
-                    placeholder={t("project.notesPlaceholder")}
-                    label=""
-                  />
-                </div>
+            <div className="mt-3 space-y-1">
+              <div className="h-2 w-full overflow-hidden rounded-full bg-[var(--surface-3)]">
+                <div className="h-full bg-[var(--accent)] transition-all duration-150 ease-out" style={{ width: `${generationPercent}%` }} />
               </div>
+              <p className="text-xs text-[var(--text-muted)]">
+                {generationStage}: {generationMessage}
+              </p>
             </div>
           </div>
-        </div>
+        </aside>
+
+        <section className="flex min-h-0 min-w-0 flex-col gap-3">
+          <div className={`shrink-0 rounded-2xl p-3 ${panelClass}`}>
+            <div className="flex flex-wrap items-center gap-2">
+              <select
+                value={preset}
+                onChange={(event) => setPreset(event.target.value as GenerationPreset)}
+                className={`h-9 min-w-32 appearance-none rounded-lg border px-3 text-sm outline-none transition duration-150 ease-out focus:ring-2 focus:ring-[#8c7e6d]/50 ${selectClass}`}
+                disabled={isGenerating}
+              >
+                <option value="fast">Fast</option>
+                <option value="balanced">Balanced</option>
+                <option value="quality">Quality</option>
+              </select>
+              <Button variant="primary" onClick={() => void handleRunGeneration()} disabled={selectedImages.length === 0 || isGenerating}>
+                Generar 3D
+              </Button>
+              <Button
+                variant="primary"
+                onClick={() => void handleRunGenerationSkp()}
+                disabled={selectedImages.length < 1 || selectedImages.length > 4 || isGenerating}
+              >
+                Generar SKP
+              </Button>
+              <Button variant="ghost" onClick={() => void handleCancelGeneration()} disabled={!isGenerating}>
+                Cancelar
+              </Button>
+              <span className="rounded-md border border-[var(--border)] bg-[var(--surface-2)] px-2.5 py-1.5 text-xs text-[var(--text-muted)]">
+                {generationDevice
+                  ? generationDevice.device === "cuda"
+                    ? `GPU: ${shortDeviceName(generationDevice.name)}`
+                    : "CPU"
+                  : "Detectando..."}
+              </span>
+              <Button variant="secondary" className="ml-auto" onClick={() => setIsAssistantOpen((current) => !current)}>
+                {isAssistantOpen ? "Ocultar asistente" : "Asistente"}
+              </Button>
+            </div>
+          </div>
+
+          <div className={`flex-1 min-h-0 min-w-0 overflow-hidden rounded-2xl ${panelClass}`}>
+            <ProjectViewport glbPath={project.model?.glbPath} glbVersion={project.model?.generatedAt} showUtilityButtons />
+          </div>
+
+          <div className={`shrink-0 overflow-hidden rounded-2xl ${panelClass}`}>
+            <button
+              type="button"
+              className="flex h-10 w-full items-center justify-between px-4 text-left text-xs font-medium uppercase tracking-[0.16em] text-[var(--text-muted)] transition-all duration-200 ease-out hover:bg-[var(--surface-2)]/80"
+              onClick={() => setIsNotesOpen((current) => !current)}
+            >
+              <span>{t("project.notes").toUpperCase()}</span>
+              <span>{isNotesOpen ? "OCULTAR" : "MOSTRAR"}</span>
+            </button>
+            {isNotesOpen ? (
+              <div className="h-40 p-3 pt-0">
+                <TextArea
+                  value={project.notes}
+                  onChange={(event) => updateNotes(project.id, event.target.value)}
+                  rows={7}
+                  className="h-full min-h-0 leading-relaxed"
+                  placeholder={t("project.notesPlaceholder")}
+                  label=""
+                />
+              </div>
+            ) : null}
+          </div>
+        </section>
+
+        {isAssistantOpen ? (
+          <aside className={`flex min-h-0 flex-col rounded-2xl p-4 ${panelClass}`}>
+            <h2 className="mb-3 text-[11px] font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">{t("project.assistant")}</h2>
+
+            <div className={`min-h-0 flex-1 space-y-3 overflow-y-auto rounded-xl p-3.5 ${panelSoftClass}`}>
+              {project.chatHistory.length === 0 ? <p className="text-sm leading-relaxed text-[var(--text-muted)]">{t("project.noMessages")}</p> : null}
+
+              {project.chatHistory.map((message) => {
+                const isAssistant = message.role === "assistant";
+
+                return (
+                  <article
+                    key={message.id}
+                    className={`rounded-xl border p-3 ${
+                      isAssistant
+                        ? "border-[var(--border)] bg-[var(--surface-1)] text-[var(--text)]"
+                        : "border-[var(--accent)] bg-[var(--surface-2)] text-[var(--text)]"
+                    }`}
+                  >
+                    <header className="mb-1.5 flex items-center justify-between text-[10px] uppercase tracking-[0.16em] text-[var(--text-muted)]">
+                      <span>{isAssistant ? t("project.assistantRole") : t("project.userRole")}</span>
+                      <time>{formatMessageTime(message.createdAt, language)}</time>
+                    </header>
+                    <p className="whitespace-pre-wrap text-sm leading-relaxed">{message.content}</p>
+                  </article>
+                );
+              })}
+              <div ref={historyBottomRef} />
+            </div>
+
+            <div className="mt-3 flex gap-2">
+              <TextField
+                value={chatInput}
+                onChange={(event) => setChatInput(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    submitChat();
+                  }
+                }}
+                placeholder={t("project.promptPlaceholder")}
+                aria-label={t("project.assistant")}
+              />
+              <Button variant="primary" className="min-w-24" onClick={submitChat}>
+                {t("project.send")}
+              </Button>
+            </div>
+          </aside>
+        ) : null}
       </div>
     </div>
   );
