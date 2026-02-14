@@ -18,6 +18,13 @@ print("VOLUMIA PYTHON PATH:", sys.executable)
 
 FURNITURE_CLASSES = ("table", "chair", "sofa", "cabinet", "desk")
 MAX_OBJECTS = 5
+MIN_COMPONENT_AREA_RATIO = 0.05
+PLANE_MIN_COVERAGE = 0.20
+FACE_TARGETS = {
+    "fast": (8000, 15000),
+    "balanced": (15000, 30000),
+    "high": (30000, 60000),
+}
 
 
 @dataclass
@@ -231,6 +238,27 @@ def _mask_from_bbox(shape: Tuple[int, int], bbox: Tuple[int, int, int, int]):
     return mask
 
 
+def _largest_connected_component(mask_crop):
+    import cv2
+
+    mask_uint8 = (mask_crop > 0).astype(np.uint8)
+    if int(np.count_nonzero(mask_uint8)) == 0:
+        return mask_uint8
+
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask_uint8, connectivity=8)
+    if num_labels <= 1:
+        return mask_uint8
+
+    areas = stats[1:, cv2.CC_STAT_AREA].astype(np.int64)
+    largest_area = int(areas.max()) if areas.size else 0
+    min_area = int(max(1, round(largest_area * MIN_COMPONENT_AREA_RATIO)))
+    candidate_labels = [label for label in range(1, num_labels) if int(stats[label, cv2.CC_STAT_AREA]) >= min_area]
+    if not candidate_labels:
+        return mask_uint8
+    dominant_label = max(candidate_labels, key=lambda label: int(stats[label, cv2.CC_STAT_AREA]))
+    return (labels == dominant_label).astype(np.uint8)
+
+
 def _run_ultralytics_segmentation(rgb, max_objects: int):
     import cv2
 
@@ -403,6 +431,195 @@ def _quality_profile(quality: str) -> Dict[str, float]:
     return {"step": 2.0, "max_side": 512.0, "smooth": 0.5, "depth_jump": 0.16}
 
 
+def _estimate_faces_for_step(height: int, width: int, step: int) -> int:
+    grid_h = int(np.ceil(max(height - 1, 1) / max(step, 1))) + 1
+    grid_w = int(np.ceil(max(width - 1, 1) / max(step, 1))) + 1
+    return max(0, (grid_h - 1) * (grid_w - 1) * 2)
+
+
+def _face_target_range(quality: str) -> Tuple[int, int]:
+    return FACE_TARGETS.get(quality, FACE_TARGETS["balanced"])
+
+
+def _compute_depth_jump(sampled_depth, valid_mask, fallback: float) -> float:
+    valid_depths = sampled_depth[valid_mask]
+    if valid_depths.size < 16:
+        return float(fallback)
+    p5, p95 = np.percentile(valid_depths.astype(np.float64), [5, 95])
+    dynamic_jump = float((p95 - p5) * 0.08)
+    if not np.isfinite(dynamic_jump) or dynamic_jump <= 0:
+        return float(fallback)
+    return float(np.clip(dynamic_jump, 0.005, 0.25))
+
+
+def _fit_dominant_plane(vertices, quality: str):
+    if vertices.shape[0] < 128:
+        return None
+
+    rng = np.random.default_rng(42)
+    z_values = vertices[:, 2]
+    z_span = float(np.percentile(z_values, 95) - np.percentile(z_values, 5))
+    if quality == "fast":
+        threshold = max(0.003, z_span * 0.015)
+        max_trials = 120
+    else:
+        threshold = max(0.002, z_span * 0.01)
+        max_trials = 80
+
+    best_inliers = None
+    best_count = 0
+    best_normal = None
+    best_d = 0.0
+
+    for _ in range(max_trials):
+        sample_idx = rng.choice(vertices.shape[0], size=3, replace=False)
+        p0, p1, p2 = vertices[sample_idx]
+        normal = np.cross(p1 - p0, p2 - p0)
+        norm = float(np.linalg.norm(normal))
+        if norm < 1e-9:
+            continue
+        normal = normal / norm
+        d = -float(np.dot(normal, p0))
+        distances = np.abs(vertices @ normal + d)
+        inliers = distances <= threshold
+        inlier_count = int(np.count_nonzero(inliers))
+        if inlier_count > best_count:
+            best_count = inlier_count
+            best_inliers = inliers
+            best_normal = normal
+            best_d = d
+
+    if best_inliers is None:
+        return None
+
+    coverage = float(best_count) / float(max(vertices.shape[0], 1))
+    if coverage < PLANE_MIN_COVERAGE:
+        return None
+    return best_normal, best_d, best_inliers, threshold, coverage
+
+
+def _planarize_vertices(vertices, faces, quality: str):
+    if quality == "high":
+        return vertices
+    if vertices.shape[0] < 128 or faces.shape[0] < 64:
+        return vertices
+
+    plane = _fit_dominant_plane(vertices, quality)
+    if plane is None:
+        return vertices
+
+    normal, d, inliers, threshold, coverage = plane
+    degree = np.zeros(vertices.shape[0], dtype=np.int32)
+    np.add.at(degree, faces.reshape(-1), 1)
+    boundary = degree < 6
+    inliers = inliers & (~boundary)
+    if int(np.count_nonzero(inliers)) < 64:
+        return vertices
+
+    distance = vertices @ normal + d
+    projected = vertices - distance[:, None] * normal[None, :]
+    strength = 0.95 if quality == "fast" else 0.55
+    output = vertices.copy()
+    output[inliers] = output[inliers] * (1.0 - strength) + projected[inliers] * strength
+    log(
+        f"[PLANAR] coverage={coverage:.2f} inliers={int(np.count_nonzero(inliers))} "
+        f"threshold={threshold:.5f} strength={strength:.2f}"
+    )
+    return output
+
+
+def _weld_vertices(vertices, faces, uvs, tolerance: float):
+    if vertices.shape[0] == 0 or faces.shape[0] == 0:
+        return vertices, faces, uvs
+
+    tol = max(float(tolerance), 1e-8)
+    quantized = np.round(vertices / tol).astype(np.int64)
+    _, inverse = np.unique(quantized, axis=0, return_inverse=True)
+    vertex_count = int(inverse.max()) + 1 if inverse.size else 0
+    if vertex_count <= 0:
+        return vertices, faces, uvs
+
+    accum_vertices = np.zeros((vertex_count, 3), dtype=np.float64)
+    counts = np.bincount(inverse, minlength=vertex_count).astype(np.float64)
+    np.add.at(accum_vertices, inverse, vertices)
+    welded_vertices = accum_vertices / np.clip(counts[:, None], 1.0, None)
+
+    welded_uvs = None
+    if uvs is not None and uvs.shape[0] == vertices.shape[0]:
+        accum_uv = np.zeros((vertex_count, 2), dtype=np.float64)
+        np.add.at(accum_uv, inverse, uvs)
+        welded_uvs = accum_uv / np.clip(counts[:, None], 1.0, None)
+
+    welded_faces = inverse[faces]
+    valid = (
+        (welded_faces[:, 0] != welded_faces[:, 1])
+        & (welded_faces[:, 1] != welded_faces[:, 2])
+        & (welded_faces[:, 0] != welded_faces[:, 2])
+    )
+    welded_faces = welded_faces[valid]
+    if welded_faces.shape[0] == 0:
+        return welded_vertices, welded_faces, welded_uvs
+
+    used = np.unique(welded_faces.reshape(-1))
+    remap = np.full(welded_vertices.shape[0], -1, dtype=np.int64)
+    remap[used] = np.arange(used.shape[0], dtype=np.int64)
+    welded_faces = remap[welded_faces]
+    welded_vertices = welded_vertices[used]
+    if welded_uvs is not None:
+        welded_uvs = welded_uvs[used]
+
+    return welded_vertices, welded_faces.astype(np.int64), welded_uvs
+
+
+def _keep_largest_mesh_component(vertices, faces, uvs):
+    if vertices.shape[0] == 0 or faces.shape[0] == 0:
+        return vertices, faces, uvs
+
+    vertex_count = vertices.shape[0]
+    parent = np.arange(vertex_count, dtype=np.int64)
+    rank = np.zeros(vertex_count, dtype=np.int8)
+
+    def find_root(index: int) -> int:
+        while parent[index] != index:
+            parent[index] = parent[parent[index]]
+            index = parent[index]
+        return int(index)
+
+    def union(a: int, b: int) -> None:
+        ra = find_root(a)
+        rb = find_root(b)
+        if ra == rb:
+            return
+        if rank[ra] < rank[rb]:
+            parent[ra] = rb
+        elif rank[ra] > rank[rb]:
+            parent[rb] = ra
+        else:
+            parent[rb] = ra
+            rank[ra] += 1
+
+    for tri in faces:
+        a, b, c = int(tri[0]), int(tri[1]), int(tri[2])
+        union(a, b)
+        union(b, c)
+
+    roots = np.fromiter((find_root(i) for i in range(vertex_count)), dtype=np.int64, count=vertex_count)
+    counts = np.bincount(roots, minlength=vertex_count)
+    largest_root = int(np.argmax(counts))
+    keep_faces = roots[faces[:, 0]] == largest_root
+    faces_kept = faces[keep_faces]
+    if faces_kept.shape[0] == 0:
+        return vertices, faces, uvs
+
+    used = np.unique(faces_kept.reshape(-1))
+    remap = np.full(vertex_count, -1, dtype=np.int64)
+    remap[used] = np.arange(used.shape[0], dtype=np.int64)
+    faces_kept = remap[faces_kept]
+    vertices_kept = vertices[used]
+    uvs_kept = uvs[used] if (uvs is not None and uvs.shape[0] == vertices.shape[0]) else uvs
+    return vertices_kept, faces_kept.astype(np.int64), uvs_kept
+
+
 def _resize_crop_triplet(depth_crop, rgb_crop, mask_crop, max_side: int):
     import cv2
 
@@ -437,6 +654,9 @@ def build_textured_grid_mesh(depth_crop, rgb_crop, mask_crop, bbox_full: Tuple[i
 
     profile = _quality_profile(quality)
     depth_proc = depth_crop.astype(np.float32)
+    if min(depth_proc.shape[:2]) >= 5:
+        depth_proc = cv2.medianBlur(depth_proc.astype(np.float32), 5)
+    depth_proc = cv2.bilateralFilter(depth_proc, 7, 50, 50)
     if profile["smooth"] > 0:
         depth_proc = cv2.GaussianBlur(depth_proc, (0, 0), sigmaX=profile["smooth"])
 
@@ -450,7 +670,11 @@ def build_textured_grid_mesh(depth_crop, rgb_crop, mask_crop, bbox_full: Tuple[i
     if h < 3 or w < 3:
         raise RuntimeError("crop too small")
 
+    _, target_max_faces = _face_target_range(quality)
     step = int(profile["step"])
+    while _estimate_faces_for_step(h, w, step) > target_max_faces and step < max(h, w):
+        step += 1
+
     ys = np.arange(0, h, step, dtype=np.int32)
     xs = np.arange(0, w, step, dtype=np.int32)
     if ys.size == 0 or ys[-1] != (h - 1):
@@ -462,11 +686,13 @@ def build_textured_grid_mesh(depth_crop, rgb_crop, mask_crop, bbox_full: Tuple[i
     vv = np.clip(vv, 0, h - 1)
     uu = np.clip(uu, 0, w - 1)
 
-    sampled_depth = depth_proc[vv, uu]
+    sampled_depth = depth_proc[vv, uu].astype(np.float32)
     sampled_mask = mask_proc[vv, uu] > 0
-    valid = sampled_mask & np.isfinite(sampled_depth)
+    valid_depth = np.isfinite(sampled_depth) & (sampled_depth > 1e-6)
+    valid = sampled_mask & valid_depth
     if int(np.count_nonzero(valid)) < 9:
         raise RuntimeError("not enough valid depth samples")
+    depth_jump = _compute_depth_jump(sampled_depth, valid, profile["depth_jump"])
 
     full_h, full_w = full_shape
     x1, y1, x2, y2 = bbox_full
@@ -475,61 +701,85 @@ def build_textured_grid_mesh(depth_crop, rgb_crop, mask_crop, bbox_full: Tuple[i
 
     global_u = x1 + (uu.astype(np.float64) / max(w - 1, 1)) * max(crop_w - 1, 1)
     global_v = y1 + (vv.astype(np.float64) / max(h - 1, 1)) * max(crop_h - 1, 1)
-    z = 0.3 + (1.0 - sampled_depth) * 2.2
+    z = np.where(valid_depth, sampled_depth, 0.0).astype(np.float64)
 
     focal = 0.9 * max(full_w, full_h)
     cx = full_w * 0.5
     cy = full_h * 0.5
-    x = (global_u - cx) / focal * z
-    y = -(global_v - cy) / focal * z
+    x = (global_u - cx) * z / max(focal, 1e-6)
+    y = -(global_v - cy) * z / max(focal, 1e-6)
 
-    index_map = np.full(valid.shape, -1, dtype=np.int64)
-    index_map[valid] = np.arange(int(np.count_nonzero(valid)), dtype=np.int64)
-    vertices = np.stack([x[valid], y[valid], z[valid]], axis=-1).astype(np.float64)
+    grid_h, grid_w = sampled_depth.shape
+    vertices = np.stack([x, y, z], axis=-1).reshape(-1, 3).astype(np.float64)
     uvs = np.stack(
         [
-            uu[valid].astype(np.float64) / max(w - 1, 1),
-            1.0 - (vv[valid].astype(np.float64) / max(h - 1, 1)),
+            (uu.astype(np.float64) / max(w - 1, 1)),
+            (1.0 - (vv.astype(np.float64) / max(h - 1, 1))),
         ],
         axis=-1,
-    )
+    ).reshape(-1, 2)
 
     faces: List[List[int]] = []
-    rows, cols = index_map.shape
-    for row in range(rows - 1):
-        for col in range(cols - 1):
-            a = int(index_map[row, col])
-            b = int(index_map[row, col + 1])
-            c = int(index_map[row + 1, col])
-            d = int(index_map[row + 1, col + 1])
-            if a < 0 or b < 0 or c < 0 or d < 0:
+    for row in range(grid_h - 1):
+        for col in range(grid_w - 1):
+            if not (valid[row, col] and valid[row, col + 1] and valid[row + 1, col] and valid[row + 1, col + 1]):
                 continue
 
-            cell_depth = (
-                sampled_depth[row, col],
-                sampled_depth[row, col + 1],
-                sampled_depth[row + 1, col],
-                sampled_depth[row + 1, col + 1],
-            )
-            if float(max(cell_depth) - min(cell_depth)) > profile["depth_jump"]:
+            d00 = float(sampled_depth[row, col])
+            d01 = float(sampled_depth[row, col + 1])
+            d10 = float(sampled_depth[row + 1, col])
+            d11 = float(sampled_depth[row + 1, col + 1])
+            if (
+                abs(d00 - d01) > depth_jump
+                or abs(d00 - d10) > depth_jump
+                or abs(d11 - d01) > depth_jump
+                or abs(d11 - d10) > depth_jump
+            ):
                 continue
 
-            faces.append([a, c, b])
-            faces.append([b, c, d])
+            v0 = row * grid_w + col
+            v1 = v0 + 1
+            v2 = v0 + grid_w
+            v3 = v2 + 1
+            faces.append([v0, v1, v2])
+            faces.append([v1, v3, v2])
 
-    if len(faces) < 4:
+    faces_np = np.asarray(faces, dtype=np.int64)
+    if faces_np.shape[0] < 4:
         raise RuntimeError("insufficient faces after filtering")
 
-    texture_image = Image.fromarray(rgb_proc.astype(np.uint8), mode="RGB")
-    material = trimesh.visual.material.SimpleMaterial(image=texture_image)
-    visual = trimesh.visual.texture.TextureVisuals(uv=uvs, image=texture_image, material=material)
+    vertices = _planarize_vertices(vertices, faces_np, quality)
+
+    vertices_before = int(vertices.shape[0])
+    faces_before = int(faces_np.shape[0])
+    weld_tolerance = {"fast": 0.0012, "balanced": 0.0010, "high": 0.0008}[quality]
+    vertices, faces_np, uvs = _weld_vertices(vertices, faces_np, uvs, tolerance=weld_tolerance)
+    vertices, faces_np, uvs = _keep_largest_mesh_component(vertices, faces_np, uvs)
+    log(f"[CLEAN] vertices_before={vertices_before} faces_before={faces_before}")
+    log(f"[CLEAN] vertices_after={int(vertices.shape[0])} faces_after={int(faces_np.shape[0])}")
+
+    if faces_np.shape[0] < 4:
+        raise RuntimeError("insufficient faces after cleanup")
+
+    visual = None
+    try:
+        texture_image = Image.fromarray(rgb_proc.astype(np.uint8), mode="RGB")
+        material = trimesh.visual.material.SimpleMaterial(image=texture_image)
+        visual = trimesh.visual.texture.TextureVisuals(uv=uvs, image=texture_image, material=material)
+    except Exception as texture_error:
+        log(f"[TEXTURE] warning: fallback to no-texture material: {texture_error}")
+
     mesh = trimesh.Trimesh(
         vertices=vertices,
-        faces=np.asarray(faces, dtype=np.int64),
+        faces=faces_np,
         visual=visual,
         process=False,
     )
+    if visual is None:
+        fallback_color = np.tile(np.array([190, 190, 190, 255], dtype=np.uint8), (len(mesh.vertices), 1))
+        mesh.visual.vertex_colors = fallback_color
     mesh.remove_unreferenced_vertices()
+    _ = mesh.vertex_normals
     return mesh
 
 
@@ -554,6 +804,7 @@ def build_multi_object_textured_scene(rgb, depth, objects: Sequence[ObjectCandid
         rgb_crop = rgb[y1p:y2p, x1p:x2p]
         depth_crop = depth[y1p:y2p, x1p:x2p]
         mask_crop = obj.mask[y1p:y2p, x1p:x2p]
+        mask_crop = _largest_connected_component(mask_crop)
         print(
             f"[OBJECT {index:03d}] rgb_crop={rgb_crop.shape} depth_crop={depth_crop.shape} mask_crop={mask_crop.shape}",
             flush=True,
@@ -635,6 +886,14 @@ def export_scene_with_metadata(scene, out_path: str, metadata_objects: Sequence[
     if len(scene.geometry) == 0:
         raise RuntimeError("No mesh primitives to export")
 
+    total_vertices = 0
+    total_faces = 0
+    for geometry in scene.geometry.values():
+        if hasattr(geometry, "vertices"):
+            total_vertices += int(len(geometry.vertices))
+        if hasattr(geometry, "faces"):
+            total_faces += int(len(geometry.faces))
+
     scene.export(out_path, file_type="glb")
     glb_size = os.path.getsize(out_path) if os.path.exists(out_path) else 0
     metadata_path = os.path.join(os.path.dirname(out_path), "latest.json")
@@ -652,7 +911,9 @@ def export_scene_with_metadata(scene, out_path: str, metadata_objects: Sequence[
     with open(metadata_path, "w", encoding="utf-8") as handle:
         json.dump(metadata_payload, handle, ensure_ascii=False, indent=2)
 
-    return glb_size, metadata_path, int(total_triangles)
+    glb_kb = float(glb_size) / 1024.0
+    log(f"[EXPORT] vertices={total_vertices} faces={total_faces} glb_size={glb_kb:.1f}KB")
+    return glb_size, metadata_path, int(total_triangles), total_vertices, total_faces
 
 
 def region_mean_color(rgb, x1: int, y1: int, x2: int, y2: int):
@@ -1276,7 +1537,7 @@ def main() -> int:
         )
 
         emit_progress("export", 92, "Exportando GLB")
-        glb_size, metadata_path, total_triangles = export_scene_with_metadata(
+        glb_size, metadata_path, total_triangles, total_vertices, total_faces = export_scene_with_metadata(
             scene=scene,
             out_path=out_path,
             metadata_objects=metadata_objects,
@@ -1284,6 +1545,8 @@ def main() -> int:
         )
         object_count = len(metadata_objects)
         log(f"[EXPORT] objects={object_count} triangles={total_triangles} glb_bytes={glb_size} out={out_path}")
+        log(f"[EXPORT] vertices={total_vertices} faces={total_faces} glb_size={glb_size / 1024.0:.1f}KB")
+        log(f"[EXPORT] glb_kb={glb_size / 1024.0:.1f} out={out_path} device={runtime_device}")
         log(f"[EXPORT] metadata={metadata_path}")
         log(f"OUT_SIZE_BYTES={glb_size}")
 
@@ -1291,7 +1554,8 @@ def main() -> int:
             log_error(f"GLB not created: {out_path}")
             return 1
 
-        if glb_size < 1024:
+        min_glb_size = 120 * 1024 if args.quality == "fast" else 200 * 1024
+        if glb_size < min_glb_size:
             log_error(f"GLB too small ({glb_size} bytes): {out_path}")
             return 1
 
