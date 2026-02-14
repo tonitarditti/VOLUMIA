@@ -7,7 +7,8 @@ import {
   useState,
   type PropsWithChildren,
 } from "react";
-import { desktopApi } from "@/electron/desktopApi";
+import { desktopApi, hasDesktopBridge } from "@/electron/desktopApi";
+import { resolveLanguage, resolveTheme, sanitizeTimeTheme } from "./resolvers";
 import {
   DEFAULT_SETTINGS,
   defaultsForPreset,
@@ -16,44 +17,143 @@ import {
   sanitizeAppSettings,
   saveAppSettings,
 } from "./storage";
-import type { AppSettings, Language, PerformancePreset, Theme, WindowMode } from "./types";
+import type {
+  AppSettings,
+  Language,
+  LanguageMode,
+  PerformancePreset,
+  Theme,
+  ThemeMode,
+  TimeTheme,
+  WindowMode,
+} from "./types";
 
 type SettingsContextValue = {
   settings: AppSettings;
+  resolvedLanguage: Language;
+  resolvedTheme: Theme;
+  systemLocale: string;
+  systemTheme: Theme;
+  setLanguageMode: (languageMode: LanguageMode) => void;
   setLanguage: (language: Language) => void;
+  setThemeMode: (themeMode: ThemeMode) => void;
   setTheme: (theme: Theme) => void;
+  setTimeTheme: (timeTheme: Partial<TimeTheme>) => void;
   setWindowMode: (windowMode: WindowMode) => void;
   setRememberWindowBounds: (rememberWindowBounds: boolean) => void;
   setPerformancePreset: (performancePreset: PerformancePreset) => void;
   setFpsLimit: (fpsLimit: AppSettings["fpsLimit"]) => void;
   setAntialias: (antialias: boolean) => void;
   setReduceMotion: (reduceMotion: boolean) => void;
+  resetToRecommended: () => void;
   applyImportedSettings: (settings: AppSettings) => void;
   resetSettings: () => void;
 };
 
 const SettingsContext = createContext<SettingsContextValue | null>(null);
 
+function detectBrowserTheme(): Theme {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+    return "dark";
+  }
+
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+function detectBrowserLocale() {
+  if (typeof navigator === "undefined" || typeof navigator.language !== "string") {
+    return "en-US";
+  }
+
+  return navigator.language;
+}
+
 export function SettingsProvider({ children }: PropsWithChildren) {
   const [settings, setSettings] = useState<AppSettings>(() => loadAppSettings());
+  const [systemLocale, setSystemLocale] = useState<string>(() => detectBrowserLocale());
+  const [systemTheme, setSystemTheme] = useState<Theme>(() => detectBrowserTheme());
+  const [clock, setClock] = useState<number>(() => Date.now());
 
   const updateSettings = useCallback((patch: Partial<AppSettings>) => {
     setSettings((previous) => sanitizeAppSettings({ ...previous, ...patch }, DEFAULT_SETTINGS));
   }, []);
+
+  const resolvedLanguage = useMemo(() => resolveLanguage(settings, systemLocale), [settings, systemLocale]);
+
+  const resolvedTheme = useMemo(() => {
+    return resolveTheme(settings, systemTheme, new Date(clock));
+  }, [clock, settings, systemTheme]);
 
   useEffect(() => {
     saveAppSettings(settings);
   }, [settings]);
 
   useEffect(() => {
-    document.documentElement.dataset.theme = settings.theme;
-  }, [settings.theme]);
+    document.documentElement.dataset.theme = resolvedTheme;
+    document.documentElement.style.colorScheme = resolvedTheme;
+  }, [resolvedTheme]);
 
   useEffect(() => {
     document.documentElement.classList.toggle("reduce-motion", settings.reduceMotion);
   }, [settings.reduceMotion]);
 
   useEffect(() => {
+    if (!hasDesktopBridge()) {
+      setSystemLocale(detectBrowserLocale());
+      setSystemTheme(detectBrowserTheme());
+      return;
+    }
+
+    let active = true;
+
+    void desktopApi
+      .getSystemLocale()
+      .then((locale) => {
+        if (active && locale) {
+          setSystemLocale(locale);
+        }
+      })
+      .catch(() => undefined);
+
+    void desktopApi
+      .getSystemTheme()
+      .then((theme) => {
+        if (active) {
+          setSystemTheme(theme);
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!hasDesktopBridge() || settings.themeMode !== "system") {
+      return;
+    }
+
+    return desktopApi.onSystemThemeChanged((theme) => {
+      setSystemTheme(theme);
+    });
+  }, [settings.themeMode]);
+
+  useEffect(() => {
+    if (settings.themeMode !== "time") {
+      return;
+    }
+
+    setClock(Date.now());
+    const interval = window.setInterval(() => setClock(Date.now()), 60_000);
+    return () => window.clearInterval(interval);
+  }, [settings.themeMode, settings.timeTheme.darkFrom, settings.timeTheme.lightFrom]);
+
+  useEffect(() => {
+    if (!hasDesktopBridge()) {
+      return;
+    }
+
     let active = true;
 
     void desktopApi
@@ -80,18 +180,43 @@ export function SettingsProvider({ children }: PropsWithChildren) {
   }, []);
 
   useEffect(() => {
+    if (!hasDesktopBridge()) {
+      return;
+    }
+
     void desktopApi.setWindowMode(settings.windowMode).catch(() => undefined);
   }, [settings.windowMode]);
 
   useEffect(() => {
+    if (!hasDesktopBridge()) {
+      return;
+    }
+
     void desktopApi.setWindowBoundsRemember(settings.rememberWindowBounds).catch(() => undefined);
   }, [settings.rememberWindowBounds]);
 
   const value = useMemo<SettingsContextValue>(() => {
     return {
       settings,
-      setLanguage: (language) => updateSettings({ language }),
-      setTheme: (theme) => updateSettings({ theme }),
+      resolvedLanguage,
+      resolvedTheme,
+      systemLocale,
+      systemTheme,
+      setLanguageMode: (languageMode) => updateSettings({ languageMode }),
+      setLanguage: (language) => updateSettings({ languageMode: "manual", language }),
+      setThemeMode: (themeMode) => updateSettings({ themeMode }),
+      setTheme: (theme) => updateSettings({ themeMode: "manual", theme }),
+      setTimeTheme: (timeTheme) => {
+        setSettings((previous) =>
+          sanitizeAppSettings(
+            {
+              ...previous,
+              timeTheme: sanitizeTimeTheme({ ...previous.timeTheme, ...timeTheme }, previous.timeTheme),
+            },
+            DEFAULT_SETTINGS
+          )
+        );
+      },
       setWindowMode: (windowMode) => updateSettings({ windowMode }),
       setRememberWindowBounds: (rememberWindowBounds) => updateSettings({ rememberWindowBounds }),
       setPerformancePreset: (performancePreset) => {
@@ -123,14 +248,17 @@ export function SettingsProvider({ children }: PropsWithChildren) {
         );
       },
       setReduceMotion: (reduceMotion) => updateSettings({ reduceMotion }),
+      resetToRecommended: () => {
+        updateSettings({ languageMode: "system", themeMode: "system" });
+      },
       applyImportedSettings: (incomingSettings) => {
         setSettings(sanitizeAppSettings(incomingSettings, DEFAULT_SETTINGS));
       },
       resetSettings: () => {
-        setSettings({ ...DEFAULT_SETTINGS });
+        setSettings({ ...DEFAULT_SETTINGS, timeTheme: { ...DEFAULT_SETTINGS.timeTheme } });
       },
     };
-  }, [settings, updateSettings]);
+  }, [resolvedLanguage, resolvedTheme, settings, systemLocale, systemTheme, updateSettings]);
 
   return <SettingsContext.Provider value={value}>{children}</SettingsContext.Provider>;
 }

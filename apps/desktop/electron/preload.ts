@@ -8,9 +8,13 @@ import {
   type ProjectsExportEnvelope,
   type RememberWindowBoundsPayload,
   type SettingsExportEnvelope,
+  type Theme,
   type WindowModePayload,
+  type SystemThemeChangedPayload,
   type WindowStateSnapshot,
 } from "./channels";
+
+const systemThemeListeners = new Map<(theme: Theme) => void, (_event: Electron.IpcRendererEvent, payload: SystemThemeChangedPayload) => void>();
 
 const bridge = {
   exportJson: (payload: ProjectsExportEnvelope) =>
@@ -32,6 +36,24 @@ const bridge = {
       ipcRenderer.invoke(IPC_CHANNELS.setWindowBoundsRemember, payload) as Promise<WindowStateSnapshot>,
     getState: () => ipcRenderer.invoke(IPC_CHANNELS.getWindowState) as Promise<WindowStateSnapshot>,
     resetLayout: () => ipcRenderer.invoke(IPC_CHANNELS.resetWindowLayout) as Promise<WindowStateSnapshot>,
+  },
+  system: {
+    getLocale: () => ipcRenderer.invoke(IPC_CHANNELS.getSystemLocale) as Promise<string>,
+    getTheme: () => ipcRenderer.invoke(IPC_CHANNELS.getSystemTheme) as Promise<Theme>,
+    onThemeChanged: (callback: (theme: Theme) => void) => {
+      const wrapped = (_event: Electron.IpcRendererEvent, payload: SystemThemeChangedPayload) => {
+        callback(payload.theme);
+      };
+
+      systemThemeListeners.set(callback, wrapped);
+      ipcRenderer.on(IPC_CHANNELS.systemThemeChanged, wrapped);
+    },
+    offThemeChanged: (callback: (theme: Theme) => void) => {
+      const wrapped = systemThemeListeners.get(callback);
+      if (!wrapped) return;
+      ipcRenderer.off(IPC_CHANNELS.systemThemeChanged, wrapped);
+      systemThemeListeners.delete(callback);
+    },
   },
   // Backward compatibility for existing renderer wrappers.
   exportProjectsJson: (payload: ProjectsExportEnvelope) =>

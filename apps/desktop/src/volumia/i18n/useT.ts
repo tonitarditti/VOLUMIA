@@ -13,11 +13,11 @@ function interpolate(template: string, params?: TranslateParams) {
 }
 
 export function useT() {
-  const { settings } = useSettings();
+  const { resolvedLanguage } = useSettings();
 
   const dictionary = useMemo(() => {
-    return dictionaries[settings.language] ?? dictionaries[fallbackLanguage];
-  }, [settings.language]);
+    return dictionaries[resolvedLanguage] ?? dictionaries[fallbackLanguage];
+  }, [resolvedLanguage]);
 
   const fallbackDictionary = dictionaries[fallbackLanguage];
 
@@ -26,5 +26,5 @@ export function useT() {
     return interpolate(template, params);
   };
 
-  return { t, language: settings.language };
+  return { t, language: resolvedLanguage };
 }

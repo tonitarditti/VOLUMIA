@@ -1,11 +1,26 @@
-import type { AppSettings, Language, PerformancePreset, Theme, WindowMode } from "./types";
+import {
+  DEFAULT_TIME_THEME,
+  sanitizeTimeTheme,
+} from "./resolvers";
+import type {
+  AppSettings,
+  Language,
+  LanguageMode,
+  PerformancePreset,
+  Theme,
+  ThemeMode,
+  WindowMode,
+} from "./types";
 
 export const SETTINGS_STORAGE_KEY = "volumia.settings.v1";
 
 export const DEFAULT_SETTINGS: AppSettings = {
+  languageMode: "system",
   language: "es",
+  themeMode: "system",
   theme: "dark",
-  windowMode: "remember",
+  timeTheme: { ...DEFAULT_TIME_THEME },
+  windowMode: "windowed",
   rememberWindowBounds: true,
   performancePreset: "balanced",
   fpsLimit: 60,
@@ -25,9 +40,11 @@ type SettingsStorageEnvelope = {
   settings: AppSettings;
 };
 
+const LANGUAGE_MODE_SET = new Set<LanguageMode>(["system", "manual"]);
 const LANGUAGE_SET = new Set<Language>(["es", "en", "pt"]);
+const THEME_MODE_SET = new Set<ThemeMode>(["system", "time", "manual"]);
 const THEME_SET = new Set<Theme>(["light", "dark"]);
-const WINDOW_MODE_SET = new Set<WindowMode>(["remember", "maximized", "fullscreen"]);
+const WINDOW_MODE_SET = new Set<WindowMode>(["windowed", "maximized", "fullscreen"]);
 const PRESET_SET = new Set<PerformancePreset>(["quality", "balanced", "performance"]);
 const FPS_SET = new Set<AppSettings["fpsLimit"]>([30, 60, 120]);
 
@@ -35,8 +52,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
+function isLanguageMode(value: unknown): value is LanguageMode {
+  return typeof value === "string" && LANGUAGE_MODE_SET.has(value as LanguageMode);
+}
+
 function isLanguage(value: unknown): value is Language {
   return typeof value === "string" && LANGUAGE_SET.has(value as Language);
+}
+
+function isThemeMode(value: unknown): value is ThemeMode {
+  return typeof value === "string" && THEME_MODE_SET.has(value as ThemeMode);
 }
 
 function isTheme(value: unknown): value is Theme {
@@ -48,12 +73,8 @@ function migrateLegacyTheme(value: unknown): Theme | null {
     return value;
   }
 
-  if (value === "volumia_warm") {
+  if (value === "volumia_warm" || value === "volumia_mono") {
     return "dark";
-  }
-
-  if (value === "volumia_mono") {
-    return "light";
   }
 
   return null;
@@ -63,12 +84,24 @@ function isWindowMode(value: unknown): value is WindowMode {
   return typeof value === "string" && WINDOW_MODE_SET.has(value as WindowMode);
 }
 
+function migrateLegacyWindowMode(value: unknown): WindowMode | null {
+  if (value === "remember") {
+    return "windowed";
+  }
+
+  return isWindowMode(value) ? value : null;
+}
+
 function isPerformancePreset(value: unknown): value is PerformancePreset {
   return typeof value === "string" && PRESET_SET.has(value as PerformancePreset);
 }
 
 function isFpsLimit(value: unknown): value is AppSettings["fpsLimit"] {
   return typeof value === "number" && FPS_SET.has(value as AppSettings["fpsLimit"]);
+}
+
+function hasOwnKey(record: Record<string, unknown>, key: string) {
+  return Object.prototype.hasOwnProperty.call(record, key);
 }
 
 function getStorage() {
@@ -83,15 +116,28 @@ function getStorage() {
 
 export function sanitizeAppSettings(value: unknown, fallback: AppSettings = DEFAULT_SETTINGS): AppSettings {
   if (!isRecord(value)) {
-    return { ...fallback };
+    return { ...fallback, timeTheme: { ...fallback.timeTheme } };
   }
 
+  const hasLegacyLanguage = hasOwnKey(value, "language");
+  const hasLegacyTheme = hasOwnKey(value, "theme");
   const migratedTheme = migrateLegacyTheme(value.theme);
 
   return {
+    languageMode: isLanguageMode(value.languageMode)
+      ? value.languageMode
+      : hasLegacyLanguage
+        ? "manual"
+        : fallback.languageMode,
     language: isLanguage(value.language) ? value.language : fallback.language,
+    themeMode: isThemeMode(value.themeMode)
+      ? value.themeMode
+      : hasLegacyTheme
+        ? "manual"
+        : fallback.themeMode,
     theme: migratedTheme ?? (isTheme(value.theme) ? value.theme : fallback.theme),
-    windowMode: isWindowMode(value.windowMode) ? value.windowMode : fallback.windowMode,
+    timeTheme: sanitizeTimeTheme(value.timeTheme, fallback.timeTheme),
+    windowMode: migrateLegacyWindowMode(value.windowMode) ?? fallback.windowMode,
     rememberWindowBounds:
       typeof value.rememberWindowBounds === "boolean"
         ? value.rememberWindowBounds
@@ -107,19 +153,19 @@ export function sanitizeAppSettings(value: unknown, fallback: AppSettings = DEFA
 
 export function loadAppSettings(): AppSettings {
   const storage = getStorage();
-  if (!storage) return { ...DEFAULT_SETTINGS };
+  if (!storage) return { ...DEFAULT_SETTINGS, timeTheme: { ...DEFAULT_SETTINGS.timeTheme } };
 
   const raw = storage.getItem(SETTINGS_STORAGE_KEY);
-  if (!raw) return { ...DEFAULT_SETTINGS };
+  if (!raw) return { ...DEFAULT_SETTINGS, timeTheme: { ...DEFAULT_SETTINGS.timeTheme } };
 
   try {
     const parsed = JSON.parse(raw) as Partial<SettingsStorageEnvelope>;
     if (!isRecord(parsed) || parsed.schemaVersion !== 1) {
-      return { ...DEFAULT_SETTINGS };
+      return { ...DEFAULT_SETTINGS, timeTheme: { ...DEFAULT_SETTINGS.timeTheme } };
     }
     return sanitizeAppSettings(parsed.settings, DEFAULT_SETTINGS);
   } catch {
-    return { ...DEFAULT_SETTINGS };
+    return { ...DEFAULT_SETTINGS, timeTheme: { ...DEFAULT_SETTINGS.timeTheme } };
   }
 }
 

@@ -10,16 +10,29 @@ export const IPC_CHANNELS = {
   setWindowBoundsRemember: "window:set-bounds-remember",
   getWindowState: "window:get-state",
   resetWindowLayout: "window:reset-layout",
+  getSystemLocale: "system:get-locale",
+  getSystemTheme: "system:get-theme",
+  systemThemeChanged: "system:theme-changed",
 } as const;
 
+export type LanguageMode = "system" | "manual";
 export type Language = "es" | "en" | "pt";
+export type ThemeMode = "system" | "time" | "manual";
 export type Theme = "light" | "dark";
-export type WindowMode = "remember" | "maximized" | "fullscreen";
+export type WindowMode = "windowed" | "maximized" | "fullscreen";
 export type PerformancePreset = "quality" | "balanced" | "performance";
 
+export type TimeTheme = {
+  lightFrom: string;
+  darkFrom: string;
+};
+
 export interface AppSettingsSnapshot {
+  languageMode: LanguageMode;
   language: Language;
+  themeMode: ThemeMode;
   theme: Theme;
+  timeTheme: TimeTheme;
   windowMode: WindowMode;
   rememberWindowBounds: boolean;
   performancePreset: PerformancePreset;
@@ -110,4 +123,8 @@ export type WindowStateSnapshot = {
   isFullScreen: boolean;
   mode: WindowMode;
   rememberWindowBounds: boolean;
+};
+
+export type SystemThemeChangedPayload = {
+  theme: Theme;
 };

@@ -6,6 +6,7 @@ import {
   type ProjectsExportEnvelope,
   type RememberWindowBoundsPayload,
   type SettingsExportEnvelope,
+  type Theme,
   type WindowModePayload,
   type WindowStateSnapshot,
 } from "./channels";
@@ -23,6 +24,13 @@ export type VolumiaSettingsWindowBridge = {
   resetLayout: () => Promise<WindowStateSnapshot>;
 };
 
+export type VolumiaSystemBridge = {
+  getLocale: () => Promise<string>;
+  getTheme: () => Promise<Theme>;
+  onThemeChanged: (callback: (theme: Theme) => void) => void;
+  offThemeChanged: (callback: (theme: Theme) => void) => void;
+};
+
 export type VolumiaDesktopBridge = {
   exportJson: (payload: ProjectsExportEnvelope) => Promise<ExportProjectsResult>;
   importJson: () => Promise<ImportProjectsResult>;
@@ -30,7 +38,12 @@ export type VolumiaDesktopBridge = {
   importSettingsJson?: () => Promise<ImportSettingsResult>;
   windowControls?: Partial<VolumiaWindowControls>;
   settingsWindow?: Partial<VolumiaSettingsWindowBridge>;
+  system?: Partial<VolumiaSystemBridge>;
 };
+
+export function hasDesktopBridge() {
+  return typeof window !== "undefined" && Boolean(window.volumia);
+}
 
 function ensureBridge(): VolumiaDesktopBridge {
   const bridge = window.volumia;
@@ -74,6 +87,15 @@ function ensureSettingsImport() {
   return fn;
 }
 
+function ensureSystemBridge(): VolumiaSystemBridge {
+  const system = ensureBridge().system;
+  if (!system?.getLocale || !system.getTheme || !system.onThemeChanged || !system.offThemeChanged) {
+    throw new Error("Desktop system bridge is unavailable.");
+  }
+
+  return system as VolumiaSystemBridge;
+}
+
 export const desktopApi = {
   exportProjectsJson(payload: ProjectsExportEnvelope): Promise<ExportProjectsResult> {
     return ensureBridge().exportJson(payload);
@@ -107,6 +129,20 @@ export const desktopApi = {
   },
   resetWindowLayout(): Promise<WindowStateSnapshot> {
     return ensureSettingsWindow().resetLayout();
+  },
+  getSystemLocale(): Promise<string> {
+    return ensureSystemBridge().getLocale();
+  },
+  getSystemTheme(): Promise<Theme> {
+    return ensureSystemBridge().getTheme();
+  },
+  onSystemThemeChanged(callback: (theme: Theme) => void): () => void {
+    const system = ensureSystemBridge();
+    system.onThemeChanged(callback);
+
+    return () => {
+      system.offThemeChanged(callback);
+    };
   },
 };
 

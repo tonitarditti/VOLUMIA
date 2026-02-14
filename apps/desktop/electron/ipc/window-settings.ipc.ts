@@ -7,7 +7,12 @@ type WindowGetter = () => BrowserWindow | null;
 
 export function registerWindowSettingsHandlers(getWindow: WindowGetter, windowState: WindowStateController) {
   ipcMain.handle(IPC_CHANNELS.setWindowMode, (_event, payload: WindowModePayload) => {
-    if (!payload || (payload.mode !== "remember" && payload.mode !== "maximized" && payload.mode !== "fullscreen")) {
+    if (
+      !payload ||
+      (payload.mode !== "windowed" &&
+        payload.mode !== "maximized" &&
+        payload.mode !== "fullscreen")
+    ) {
       return windowState.getState(getWindow());
     }
     return windowState.setMode(payload.mode, getWindow());

@@ -3,6 +3,7 @@ import { existsSync } from "fs";
 import path from "path";
 import { registerProjectsFileHandlers } from "./ipc/projects-file.ipc";
 import { registerSettingsFileHandlers } from "./ipc/settings-file.ipc";
+import { registerSystemPreferencesHandlers } from "./ipc/system-preferences.ipc";
 import { registerWindowControlHandlers } from "./ipc/window-controls.ipc";
 import { registerWindowSettingsHandlers } from "./ipc/window-settings.ipc";
 import { createWindowStateController } from "./window-state";
@@ -12,6 +13,7 @@ const devServerUrl = process.env.VITE_DEV_SERVER_URL ?? "http://127.0.0.1:5173";
 
 let mainWindow: BrowserWindow | null = null;
 let windowStateController: ReturnType<typeof createWindowStateController> | null = null;
+let disposeSystemPreferencesHandlers: (() => void) | null = null;
 
 function createMainWindow() {
   if (!windowStateController) {
@@ -28,6 +30,7 @@ function createMainWindow() {
     height: launchBounds.height,
     x: launchBounds.x,
     y: launchBounds.y,
+    show: false,
     minWidth: 1180,
     minHeight: 760,
     frame: false,
@@ -43,6 +46,11 @@ function createMainWindow() {
 
   windowStateController.attachTracking(windowInstance);
   windowStateController.applyLaunchMode(windowInstance);
+  windowInstance.once("ready-to-show", () => {
+    if (!windowInstance.isDestroyed()) {
+      windowInstance.show();
+    }
+  });
 
   if (isDev) {
     void windowInstance.loadURL(devServerUrl);
@@ -70,6 +78,7 @@ app.whenReady().then(() => {
   registerSettingsFileHandlers();
   registerWindowControlHandlers(() => mainWindow);
   registerWindowSettingsHandlers(() => mainWindow, windowStateController);
+  disposeSystemPreferencesHandlers = registerSystemPreferencesHandlers(() => mainWindow);
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -81,5 +90,12 @@ app.whenReady().then(() => {
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
     app.quit();
+  }
+});
+
+app.on("will-quit", () => {
+  if (disposeSystemPreferencesHandlers) {
+    disposeSystemPreferencesHandlers();
+    disposeSystemPreferencesHandlers = null;
   }
 });

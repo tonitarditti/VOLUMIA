@@ -1,4 +1,4 @@
-import { Button, Card, Select, Toggle } from "@/ui/primitives";
+import { Button, Card, Select, TextField, Toggle } from "@/ui/primitives";
 import { useT } from "@/volumia/i18n/useT";
 import { useSettings } from "@/volumia/settings/context";
 import type { AppSettings } from "@/volumia/settings/types";
@@ -25,17 +25,36 @@ export function SettingsPage({
   const { t } = useT();
   const {
     settings,
+    resolvedLanguage,
+    resolvedTheme,
+    systemLocale,
+    systemTheme,
+    setLanguageMode,
     setLanguage,
+    setThemeMode,
     setTheme,
+    setTimeTheme,
     setReduceMotion,
     setWindowMode,
     setRememberWindowBounds,
     setPerformancePreset,
     setFpsLimit,
     setAntialias,
+    resetToRecommended,
   } = useSettings();
 
   const fpsOptions: AppSettings["fpsLimit"][] = [30, 60, 120];
+
+  const languageLabels: Record<AppSettings["language"], string> = {
+    es: t("settings.option.language.es"),
+    en: t("settings.option.language.en"),
+    pt: t("settings.option.language.pt"),
+  };
+
+  const themeLabels: Record<AppSettings["theme"], string> = {
+    light: t("settings.option.theme.light"),
+    dark: t("settings.option.theme.dark"),
+  };
 
   const handleResetAll = async () => {
     const confirmed = window.confirm(t("settings.resetAllConfirm"));
@@ -50,31 +69,108 @@ export function SettingsPage({
         <h1 className="mt-1 text-xl font-semibold tracking-[0.03em] text-[var(--text)]">{t("settings.title")}</h1>
         <h2 className="mt-4 text-sm font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">{t("settings.general")}</h2>
 
-        <div className="mt-3 space-y-3">
-          <Select
-            label={t("settings.language")}
-            value={settings.language}
-            onChange={(event) => setLanguage(event.target.value as AppSettings["language"])}
-          >
-            <option value="es">{t("settings.option.language.es")}</option>
-            <option value="en">{t("settings.option.language.en")}</option>
-            <option value="pt">{t("settings.option.language.pt")}</option>
-          </Select>
+        <div className="mt-3 space-y-4">
+          <div className="space-y-2">
+            <p className="text-xs uppercase tracking-[0.14em] text-[var(--text-muted)]">{t("settings.language")}</p>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <Button
+                variant={settings.languageMode === "system" ? "primary" : "secondary"}
+                onClick={() => setLanguageMode("system")}
+              >
+                {t("settings.language.mode.system")}
+              </Button>
+              <Button
+                variant={settings.languageMode === "manual" ? "primary" : "secondary"}
+                onClick={() => setLanguageMode("manual")}
+              >
+                {t("settings.language.mode.manual")}
+              </Button>
+            </div>
 
-          <Select
-            label={t("settings.theme")}
-            value={settings.theme}
-            onChange={(event) => setTheme(event.target.value as AppSettings["theme"])}
-          >
-            <option value="light">Claro</option>
-            <option value="dark">Oscuro</option>
-          </Select>
+            {settings.languageMode === "manual" ? (
+              <Select
+                value={settings.language}
+                onChange={(event) => setLanguage(event.target.value as AppSettings["language"])}
+                label={t("settings.language")}
+              >
+                <option value="es">{t("settings.option.language.es")}</option>
+                <option value="en">{t("settings.option.language.en")}</option>
+                <option value="pt">{t("settings.option.language.pt")}</option>
+              </Select>
+            ) : null}
 
-          <Toggle
-            checked={settings.reduceMotion}
-            onChange={setReduceMotion}
-            label={t("settings.reduceMotion")}
-          />
+            <p className="text-xs text-[var(--text-muted)]">
+              {t("settings.status.detectedLanguage", {
+                locale: systemLocale,
+                language: languageLabels[resolvedLanguage],
+              })}
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <p className="text-xs uppercase tracking-[0.14em] text-[var(--text-muted)]">{t("settings.theme")}</p>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+              <Button
+                variant={settings.themeMode === "system" ? "primary" : "secondary"}
+                onClick={() => setThemeMode("system")}
+              >
+                {t("settings.theme.mode.system")}
+              </Button>
+              <Button
+                variant={settings.themeMode === "time" ? "primary" : "secondary"}
+                onClick={() => setThemeMode("time")}
+              >
+                {t("settings.theme.mode.time")}
+              </Button>
+              <Button
+                variant={settings.themeMode === "manual" ? "primary" : "secondary"}
+                onClick={() => setThemeMode("manual")}
+              >
+                {t("settings.theme.mode.manual")}
+              </Button>
+            </div>
+
+            {settings.themeMode === "time" ? (
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <TextField
+                  type="time"
+                  value={settings.timeTheme.lightFrom}
+                  onChange={(event) => setTimeTheme({ lightFrom: event.target.value })}
+                  label={t("settings.time.lightFrom")}
+                />
+                <TextField
+                  type="time"
+                  value={settings.timeTheme.darkFrom}
+                  onChange={(event) => setTimeTheme({ darkFrom: event.target.value })}
+                  label={t("settings.time.darkFrom")}
+                />
+              </div>
+            ) : null}
+
+            {settings.themeMode === "manual" ? (
+              <Select
+                value={settings.theme}
+                onChange={(event) => setTheme(event.target.value as AppSettings["theme"])}
+                label={t("settings.theme")}
+              >
+                <option value="light">{t("settings.option.theme.light")}</option>
+                <option value="dark">{t("settings.option.theme.dark")}</option>
+              </Select>
+            ) : null}
+
+            <p className="text-xs text-[var(--text-muted)]">
+              {t("settings.status.systemTheme", { theme: themeLabels[systemTheme] })}
+            </p>
+            <p className="text-xs text-[var(--text-muted)]">
+              {t("settings.status.appliedTheme", { theme: themeLabels[resolvedTheme] })}
+            </p>
+          </div>
+
+          <Button variant="secondary" onClick={resetToRecommended}>
+            {t("settings.resetRecommended")}
+          </Button>
+
+          <Toggle checked={settings.reduceMotion} onChange={setReduceMotion} label={t("settings.reduceMotion")} />
         </div>
       </Card>
 
@@ -86,7 +182,7 @@ export function SettingsPage({
             value={settings.windowMode}
             onChange={(event) => setWindowMode(event.target.value as AppSettings["windowMode"])}
           >
-            <option value="remember">{t("settings.option.windowMode.remember")}</option>
+            <option value="windowed">{t("settings.option.windowMode.windowed")}</option>
             <option value="maximized">{t("settings.option.windowMode.maximized")}</option>
             <option value="fullscreen">{t("settings.option.windowMode.fullscreen")}</option>
           </Select>

@@ -1,35 +1,39 @@
-import { app, type BrowserWindow } from "electron";
+import { app, screen, type BrowserWindow } from "electron";
 import { dirname, join } from "path";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "fs";
 import type { BrowserWindowConstructorOptions, Rectangle } from "electron";
 import type { WindowBounds, WindowMode, WindowStateSnapshot } from "./channels";
 
 type PersistedWindowState = {
-  schemaVersion: 1;
+  schemaVersion: 2;
   mode: WindowMode;
   rememberWindowBounds: boolean;
+  hasSavedBounds: boolean;
   bounds: WindowBounds;
-  isMaximized: boolean;
-  isFullScreen: boolean;
-};
-
-const DEFAULT_BOUNDS: WindowBounds = {
-  x: 100,
-  y: 80,
-  width: 1520,
-  height: 940,
 };
 
 const MIN_WIDTH = 1180;
 const MIN_HEIGHT = 760;
 
+function defaultCenteredBounds() {
+  const display = screen.getPrimaryDisplay();
+  const width = Math.round(Math.min(1280, display.workAreaSize.width * 0.9));
+  const height = Math.round(Math.min(800, display.workAreaSize.height * 0.9));
+
+  return {
+    x: display.workArea.x + Math.round((display.workArea.width - width) / 2),
+    y: display.workArea.y + Math.round((display.workArea.height - height) / 2),
+    width,
+    height,
+  } as WindowBounds;
+}
+
 const DEFAULT_WINDOW_STATE: PersistedWindowState = {
-  schemaVersion: 1,
-  mode: "remember",
+  schemaVersion: 2,
+  mode: "windowed",
   rememberWindowBounds: true,
-  bounds: DEFAULT_BOUNDS,
-  isMaximized: false,
-  isFullScreen: false,
+  hasSavedBounds: false,
+  bounds: defaultCenteredBounds(),
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -42,11 +46,16 @@ function toInteger(value: unknown): number | null {
 }
 
 function parseWindowMode(value: unknown): WindowMode | null {
-  return value === "remember" || value === "maximized" || value === "fullscreen" ? value : null;
+  if (value === "remember") {
+    return "windowed";
+  }
+
+  return value === "windowed" || value === "maximized" || value === "fullscreen" ? value : null;
 }
 
 function sanitizeBounds(bounds: unknown): WindowBounds {
-  if (!isRecord(bounds)) return { ...DEFAULT_BOUNDS };
+  const fallback = defaultCenteredBounds();
+  if (!isRecord(bounds)) return fallback;
 
   const width = toInteger(bounds.width);
   const height = toInteger(bounds.height);
@@ -54,28 +63,32 @@ function sanitizeBounds(bounds: unknown): WindowBounds {
   const y = toInteger(bounds.y);
 
   return {
-    x: x ?? DEFAULT_BOUNDS.x,
-    y: y ?? DEFAULT_BOUNDS.y,
-    width: width && width >= MIN_WIDTH ? width : DEFAULT_BOUNDS.width,
-    height: height && height >= MIN_HEIGHT ? height : DEFAULT_BOUNDS.height,
+    x: x ?? fallback.x,
+    y: y ?? fallback.y,
+    width: width && width >= MIN_WIDTH ? width : fallback.width,
+    height: height && height >= MIN_HEIGHT ? height : fallback.height,
   };
 }
 
 function sanitizeWindowState(input: unknown): PersistedWindowState {
-  if (!isRecord(input) || input.schemaVersion !== 1) {
-    return { ...DEFAULT_WINDOW_STATE };
+  if (!isRecord(input) || (input.schemaVersion !== 1 && input.schemaVersion !== 2)) {
+    return { ...DEFAULT_WINDOW_STATE, bounds: { ...DEFAULT_WINDOW_STATE.bounds } };
   }
 
+  const hasSavedBounds =
+    typeof input.hasSavedBounds === "boolean"
+      ? input.hasSavedBounds
+      : Boolean(input.bounds);
+
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     mode: parseWindowMode(input.mode) ?? DEFAULT_WINDOW_STATE.mode,
     rememberWindowBounds:
       typeof input.rememberWindowBounds === "boolean"
         ? input.rememberWindowBounds
         : DEFAULT_WINDOW_STATE.rememberWindowBounds,
+    hasSavedBounds,
     bounds: sanitizeBounds(input.bounds),
-    isMaximized: typeof input.isMaximized === "boolean" ? input.isMaximized : DEFAULT_WINDOW_STATE.isMaximized,
-    isFullScreen: typeof input.isFullScreen === "boolean" ? input.isFullScreen : DEFAULT_WINDOW_STATE.isFullScreen,
   };
 }
 
@@ -92,6 +105,19 @@ function stateFilePath() {
   return join(app.getPath("userData"), "window-state.json");
 }
 
+function centeredBoundsForWindow(window: BrowserWindow): WindowBounds {
+  const display = screen.getDisplayMatching(window.getBounds());
+  const width = Math.round(Math.min(1280, display.workAreaSize.width * 0.9));
+  const height = Math.round(Math.min(800, display.workAreaSize.height * 0.9));
+
+  return {
+    x: display.workArea.x + Math.round((display.workArea.width - width) / 2),
+    y: display.workArea.y + Math.round((display.workArea.height - height) / 2),
+    width,
+    height,
+  };
+}
+
 export type WindowStateController = {
   getLaunchBounds: () => Pick<BrowserWindowConstructorOptions, "x" | "y" | "width" | "height">;
   applyLaunchMode: (window: BrowserWindow) => void;
@@ -106,13 +132,15 @@ export function createWindowStateController(): WindowStateController {
   const filePath = stateFilePath();
 
   const load = (): PersistedWindowState => {
-    if (!existsSync(filePath)) return { ...DEFAULT_WINDOW_STATE };
+    if (!existsSync(filePath)) {
+      return { ...DEFAULT_WINDOW_STATE, bounds: { ...DEFAULT_WINDOW_STATE.bounds } };
+    }
 
     try {
       const raw = readFileSync(filePath, "utf-8");
       return sanitizeWindowState(JSON.parse(raw));
     } catch {
-      return { ...DEFAULT_WINDOW_STATE };
+      return { ...DEFAULT_WINDOW_STATE, bounds: { ...DEFAULT_WINDOW_STATE.bounds } };
     }
   };
 
@@ -127,36 +155,24 @@ export function createWindowStateController(): WindowStateController {
     }
   };
 
-  const captureFromWindow = (window: BrowserWindow) => {
-    const currentBounds = toWindowBounds(window.getBounds());
-
-    if (!window.isMaximized() && !window.isFullScreen()) {
-      persisted.bounds = sanitizeBounds(currentBounds);
+  const captureWindowedBounds = (window: BrowserWindow) => {
+    if (!persisted.rememberWindowBounds || window.isMaximized() || window.isFullScreen()) {
+      return;
     }
 
-    persisted.isMaximized = window.isMaximized();
-    persisted.isFullScreen = window.isFullScreen();
+    persisted.bounds = sanitizeBounds(toWindowBounds(window.getBounds()));
+    persisted.hasSavedBounds = true;
   };
 
-  const toSnapshot = (window: BrowserWindow | null): WindowStateSnapshot => {
-    if (window && !window.isDestroyed()) {
-      const bounds = toWindowBounds(window.getBounds());
-      return {
-        bounds: sanitizeBounds(bounds),
-        isMaximized: window.isMaximized(),
-        isFullScreen: window.isFullScreen(),
-        mode: persisted.mode,
-        rememberWindowBounds: persisted.rememberWindowBounds,
-      };
+  const applyBaseBounds = (window: BrowserWindow) => {
+    if (persisted.rememberWindowBounds && persisted.hasSavedBounds) {
+      window.setBounds(sanitizeBounds(persisted.bounds));
+      return;
     }
 
-    return {
-      bounds: sanitizeBounds(persisted.bounds),
-      isMaximized: persisted.isMaximized,
-      isFullScreen: persisted.isFullScreen,
-      mode: persisted.mode,
-      rememberWindowBounds: persisted.rememberWindowBounds,
-    };
+    const bounds = centeredBoundsForWindow(window);
+    window.setBounds(bounds);
+    window.center();
   };
 
   const applyModeToWindow = (mode: WindowMode, window: BrowserWindow) => {
@@ -175,15 +191,36 @@ export function createWindowStateController(): WindowStateController {
     if (window.isMaximized()) {
       window.unmaximize();
     }
+  };
 
-    if (persisted.rememberWindowBounds) {
-      window.setBounds(sanitizeBounds(persisted.bounds));
+  const toSnapshot = (window: BrowserWindow | null): WindowStateSnapshot => {
+    if (window && !window.isDestroyed()) {
+      const bounds = toWindowBounds(window.getBounds());
+      return {
+        bounds: sanitizeBounds(bounds),
+        isMaximized: window.isMaximized(),
+        isFullScreen: window.isFullScreen(),
+        mode: persisted.mode,
+        rememberWindowBounds: persisted.rememberWindowBounds,
+      };
     }
+
+    return {
+      bounds: sanitizeBounds(persisted.bounds),
+      isMaximized: false,
+      isFullScreen: false,
+      mode: persisted.mode,
+      rememberWindowBounds: persisted.rememberWindowBounds,
+    };
   };
 
   return {
     getLaunchBounds: () => {
-      const bounds = persisted.rememberWindowBounds ? sanitizeBounds(persisted.bounds) : { ...DEFAULT_BOUNDS };
+      const bounds =
+        persisted.rememberWindowBounds && persisted.hasSavedBounds
+          ? sanitizeBounds(persisted.bounds)
+          : defaultCenteredBounds();
+
       return {
         x: bounds.x,
         y: bounds.y,
@@ -192,34 +229,22 @@ export function createWindowStateController(): WindowStateController {
       };
     },
     applyLaunchMode: (window) => {
-      if (persisted.mode === "remember") {
-        if (persisted.rememberWindowBounds) {
-          if (persisted.isFullScreen) {
-            window.setFullScreen(true);
-          } else if (persisted.isMaximized) {
-            window.maximize();
-          }
-        }
-        return;
-      }
-
+      applyBaseBounds(window);
       applyModeToWindow(persisted.mode, window);
     },
     attachTracking: (window) => {
       const persistWhenNeeded = () => {
-        if (!persisted.rememberWindowBounds || window.isDestroyed()) {
+        if (window.isDestroyed()) {
           return;
         }
 
-        captureFromWindow(window);
+        captureWindowedBounds(window);
         save();
       };
 
       window.on("resize", persistWhenNeeded);
       window.on("move", persistWhenNeeded);
-      window.on("maximize", persistWhenNeeded);
       window.on("unmaximize", persistWhenNeeded);
-      window.on("enter-full-screen", persistWhenNeeded);
       window.on("leave-full-screen", persistWhenNeeded);
       window.on("close", persistWhenNeeded);
     },
@@ -227,7 +252,7 @@ export function createWindowStateController(): WindowStateController {
       persisted.mode = mode;
       if (window && !window.isDestroyed()) {
         applyModeToWindow(mode, window);
-        captureFromWindow(window);
+        captureWindowedBounds(window);
       }
       save();
       return toSnapshot(window);
@@ -235,8 +260,8 @@ export function createWindowStateController(): WindowStateController {
     setRememberWindowBounds: (remember, window) => {
       persisted.rememberWindowBounds = remember;
 
-      if (window && !window.isDestroyed() && remember) {
-        captureFromWindow(window);
+      if (window && !window.isDestroyed()) {
+        captureWindowedBounds(window);
       }
 
       save();
@@ -246,7 +271,16 @@ export function createWindowStateController(): WindowStateController {
       return toSnapshot(window);
     },
     resetLayout: (window) => {
-      persisted = { ...DEFAULT_WINDOW_STATE, bounds: { ...DEFAULT_BOUNDS } };
+      persisted.hasSavedBounds = false;
+      persisted.bounds = defaultCenteredBounds();
+
+      try {
+        if (existsSync(filePath)) {
+          unlinkSync(filePath);
+        }
+      } catch {
+        // best effort
+      }
 
       if (window && !window.isDestroyed()) {
         window.setFullScreen(false);
@@ -254,9 +288,9 @@ export function createWindowStateController(): WindowStateController {
           window.unmaximize();
         }
 
-        window.setBounds(DEFAULT_BOUNDS);
+        const bounds = centeredBoundsForWindow(window);
+        window.setBounds(bounds);
         window.center();
-        captureFromWindow(window);
       }
 
       save();
