@@ -4,6 +4,11 @@ import {
   IPC_CHANNELS,
   type ImportSettingsResult,
   type ExportProjectsResult,
+  type GenerationDonePayload,
+  type GenerationErrorPayload,
+  type GenerationProgressPayload,
+  type GenerationRunPayload,
+  type GenerationRunResult,
   type ImportProjectsResult,
   type ProjectsExportEnvelope,
   type RememberWindowBoundsPayload,
@@ -15,6 +20,18 @@ import {
 } from "./channels";
 
 const systemThemeListeners = new Map<(theme: Theme) => void, (_event: Electron.IpcRendererEvent, payload: SystemThemeChangedPayload) => void>();
+const generationProgressListeners = new Map<
+  (payload: GenerationProgressPayload) => void,
+  (_event: Electron.IpcRendererEvent, payload: GenerationProgressPayload) => void
+>();
+const generationDoneListeners = new Map<
+  (payload: GenerationDonePayload) => void,
+  (_event: Electron.IpcRendererEvent, payload: GenerationDonePayload) => void
+>();
+const generationErrorListeners = new Map<
+  (payload: GenerationErrorPayload) => void,
+  (_event: Electron.IpcRendererEvent, payload: GenerationErrorPayload) => void
+>();
 
 const bridge = {
   exportJson: (payload: ProjectsExportEnvelope) =>
@@ -53,6 +70,54 @@ const bridge = {
       if (!wrapped) return;
       ipcRenderer.off(IPC_CHANNELS.systemThemeChanged, wrapped);
       systemThemeListeners.delete(callback);
+    },
+  },
+  generation: {
+    selectImages: () => ipcRenderer.invoke(IPC_CHANNELS.generationSelectImages) as Promise<string[]>,
+    run: (payload: GenerationRunPayload) =>
+      ipcRenderer.invoke(IPC_CHANNELS.generationRun, payload) as Promise<GenerationRunResult>,
+    cancel: (projectId: string) => ipcRenderer.invoke(IPC_CHANNELS.generationCancel, { projectId }) as Promise<void>,
+    onProgress: (callback: (payload: GenerationProgressPayload) => void) => {
+      const wrapped = (_event: Electron.IpcRendererEvent, payload: GenerationProgressPayload) => {
+        callback(payload);
+      };
+
+      generationProgressListeners.set(callback, wrapped);
+      ipcRenderer.on(IPC_CHANNELS.generationProgress, wrapped);
+    },
+    offProgress: (callback: (payload: GenerationProgressPayload) => void) => {
+      const wrapped = generationProgressListeners.get(callback);
+      if (!wrapped) return;
+      ipcRenderer.off(IPC_CHANNELS.generationProgress, wrapped);
+      generationProgressListeners.delete(callback);
+    },
+    onDone: (callback: (payload: GenerationDonePayload) => void) => {
+      const wrapped = (_event: Electron.IpcRendererEvent, payload: GenerationDonePayload) => {
+        callback(payload);
+      };
+
+      generationDoneListeners.set(callback, wrapped);
+      ipcRenderer.on(IPC_CHANNELS.generationDone, wrapped);
+    },
+    offDone: (callback: (payload: GenerationDonePayload) => void) => {
+      const wrapped = generationDoneListeners.get(callback);
+      if (!wrapped) return;
+      ipcRenderer.off(IPC_CHANNELS.generationDone, wrapped);
+      generationDoneListeners.delete(callback);
+    },
+    onError: (callback: (payload: GenerationErrorPayload) => void) => {
+      const wrapped = (_event: Electron.IpcRendererEvent, payload: GenerationErrorPayload) => {
+        callback(payload);
+      };
+
+      generationErrorListeners.set(callback, wrapped);
+      ipcRenderer.on(IPC_CHANNELS.generationError, wrapped);
+    },
+    offError: (callback: (payload: GenerationErrorPayload) => void) => {
+      const wrapped = generationErrorListeners.get(callback);
+      if (!wrapped) return;
+      ipcRenderer.off(IPC_CHANNELS.generationError, wrapped);
+      generationErrorListeners.delete(callback);
     },
   },
   // Backward compatibility for existing renderer wrappers.

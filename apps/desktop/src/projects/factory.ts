@@ -34,6 +34,9 @@ export function createProject(name = DEFAULT_PROJECT_NAME): Project {
     notes: "",
     chatHistory: [],
     modelMetadata: buildDefaultModelMetadata(),
+    model: {
+      sourceImages: [],
+    },
   };
 }
 
@@ -75,6 +78,12 @@ export function duplicateProject(source: Project, existingNames: string[]): Proj
     })),
     modelMetadata: {
       ...source.modelMetadata,
+    },
+    model: {
+      sourceImages: source.model?.sourceImages ? [...source.model.sourceImages] : [],
+      glbPath: source.model?.glbPath,
+      generatedAt: source.model?.generatedAt,
+      preset: source.model?.preset,
     },
   };
 }

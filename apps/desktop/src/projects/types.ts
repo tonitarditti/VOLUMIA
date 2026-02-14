@@ -14,6 +14,15 @@ export type ModelMetadata = {
   lastAssistantSummary: string;
 };
 
+export type GenerationPreset = "fast" | "balanced" | "quality";
+
+export type ProjectModel = {
+  sourceImages: string[];
+  glbPath?: string;
+  generatedAt?: number;
+  preset?: GenerationPreset;
+};
+
 export type Project = {
   id: string;
   name: string;
@@ -22,6 +31,7 @@ export type Project = {
   notes: string;
   chatHistory: ChatMessage[];
   modelMetadata: ModelMetadata;
+  model?: ProjectModel;
 };
 
 export type ProjectsState = {
@@ -50,6 +60,10 @@ const isChatRole = (value: unknown): value is ChatRole => {
   return value === "user" || value === "assistant";
 };
 
+const isGenerationPreset = (value: unknown): value is GenerationPreset => {
+  return value === "fast" || value === "balanced" || value === "quality";
+};
+
 export const isChatMessage = (value: unknown): value is ChatMessage => {
   if (!isRecord(value)) return false;
   return (
@@ -69,6 +83,21 @@ export const isModelMetadata = (value: unknown): value is ModelMetadata => {
   );
 };
 
+export const isProjectModel = (value: unknown): value is ProjectModel => {
+  if (!isRecord(value)) return false;
+
+  const sourceImages = value.sourceImages;
+  if (!Array.isArray(sourceImages) || !sourceImages.every((item) => isString(item))) {
+    return false;
+  }
+
+  return (
+    (value.glbPath === undefined || isString(value.glbPath)) &&
+    (value.generatedAt === undefined || typeof value.generatedAt === "number") &&
+    (value.preset === undefined || isGenerationPreset(value.preset))
+  );
+};
+
 export const isProject = (value: unknown): value is Project => {
   if (!isRecord(value)) return false;
 
@@ -82,6 +111,7 @@ export const isProject = (value: unknown): value is Project => {
     isString(value.updatedAt) &&
     isString(value.notes) &&
     chatHistory.every((item) => isChatMessage(item)) &&
-    isModelMetadata(value.modelMetadata)
+    isModelMetadata(value.modelMetadata) &&
+    (value.model === undefined || isProjectModel(value.model))
   );
 };

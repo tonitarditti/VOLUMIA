@@ -2,6 +2,7 @@ import { BrowserWindow, app } from "electron";
 import { existsSync } from "fs";
 import path from "path";
 import { registerProjectsFileHandlers } from "./ipc/projects-file.ipc";
+import { registerGenerationHandlers } from "./ipc/generation.ipc";
 import { registerSettingsFileHandlers } from "./ipc/settings-file.ipc";
 import { registerSystemPreferencesHandlers } from "./ipc/system-preferences.ipc";
 import { registerWindowControlHandlers } from "./ipc/window-controls.ipc";
@@ -75,6 +76,7 @@ app.whenReady().then(() => {
   }
 
   registerProjectsFileHandlers();
+  registerGenerationHandlers(() => mainWindow);
   registerSettingsFileHandlers();
   registerWindowControlHandlers(() => mainWindow);
   registerWindowSettingsHandlers(() => mainWindow, windowStateController);

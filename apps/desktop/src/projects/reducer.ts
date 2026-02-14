@@ -1,6 +1,6 @@
 import { nanoid } from "nanoid";
 import { createDefaultProjectsState, createProject, duplicateProject, nowIso } from "./factory";
-import type { ChatMessage, ModelMetadata, Project, ProjectsState } from "./types";
+import type { ChatMessage, ModelMetadata, Project, ProjectModel, ProjectsState } from "./types";
 
 export type ProjectsAction =
   | { type: "HYDRATE_FROM_STORAGE"; payload: ProjectsState }
@@ -12,6 +12,7 @@ export type ProjectsAction =
   | { type: "UPDATE_NOTES"; payload: { projectId: string; notes: string } }
   | { type: "APPEND_CHAT_MESSAGE"; payload: { projectId: string; message: ChatMessage } }
   | { type: "UPDATE_MODEL_METADATA"; payload: { projectId: string; modelMetadata: ModelMetadata } }
+  | { type: "UPDATE_PROJECT_MODEL"; payload: { projectId: string; model: ProjectModel } }
   | { type: "MERGE_IMPORTED_PROJECTS"; payload: { projects: Project[] } };
 
 function nextStateWithFallback(projects: Project[], activeProjectId: string): ProjectsState {
@@ -127,6 +128,22 @@ export function projectsReducer(state: ProjectsState, action: ProjectsAction): P
         return {
           ...project,
           modelMetadata: action.payload.modelMetadata,
+          updatedAt: nowIso(),
+        };
+      });
+
+      return {
+        ...state,
+        projects,
+      };
+    }
+
+    case "UPDATE_PROJECT_MODEL": {
+      const projects = state.projects.map((project) => {
+        if (project.id !== action.payload.projectId) return project;
+        return {
+          ...project,
+          model: action.payload.model,
           updatedAt: nowIso(),
         };
       });

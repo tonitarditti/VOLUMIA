@@ -13,6 +13,12 @@ export const IPC_CHANNELS = {
   getSystemLocale: "system:get-locale",
   getSystemTheme: "system:get-theme",
   systemThemeChanged: "system:theme-changed",
+  generationSelectImages: "gen:select-images",
+  generationRun: "gen:run",
+  generationCancel: "gen:cancel",
+  generationProgress: "gen:progress",
+  generationDone: "gen:done",
+  generationError: "gen:error",
 } as const;
 
 export type LanguageMode = "system" | "manual";
@@ -56,6 +62,15 @@ export type ModelMetadata = {
   lastAssistantSummary: string;
 };
 
+export type GenerationPreset = "fast" | "balanced" | "quality";
+
+export type ProjectModel = {
+  sourceImages: string[];
+  glbPath?: string;
+  generatedAt?: number;
+  preset?: GenerationPreset;
+};
+
 export type Project = {
   id: string;
   name: string;
@@ -64,6 +79,7 @@ export type Project = {
   notes: string;
   chatHistory: ChatMessage[];
   modelMetadata: ModelMetadata;
+  model?: ProjectModel;
 };
 
 export type ProjectsExportEnvelope = {
@@ -127,4 +143,38 @@ export type WindowStateSnapshot = {
 
 export type SystemThemeChangedPayload = {
   theme: Theme;
+};
+
+export type GenerationRunPayload = {
+  projectId: string;
+  imagePaths: string[];
+  preset: GenerationPreset;
+};
+
+export type GenerationRunResult =
+  | {
+      ok: true;
+    }
+  | {
+      ok: false;
+      error: string;
+    };
+
+export type GenerationProgressPayload = {
+  projectId: string;
+  stage: string;
+  percent: number;
+  message: string;
+};
+
+export type GenerationDonePayload = {
+  projectId: string;
+  glbPath: string;
+  sourceImages?: string[];
+  preset?: GenerationPreset;
+};
+
+export type GenerationErrorPayload = {
+  projectId: string;
+  message: string;
 };

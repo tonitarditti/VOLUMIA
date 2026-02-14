@@ -10,7 +10,7 @@ import {
 import { createDefaultProjectsState } from "./factory";
 import { projectsReducer, type ProjectsAction } from "./reducer";
 import { loadProjectsState, saveProjectsState } from "@/storage/projectsStorage";
-import type { ChatMessage, ModelMetadata, Project, ProjectsState } from "./types";
+import type { ChatMessage, ModelMetadata, Project, ProjectModel, ProjectsState } from "./types";
 import { STORAGE_KEYS } from "@/storage/keys";
 
 type ProjectsContextValue = {
@@ -24,6 +24,7 @@ type ProjectsContextValue = {
   updateNotes: (projectId: string, notes: string) => void;
   appendChatMessage: (projectId: string, message: ChatMessage) => void;
   updateModelMetadata: (projectId: string, modelMetadata: ModelMetadata) => void;
+  updateProjectModel: (projectId: string, model: ProjectModel) => void;
   mergeImportedProjects: (projects: Project[]) => void;
   resetProjects: () => void;
 };
@@ -74,6 +75,8 @@ export function ProjectsProvider({ children }: PropsWithChildren) {
         run({ type: "APPEND_CHAT_MESSAGE", payload: { projectId, message } }),
       updateModelMetadata: (projectId: string, modelMetadata: ModelMetadata) =>
         run({ type: "UPDATE_MODEL_METADATA", payload: { projectId, modelMetadata } }),
+      updateProjectModel: (projectId: string, model: ProjectModel) =>
+        run({ type: "UPDATE_PROJECT_MODEL", payload: { projectId, model } }),
       mergeImportedProjects: (projects: Project[]) => run({ type: "MERGE_IMPORTED_PROJECTS", payload: { projects } }),
       resetProjects: () => {
         const initial = createDefaultProjectsState();

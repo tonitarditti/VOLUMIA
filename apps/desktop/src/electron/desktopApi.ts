@@ -6,6 +6,11 @@ import {
   type ProjectsExportEnvelope,
   type RememberWindowBoundsPayload,
   type SettingsExportEnvelope,
+  type GenerationDonePayload,
+  type GenerationErrorPayload,
+  type GenerationProgressPayload,
+  type GenerationRunPayload,
+  type GenerationRunResult,
   type Theme,
   type WindowModePayload,
   type WindowStateSnapshot,
@@ -31,6 +36,18 @@ export type VolumiaSystemBridge = {
   offThemeChanged: (callback: (theme: Theme) => void) => void;
 };
 
+export type VolumiaGenerationBridge = {
+  selectImages: () => Promise<string[]>;
+  run: (payload: GenerationRunPayload) => Promise<GenerationRunResult>;
+  cancel: (projectId: string) => Promise<void>;
+  onProgress: (callback: (payload: GenerationProgressPayload) => void) => void;
+  offProgress: (callback: (payload: GenerationProgressPayload) => void) => void;
+  onDone: (callback: (payload: GenerationDonePayload) => void) => void;
+  offDone: (callback: (payload: GenerationDonePayload) => void) => void;
+  onError: (callback: (payload: GenerationErrorPayload) => void) => void;
+  offError: (callback: (payload: GenerationErrorPayload) => void) => void;
+};
+
 export type VolumiaDesktopBridge = {
   exportJson: (payload: ProjectsExportEnvelope) => Promise<ExportProjectsResult>;
   importJson: () => Promise<ImportProjectsResult>;
@@ -39,6 +56,7 @@ export type VolumiaDesktopBridge = {
   windowControls?: Partial<VolumiaWindowControls>;
   settingsWindow?: Partial<VolumiaSettingsWindowBridge>;
   system?: Partial<VolumiaSystemBridge>;
+  generation?: Partial<VolumiaGenerationBridge>;
 };
 
 export function hasDesktopBridge() {
@@ -96,6 +114,25 @@ function ensureSystemBridge(): VolumiaSystemBridge {
   return system as VolumiaSystemBridge;
 }
 
+function ensureGenerationBridge(): VolumiaGenerationBridge {
+  const generation = ensureBridge().generation;
+  if (
+    !generation?.selectImages ||
+    !generation.run ||
+    !generation.cancel ||
+    !generation.onProgress ||
+    !generation.offProgress ||
+    !generation.onDone ||
+    !generation.offDone ||
+    !generation.onError ||
+    !generation.offError
+  ) {
+    throw new Error("Desktop generation bridge is unavailable.");
+  }
+
+  return generation as VolumiaGenerationBridge;
+}
+
 export const desktopApi = {
   exportProjectsJson(payload: ProjectsExportEnvelope): Promise<ExportProjectsResult> {
     return ensureBridge().exportJson(payload);
@@ -142,6 +179,36 @@ export const desktopApi = {
 
     return () => {
       system.offThemeChanged(callback);
+    };
+  },
+  selectGenerationImages(): Promise<string[]> {
+    return ensureGenerationBridge().selectImages();
+  },
+  runGeneration(payload: GenerationRunPayload): Promise<GenerationRunResult> {
+    return ensureGenerationBridge().run(payload);
+  },
+  cancelGeneration(projectId: string): Promise<void> {
+    return ensureGenerationBridge().cancel(projectId);
+  },
+  onGenerationProgress(callback: (payload: GenerationProgressPayload) => void): () => void {
+    const generation = ensureGenerationBridge();
+    generation.onProgress(callback);
+    return () => {
+      generation.offProgress(callback);
+    };
+  },
+  onGenerationDone(callback: (payload: GenerationDonePayload) => void): () => void {
+    const generation = ensureGenerationBridge();
+    generation.onDone(callback);
+    return () => {
+      generation.offDone(callback);
+    };
+  },
+  onGenerationError(callback: (payload: GenerationErrorPayload) => void): () => void {
+    const generation = ensureGenerationBridge();
+    generation.onError(callback);
+    return () => {
+      generation.offError(callback);
     };
   },
 };
