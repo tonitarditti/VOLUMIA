@@ -380,15 +380,18 @@ function mapPresetToQuality(preset: GenerationPreset): "fast" | "balanced" | "hi
   return preset;
 }
 
-function resolveGenerationMode(imagePath: string): "furniture" | "generic" {
-  const lower = path.basename(imagePath).toLowerCase();
-  if (lower.includes("table")) {
-    return "furniture";
-  }
+function resolveGenerationMode(_imagePath: string): "furniture" | "generic" {
   return "generic";
 }
 
-function parseProgressLine(rawLine: string) {
+type ParsedProgressLine = {
+  stage: string;
+  percent: number;
+  message: string;
+  device?: "cuda" | "cpu";
+};
+
+function parseProgressLine(rawLine: string): ParsedProgressLine | null {
   const line = rawLine.trim();
   if (!line.startsWith("{")) {
     return null;
@@ -399,6 +402,7 @@ function parseProgressLine(rawLine: string) {
       stage?: unknown;
       percent?: unknown;
       message?: unknown;
+      device?: unknown;
     };
 
     if (typeof parsed.stage !== "string" || typeof parsed.message !== "string") {
@@ -412,10 +416,16 @@ function parseProgressLine(rawLine: string) {
       return null;
     }
 
+    const progressDevice =
+      parsed.device === "cuda" || parsed.device === "cpu"
+        ? (parsed.device as "cuda" | "cpu")
+        : undefined;
+
     return {
       stage: parsed.stage,
       percent: Math.max(0, Math.min(100, Math.round(numericPercent))),
       message: parsed.message,
+      device: progressDevice,
     };
   } catch {
     return null;
@@ -424,14 +434,22 @@ function parseProgressLine(rawLine: string) {
 
 function parseDeviceLine(rawLine: string): GenerationDevice | null {
   const line = rawLine.trim();
-  const match = line.match(/^\[VOLUMIA_DEVICE\]\s+device=(cuda|cpu)\s+index=-?\d+\s+name="([^"]*)"$/);
-  if (!match) {
+  const fullMatch = line.match(/^\[VOLUMIA_DEVICE\]\s+device=(cuda|cpu)\s+index=-?\d+\s+name="([^"]*)"$/);
+  if (fullMatch) {
+    return {
+      device: fullMatch[1] as "cuda" | "cpu",
+      name: fullMatch[2],
+    };
+  }
+
+  const shortMatch = line.match(/^\[VOLUMIA_DEVICE\]\s+device=(cuda|cpu)$/);
+  if (!shortMatch) {
     return null;
   }
 
   return {
-    device: match[1] as "cuda" | "cpu",
-    name: match[2],
+    device: shortMatch[1] as "cuda" | "cpu",
+    name: shortMatch[1] === "cuda" ? "CUDA" : "CPU",
   };
 }
 
@@ -463,6 +481,7 @@ async function runLocalPythonGeneration(
       TRANSFORMERS_CACHE: modelsDir,
       TORCH_HOME: modelsDir,
       PIP_CACHE_DIR: pipDir,
+      VOLUMIA_FORCE_DEVICE: "cuda",
     };
     logInfo("[VOLUMIA] OpenMP duplicate workaround enabled");
 
@@ -498,16 +517,24 @@ async function runLocalPythonGeneration(
           stage: "infer",
           percent: 56,
           message: line.trim(),
+          device: parsedDevice.device,
         });
       }
 
       const parsedProgress = parseProgressLine(line);
       if (parsedProgress) {
+        if (parsedProgress.device) {
+          device = {
+            device: parsedProgress.device,
+            name: parsedProgress.device === "cuda" ? "CUDA" : "CPU",
+          };
+        }
         sendProgress(getWindow, {
           projectId: payload.projectId,
           stage: parsedProgress.stage,
           percent: parsedProgress.percent,
           message: parsedProgress.message,
+          device: parsedProgress.device,
         });
         continue;
       }
@@ -690,7 +717,7 @@ function buildGeneratorCheckResult(): GenerationCheckResult {
     `python: ${PYTHON}`,
     `pythonFound: ${pythonFound}`,
     "generator: image_to_3d_depth_glb.py",
-    "generator_mode_switch: filename contains 'table' -> furniture",
+    "generator_mode_switch: handled inside image_to_3d_depth_glb.py via object detection",
   ];
 
   return {

@@ -44,13 +44,21 @@ function shortDeviceName(value: string) {
 }
 
 function parseDeviceLine(value: string): GenerationDevice | null {
-  const match = value.match(/^\[VOLUMIA_DEVICE\]\s+device=(cuda|cpu)\s+index=-?\d+\s+name="([^"]*)"$/);
-  if (!match) {
+  const fullMatch = value.match(/^\[VOLUMIA_DEVICE\]\s+device=(cuda|cpu)\s+index=-?\d+\s+name="([^"]*)"$/);
+  if (fullMatch) {
+    return {
+      device: fullMatch[1] as "cuda" | "cpu",
+      name: fullMatch[2],
+    };
+  }
+
+  const shortMatch = value.match(/^\[VOLUMIA_DEVICE\]\s+device=(cuda|cpu)$/);
+  if (!shortMatch) {
     return null;
   }
   return {
-    device: match[1] as "cuda" | "cpu",
-    name: match[2],
+    device: shortMatch[1] as "cuda" | "cpu",
+    name: shortMatch[1] === "cuda" ? "CUDA" : "CPU",
   };
 }
 
@@ -114,6 +122,12 @@ export function ProjectPage() {
       setGenerationStage(payload.stage);
       setGenerationPercent(Math.max(0, Math.min(100, payload.percent)));
       setGenerationMessage(payload.message);
+      if (payload.device) {
+        setGenerationDevice({
+          device: payload.device,
+          name: payload.device === "cuda" ? "CUDA" : "CPU",
+        });
+      }
       const progressDevice = parseDeviceLine(payload.message);
       if (progressDevice) {
         setGenerationDevice(progressDevice);

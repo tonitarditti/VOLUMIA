@@ -167,6 +167,7 @@ export type GenerationProgressPayload = {
   stage: string;
   percent: number;
   message: string;
+  device?: "cuda" | "cpu";
 };
 
 export type GenerationDevice = {
