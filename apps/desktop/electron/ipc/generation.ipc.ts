@@ -12,7 +12,6 @@ import {
   type GenerationProgressPayload,
   type GenerationPreset,
   type GenerationRunPayload,
-  type GenerationRunResult,
   type GenerationTestResult,
 } from "../channels";
 
@@ -28,12 +27,187 @@ type LocalGenerationResult = {
   error?: string;
   outGlbPath?: string;
   device?: GenerationDevice;
+  stdout?: string;
+  stderr?: string;
 };
+
+type PythonRunError = Error & {
+  code?: number;
+  signal?: NodeJS.Signals | null;
+  stdout?: string;
+  stderr?: string;
+};
+
+type GenerationRunErrorResult = {
+  ok: false;
+  error: string;
+  stderr?: string;
+  stdout?: string;
+  logFile: string;
+};
+
+type GenerationRunSuccessResult = {
+  ok: true;
+  outPath: string;
+  device?: GenerationDevice;
+  logFile: string;
+};
+
+type GenerationRunHandlerResult = GenerationRunSuccessResult | GenerationRunErrorResult;
 
 const PYTHON = "F:\\MINICONDA\\envs\\volumia\\python.exe";
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp"]);
 const activeJobs = new Map<string, GenerationJobState>();
 const latestOutputByProject = new Map<string, string>();
+const MAX_STDOUT_CHARS = 200_000;
+const MAX_STDERR_CHARS = 200_000;
+const TRUNCATION_SUFFIX = "\n...truncated";
+const STDOUT_TAIL_LINES = 8;
+const STDERR_PREVIEW_CHARS = 2_000;
+let generationLogFilePath: string | null = null;
+
+function formatLogArg(value: unknown) {
+  if (value instanceof Error) {
+    return value.stack ?? value.message;
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function getGenerationLogFilePath() {
+  if (generationLogFilePath) {
+    return generationLogFilePath;
+  }
+
+  try {
+    const logDir = path.join(app.getPath("userData"), "logs");
+    fs.mkdirSync(logDir, { recursive: true });
+    generationLogFilePath = path.join(logDir, "generation.log");
+    return generationLogFilePath;
+  } catch {
+    generationLogFilePath = path.join(process.cwd(), "generation.log");
+    return generationLogFilePath;
+  }
+}
+
+function logLine(level: "INFO" | "ERR", msg: string) {
+  try {
+    fs.appendFileSync(getGenerationLogFilePath(), `[${new Date().toISOString()}] [${level}] ${msg}\n`, "utf8");
+  } catch {
+    // No-op by design.
+  }
+}
+
+function logInfo(...args: unknown[]) {
+  try {
+    logLine("INFO", args.map(formatLogArg).join(" "));
+  } catch {
+    // No-op by design.
+  }
+}
+
+function logErr(...args: unknown[]) {
+  try {
+    logLine("ERR", args.map(formatLogArg).join(" "));
+  } catch {
+    // No-op by design.
+  }
+}
+
+function capOutput(current: string, nextChunk: string, maxChars: number) {
+  if (!nextChunk) {
+    return current;
+  }
+  if (current.endsWith(TRUNCATION_SUFFIX)) {
+    return current;
+  }
+
+  const combined = `${current}${nextChunk}`;
+  if (combined.length <= maxChars) {
+    return combined;
+  }
+
+  if (maxChars <= TRUNCATION_SUFFIX.length) {
+    return TRUNCATION_SUFFIX.slice(0, maxChars);
+  }
+
+  return `${combined.slice(0, maxChars - TRUNCATION_SUFFIX.length)}${TRUNCATION_SUFFIX}`;
+}
+
+function lastNonEmptyLines(text: string, count: number) {
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .filter((line) => line.length > 0);
+  if (lines.length === 0) {
+    return "";
+  }
+  return lines.slice(-count).join("\n");
+}
+
+function asErrorMessage(error: unknown) {
+  if (typeof error === "string" && error.trim().length > 0) {
+    return error;
+  }
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return error.message;
+  }
+  return "Unknown error";
+}
+
+function createPythonError(
+  code: number,
+  signal: NodeJS.Signals | null,
+  stdout: string,
+  stderr: string
+): PythonRunError {
+  const stderrText = stderr.trim() || "(empty)";
+  const stdoutTail = lastNonEmptyLines(stdout, STDOUT_TAIL_LINES);
+  const detailParts = [
+    `Python exited with code ${code}${signal ? `, signal ${signal}` : ""}.`,
+    `stderr:\n${stderrText}`,
+  ];
+  if (stdoutTail) {
+    detailParts.push(`stdout tail:\n${stdoutTail}`);
+  }
+  const error = new Error(detailParts.join("\n")) as PythonRunError;
+  error.code = code;
+  error.signal = signal;
+  error.stdout = stdout;
+  error.stderr = stderr;
+  return error;
+}
+
+function createGenerationRunErrorResult(error: unknown): GenerationRunErrorResult {
+  const pyError = error as PythonRunError;
+  const stderr = typeof pyError?.stderr === "string" ? pyError.stderr : undefined;
+  const stdout =
+    typeof pyError?.stdout === "string"
+      ? lastNonEmptyLines(pyError.stdout, STDOUT_TAIL_LINES) || pyError.stdout
+      : undefined;
+
+  return {
+    ok: false,
+    error: asErrorMessage(error),
+    stderr,
+    stdout,
+    logFile: getGenerationLogFilePath(),
+  };
+}
+
+function getArgValue(args: string[], flag: string) {
+  const index = args.indexOf(flag);
+  if (index < 0 || index + 1 >= args.length) {
+    return "";
+  }
+  return args[index + 1];
+}
 
 function runPython(
   scriptPath: string,
@@ -41,21 +215,72 @@ function runPython(
   spawnEnv: NodeJS.ProcessEnv,
   onProcess?: (process: ChildProcess) => void
 ) {
-  return new Promise<{ stdout: string; stderr: string; code: number }>((resolvePromise) => {
-    console.log("[VOLUMIA] Using Python:", PYTHON);
-    const p = spawn(PYTHON, [scriptPath, ...args], { windowsHide: true, env: spawnEnv });
+  return new Promise<{ stdout: string; stderr: string; code: number }>((resolvePromise, rejectPromise) => {
+    logInfo("[VOLUMIA] Using Python:", PYTHON);
+    const outPath = getArgValue(args, "--out");
+    logInfo(
+      "[VOLUMIA][PY] spawn",
+      `python=${PYTHON}`,
+      `script=${scriptPath}`,
+      `args=${JSON.stringify(args)}`,
+      `out=${outPath || "n/a"}`
+    );
+    const p = spawn(PYTHON, [scriptPath, ...args], {
+      windowsHide: true,
+      env: spawnEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     onProcess?.(p);
 
     let stdout = "";
     let stderr = "";
+    let settled = false;
 
-    p.stdout?.on("data", (d) => (stdout += d.toString()));
-    p.stderr?.on("data", (d) => (stderr += d.toString()));
+    const resolveOnce = (value: { stdout: string; stderr: string; code: number }) => {
+      if (settled) return;
+      settled = true;
+      resolvePromise(value);
+    };
+
+    const rejectOnce = (error: PythonRunError) => {
+      if (settled) return;
+      settled = true;
+      rejectPromise(error);
+    };
+
     p.on("error", (error) => {
-      stderr += `\n${error.message}`;
+      stderr = capOutput(stderr, `\n${asErrorMessage(error)}`, MAX_STDERR_CHARS);
+      logErr("[VOLUMIA][PY] spawn error", `python=${PYTHON}`, `script=${scriptPath}`, `out=${outPath || "n/a"}`);
+      rejectOnce(createPythonError(-1, null, stdout, stderr));
     });
 
-    p.on("close", (code) => resolvePromise({ stdout, stderr, code: code ?? -1 }));
+    p.stdout?.on("data", (data) => {
+      stdout = capOutput(stdout, data.toString(), MAX_STDOUT_CHARS);
+    });
+
+    p.stderr?.on("data", (data) => {
+      stderr = capOutput(stderr, data.toString(), MAX_STDERR_CHARS);
+    });
+
+    p.on("close", (code, signal) => {
+      const exitCode = code ?? -1;
+      logInfo(
+        "[VOLUMIA][PY]",
+        `python=${PYTHON}`,
+        `script=${scriptPath}`,
+        `out=${outPath || "n/a"}`,
+        `exit=${exitCode}`
+      );
+      if (exitCode !== 0) {
+        const stderrPreview = stderr.slice(0, STDERR_PREVIEW_CHARS);
+        if (stderrPreview.trim()) {
+          logErr("[VOLUMIA][PY] stderr preview:", stderrPreview);
+        }
+        rejectOnce(createPythonError(exitCode, signal, stdout, stderr));
+        return;
+      }
+      resolveOnce({ stdout, stderr, code: exitCode });
+    });
   });
 }
 
@@ -232,12 +457,14 @@ async function runLocalPythonGeneration(
 
     const spawnEnv: NodeJS.ProcessEnv = {
       ...process.env,
+      KMP_DUPLICATE_LIB_OK: "TRUE",
       VOLUMIA_CACHE_DIR: assetsDir,
       HF_HOME: modelsDir,
       TRANSFORMERS_CACHE: modelsDir,
       TORCH_HOME: modelsDir,
       PIP_CACHE_DIR: pipDir,
     };
+    logInfo("[VOLUMIA] OpenMP duplicate workaround enabled");
 
     const { stdout, stderr, code } = await runPython(scriptPath, [
       "--in", imagePath,
@@ -246,12 +473,13 @@ async function runLocalPythonGeneration(
       "--models-dir", modelsDir,
     ], spawnEnv, (process) => {
       job.process = process;
+    }).finally(() => {
+      job.process = null;
     });
-    job.process = null;
 
-    console.log("[PY] exit:", code);
-    console.log("[PY] stdout:", stdout);
-    console.error("[PY] stderr:", stderr);
+    logInfo("[PY] exit:", code);
+    logInfo("[PY] stdout:", stdout);
+    logErr("[PY] stderr:", stderr);
 
     logs.push(`[py] exit: ${code}`);
     if (stdout.trim()) {
@@ -298,14 +526,6 @@ async function runLocalPythonGeneration(
       return { ok: false, logs, error: "Generacion cancelada." };
     }
 
-    if (code !== 0) {
-      return {
-        ok: false,
-        logs,
-        error: `El generador local finalizo con error (code: ${code}).`,
-      };
-    }
-
     await ensureGlbOk(outGlb);
 
     return {
@@ -315,15 +535,29 @@ async function runLocalPythonGeneration(
       device,
     };
   } catch (error) {
+    const pyError = error as PythonRunError;
+    if (typeof pyError.stdout === "string" && pyError.stdout.trim()) {
+      logs.push(...pyError.stdout.split(/\r?\n/).filter(Boolean).map((line) => `[stdout] ${line}`));
+    }
+    if (typeof pyError.stderr === "string" && pyError.stderr.trim()) {
+      logs.push(...pyError.stderr.split(/\r?\n/).filter(Boolean).map((line) => `[stderr] ${line}`));
+    }
+
     return {
       ok: false,
       logs,
-      error: error instanceof Error ? error.message : "No se pudo ejecutar el generador local.",
+      error: asErrorMessage(error) || "No se pudo ejecutar el generador local.",
+      stdout: typeof pyError.stdout === "string" ? pyError.stdout : undefined,
+      stderr: typeof pyError.stderr === "string" ? pyError.stderr : undefined,
     };
   }
 }
 
-async function runGenerationJob(payload: GenerationRunPayload, getWindow: WindowGetter, job: GenerationJobState) {
+async function runGenerationJob(
+  payload: GenerationRunPayload,
+  getWindow: WindowGetter,
+  job: GenerationJobState
+): Promise<{ outPath: string; device?: GenerationDevice }> {
   const projectId = payload.projectId;
   const safeProjectId = sanitizeProjectId(payload.projectId);
   const userDataPath = app.getPath("userData");
@@ -333,8 +567,8 @@ async function runGenerationJob(payload: GenerationRunPayload, getWindow: Window
   const copiedImages: string[] = [];
 
   fs.mkdirSync(imagesDir, { recursive: true });
-  console.log("[gen] userData:", userDataPath);
-  console.log("[gen] outGlb:", outGlbPath);
+  logInfo("[gen] userData:", userDataPath);
+  logInfo("[gen] outGlb:", outGlbPath);
 
   sendProgress(getWindow, {
     projectId,
@@ -346,7 +580,7 @@ async function runGenerationJob(payload: GenerationRunPayload, getWindow: Window
   for (let index = 0; index < payload.imagePaths.length; index += 1) {
     if (job.canceled) {
       sendError(getWindow, { projectId, message: "Generacion cancelada." });
-      return;
+      throw new Error("Generacion cancelada.");
     }
 
     const imagePath = payload.imagePaths[index];
@@ -375,7 +609,7 @@ async function runGenerationJob(payload: GenerationRunPayload, getWindow: Window
 
   if (job.canceled) {
     sendError(getWindow, { projectId, message: "Generacion cancelada." });
-    return;
+    throw new Error("Generacion cancelada.");
   }
 
   const mode = resolveGenerationMode(copiedImages[0]);
@@ -410,9 +644,16 @@ async function runGenerationJob(payload: GenerationRunPayload, getWindow: Window
   if (!localResult.ok || !localResult.outGlbPath) {
     if (job.canceled) {
       sendError(getWindow, { projectId, message: "Generacion cancelada." });
-      return;
+      throw new Error("Generacion cancelada.");
     }
-    throw new Error(localResult.error ?? "Fallo la generacion Image->3D.");
+    const generationError = new Error(localResult.error ?? "Fallo la generacion Image->3D.") as PythonRunError;
+    if (typeof localResult.stdout === "string") {
+      generationError.stdout = localResult.stdout;
+    }
+    if (typeof localResult.stderr === "string") {
+      generationError.stderr = localResult.stderr;
+    }
+    throw generationError;
   }
 
   latestOutputByProject.set(projectId, localResult.outGlbPath);
@@ -432,6 +673,11 @@ async function runGenerationJob(payload: GenerationRunPayload, getWindow: Window
     preset: payload.preset,
     device: localResult.device,
   });
+
+  return {
+    outPath: localResult.outGlbPath,
+    device: localResult.device,
+  };
 }
 
 function buildGeneratorCheckResult(): GenerationCheckResult {
@@ -472,38 +718,55 @@ export function registerGenerationHandlers(getWindow: WindowGetter) {
     return response.filePaths.map((filePath) => resolve(filePath));
   });
 
-  ipcMain.handle(IPC_CHANNELS.generationRun, async (_event, payload: unknown): Promise<GenerationRunResult> => {
-    if (!validateRunPayload(payload)) {
-      return { ok: false, error: "Invalid generation payload." };
-    }
+  ipcMain.handle(IPC_CHANNELS.generationRun, async (_event, payload: unknown): Promise<GenerationRunHandlerResult> => {
+    let projectId: string | null = null;
+    try {
+      if (!validateRunPayload(payload)) {
+        return { ok: false, error: "Invalid generation payload.", logFile: getGenerationLogFilePath() };
+      }
 
-    if (activeJobs.has(payload.projectId)) {
-      return { ok: false, error: "A generation job is already running for this project." };
-    }
+      projectId = payload.projectId;
+      if (activeJobs.has(projectId)) {
+        return {
+          ok: false,
+          error: "A generation job is already running for this project.",
+          logFile: getGenerationLogFilePath(),
+        };
+      }
 
-    const hasAtLeastOneImage = payload.imagePaths.some((imagePath) => {
-      return IMAGE_EXTENSIONS.has(extname(imagePath).toLowerCase());
-    });
-
-    if (!hasAtLeastOneImage) {
-      return { ok: false, error: "No valid images were selected." };
-    }
-
-    const job: GenerationJobState = { canceled: false, process: null };
-    activeJobs.set(payload.projectId, job);
-
-    void runGenerationJob(payload, getWindow, job)
-      .catch((error) => {
-        sendError(getWindow, {
-          projectId: payload.projectId,
-          message: error instanceof Error ? error.message : "Generation failed unexpectedly.",
-        });
-      })
-      .finally(() => {
-        activeJobs.delete(payload.projectId);
+      const hasAtLeastOneImage = payload.imagePaths.some((imagePath) => {
+        return IMAGE_EXTENSIONS.has(extname(imagePath).toLowerCase());
       });
 
-    return { ok: true };
+      if (!hasAtLeastOneImage) {
+        return { ok: false, error: "No valid images were selected.", logFile: getGenerationLogFilePath() };
+      }
+
+      const job: GenerationJobState = { canceled: false, process: null };
+      activeJobs.set(projectId, job);
+
+      const jobResult = await runGenerationJob(payload, getWindow, job);
+      return {
+        ok: true,
+        outPath: jobResult.outPath,
+        device: jobResult.device,
+        logFile: getGenerationLogFilePath(),
+      };
+    } catch (error) {
+      const runError = createGenerationRunErrorResult(error);
+      logErr("[gen:run] handler error:", runError.error);
+      if (projectId) {
+        sendError(getWindow, {
+          projectId,
+          message: runError.error,
+        });
+      }
+      return runError;
+    } finally {
+      if (projectId) {
+        activeJobs.delete(projectId);
+      }
+    }
   });
 
   ipcMain.handle(IPC_CHANNELS.generationCancel, async (_event, payload: { projectId?: string } | undefined) => {
