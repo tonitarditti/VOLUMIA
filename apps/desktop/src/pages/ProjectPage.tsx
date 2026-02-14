@@ -67,7 +67,7 @@ function getProjectModel(model: ProjectModel | undefined): ProjectModel {
 
 export function ProjectPage() {
   const { t, language } = useT();
-  const { settings } = useSettings();
+  const { settings, resolvedTheme } = useSettings();
   const { projectId = "" } = useParams();
   const { state, hydrated, renameProject, updateNotes, appendChatMessage, updateModelMetadata, updateProjectModel } = useProjects();
 
@@ -81,8 +81,8 @@ export function ProjectPage() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationDevice, setGenerationDevice] = useState<GenerationDevice | null>(null);
   const [imagePreviews, setImagePreviews] = useState<Record<string, string>>({});
+  const [isAssistantOpen, setIsAssistantOpen] = useState(false);
   const [isNotesOpen, setIsNotesOpen] = useState(false);
-  const [isAssistantOpen, setIsAssistantOpen] = useState(true);
   const historyBottomRef = useRef<HTMLDivElement | null>(null);
   const projectModel = getProjectModel(project?.model);
 
@@ -105,7 +105,6 @@ export function ProjectPage() {
     setIsGenerating(false);
     setGenerationDevice(null);
     setImagePreviews({});
-    setIsNotesOpen(false);
   }, [project?.id]);
 
   useEffect(() => {
@@ -367,163 +366,222 @@ export function ProjectPage() {
     await desktopApi.openGenerationOutputFolder(project.model.glbPath);
   };
 
+  const isLightMode = resolvedTheme === "light";
+  const warmPanelClass = isLightMode
+    ? "border border-[#d6d3d1]/50 bg-white/40 text-[#1c1917] backdrop-blur-md shadow-[0_8px_32px_rgba(0,0,0,0.15)]"
+    : "border border-[#44403c]/50 bg-[#1c1917]/80 text-[#e7e5e4] backdrop-blur-xl shadow-2xl";
+  const warmGlassClass = isLightMode
+    ? "bg-white/40 backdrop-blur-md border border-[#d6d3d1]/50 text-[#1c1917] shadow-[0_8px_32px_rgba(0,0,0,0.15)]"
+    : "bg-[#0c0a09]/60 backdrop-blur-2xl border border-white/10 text-[#e7e5e4] shadow-[0_8px_32px_rgba(0,0,0,0.5)]";
+  const floatingButtonClass = isLightMode
+    ? "rounded-lg border border-[#d6d3d1]/50 bg-white/40 px-3 py-2 text-xs text-[#1c1917] backdrop-blur-md transition-all duration-200 ease-out hover:bg-white/60"
+    : "rounded-lg border border-[#44403c]/50 bg-[#1c1917]/80 px-3 py-2 text-xs text-[#e7e5e4] backdrop-blur-xl transition-all duration-200 ease-out hover:bg-[#292524]/85";
+
   return (
-    <div className="flex h-full min-h-0 w-full min-w-0 gap-4 overflow-hidden p-0">
-      <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">
-        <ProjectViewport glbPath={project.model?.glbPath} glbVersion={project.model?.generatedAt} />
-
-        <div className="absolute left-4 top-4 z-30 w-72 rounded-xl border border-[var(--border)] bg-[var(--surface-1)]/70 p-3 backdrop-blur">
-          <TextField
-            value={project.name}
-            onChange={(event) => renameProject(project.id, event.target.value)}
-            aria-label={t("dashboard.projectNameLabel")}
-            label={t("project.projectName")}
-          />
-        </div>
-
-        <div className="absolute left-1/2 top-4 z-30 flex max-w-[calc(100%-2rem)] -translate-x-1/2 flex-wrap items-center justify-center gap-4 rounded-xl border border-[var(--border)] bg-[var(--surface-1)]/50 px-4 py-3 backdrop-blur">
-          <Button variant="secondary" onClick={() => void handleSelectImages()} disabled={isGenerating}>
-            Agregar imagenes
-          </Button>
-          <select
-            value={preset}
-            onChange={(event) => setPreset(event.target.value as GenerationPreset)}
-            className="h-10 min-w-40 rounded-lg border border-[var(--border)] bg-[var(--surface-3)] px-3 text-sm text-[var(--text)] outline-none transition duration-150 ease-out focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--focus-ring)]"
-            disabled={isGenerating}
-          >
-            <option value="fast">Fast</option>
-            <option value="balanced">Balanced</option>
-            <option value="quality">Quality</option>
-          </select>
-          <Button variant="primary" onClick={() => void handleRunGeneration()} disabled={selectedImages.length === 0 || isGenerating}>
-            Generar 3D
-          </Button>
-          <Button
-            variant="primary"
-            onClick={() => void handleRunGenerationSkp()}
-            disabled={selectedImages.length < 1 || selectedImages.length > 4 || isGenerating}
-          >
-            Generar SKP (IA)
-          </Button>
-          <Button variant="ghost" onClick={() => void handleCancelGeneration()} disabled={!isGenerating}>
-            Cancelar
-          </Button>
-          <Button variant="secondary" onClick={() => void handleOpenOutputFolder()} disabled={!project.model?.glbPath}>
-            Abrir salida
-          </Button>
-          <span className="inline-flex h-10 items-center rounded-full border border-[var(--border)] bg-[var(--surface-2)] px-3 text-xs text-[var(--text-muted)]">
-            {generationDevice
-              ? generationDevice.device === "cuda"
-                ? `GPU: ${shortDeviceName(generationDevice.name)}`
-                : "CPU"
-              : "Detectando..."}
-          </span>
-          <span className="text-xs text-[var(--text-muted)]">{generationStage}: {generationMessage}</span>
-        </div>
-
-        {selectedImages.length > 0 ? (
-          <div className="absolute left-4 top-24 z-20 w-72 max-h-64 space-y-2 overflow-y-auto rounded-xl border border-[var(--border)] bg-[var(--surface-1)]/75 p-2 backdrop-blur">
-            {selectedImages.map((imagePath) => (
-              <figure key={imagePath} className="flex items-center gap-2 overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface-2)] p-2">
-                {imagePreviews[imagePath] ? (
-                  <img src={imagePreviews[imagePath]} alt={filenameFromPath(imagePath)} className="h-14 w-14 shrink-0 rounded object-cover" />
-                ) : (
-                  <div className="h-14 w-14 shrink-0 rounded bg-[var(--surface-3)]" />
-                )}
-                <figcaption className="truncate text-[11px] text-[var(--text-muted)]">{filenameFromPath(imagePath)}</figcaption>
-              </figure>
-            ))}
-          </div>
-        ) : null}
-
-        <div
-          className="absolute inset-x-4 bottom-4 z-30 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface-1)]/70 backdrop-blur transition-[max-height] duration-200 ease-out"
-          style={{ maxHeight: isNotesOpen ? 200 : 40 }}
-        >
-          <div className="flex h-10 items-center justify-between px-3">
-            <h2 className="text-[11px] font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">{t("project.notes")}</h2>
-            <Button variant="ghost" className="h-8 px-2 text-xs" onClick={() => setIsNotesOpen((value) => !value)}>
-              {isNotesOpen ? "Ocultar" : "Abrir"}
-            </Button>
-          </div>
-          <div className="h-[160px] px-3 pb-3">
-            <TextArea
-              value={project.notes}
-              onChange={(event) => updateNotes(project.id, event.target.value)}
-              rows={7}
-              className="h-full min-h-0 leading-relaxed"
-              placeholder={t("project.notesPlaceholder")}
-              label=""
-            />
-          </div>
-        </div>
-
-        <button
-          type="button"
-          onClick={() => setIsAssistantOpen((value) => !value)}
-          className="absolute right-4 top-4 z-40 rounded-md border border-[var(--border)] bg-[var(--surface-1)]/70 px-2 py-1 text-[10px] uppercase tracking-[0.08em] text-[var(--text-muted)] backdrop-blur transition-colors hover:text-[var(--text)]"
-        >
-          {isAssistantOpen ? "Ocultar asistente" : "Mostrar asistente"}
-        </button>
+    <div className="relative h-full min-h-0 w-full min-w-0 overflow-hidden">
+      <div className="absolute inset-0 z-0 h-full w-full">
+        <ProjectViewport glbPath={project.model?.glbPath} glbVersion={project.model?.generatedAt} showUtilityButtons={false} />
       </div>
 
-      <aside
-        className={`relative h-full min-h-0 overflow-hidden border-l border-[var(--border)] bg-[var(--surface-1)] transition-[width,opacity] duration-200 ease-out ${
-          isAssistantOpen ? "w-[300px] opacity-100" : "w-0 opacity-0 pointer-events-none"
-        }`}
-      >
-        <div className="flex h-full w-[300px] min-h-0 flex-col p-4">
-          <h2 className="mb-3 text-[11px] font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">{t("project.assistant")}</h2>
+      <div className="pointer-events-none absolute inset-0 z-10 p-4">
+        <div className="relative flex h-full min-h-0 w-full min-w-0 gap-4">
+          <aside className={`pointer-events-auto flex h-full min-h-0 w-[320px] flex-col rounded-2xl p-4 ${warmPanelClass}`}>
+            <TextField
+              value={project.name}
+              onChange={(event) => renameProject(project.id, event.target.value)}
+              aria-label={t("dashboard.projectNameLabel")}
+              label={t("project.projectName")}
+            />
 
-          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto rounded-xl border border-[var(--border)] bg-[var(--surface-2)] p-3.5">
-            {project.chatHistory.length === 0 ? (
-              <p className="text-sm leading-relaxed text-[var(--text-muted)]">
-                {t("project.noMessages")}
-              </p>
-            ) : null}
+            <div className="mt-4 flex min-h-0 flex-1 flex-col">
+              <h2 className="mb-3 text-[11px] font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">Image to 3D</h2>
+              <div className="mb-3 flex flex-wrap items-center gap-2">
+                <Button variant="secondary" onClick={() => void handleSelectImages()} disabled={isGenerating}>
+                  Agregar imagenes
+                </Button>
+                <Button variant="secondary" onClick={() => void handleOpenOutputFolder()} disabled={!project.model?.glbPath}>
+                  Abrir salida
+                </Button>
+              </div>
 
-            {project.chatHistory.map((message) => {
-              const isAssistant = message.role === "assistant";
+              {selectedImages.length > 0 ? (
+                <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
+                  {selectedImages.map((imagePath) => (
+                    <figure
+                      key={imagePath}
+                      className={`flex items-center gap-2 overflow-hidden rounded-lg p-2 ${
+                        isLightMode ? "border border-[#d6d3d1]/50 bg-white/40" : "border border-[#44403c]/50 bg-[#0c0a09]/55"
+                      }`}
+                    >
+                      {imagePreviews[imagePath] ? (
+                        <img src={imagePreviews[imagePath]} alt={filenameFromPath(imagePath)} className="h-16 w-16 shrink-0 rounded object-cover" />
+                      ) : (
+                        <div className="h-16 w-16 shrink-0 rounded bg-[var(--surface-3)]" />
+                      )}
+                      <figcaption className="truncate text-[11px] text-[var(--text-muted)]">{filenameFromPath(imagePath)}</figcaption>
+                    </figure>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-[var(--text-muted)]">No hay imagenes seleccionadas.</p>
+              )}
 
-              return (
-                <article
-                  key={message.id}
-                  className={`rounded-xl border p-3 ${
-                    isAssistant
-                      ? "border-[var(--border)] bg-[var(--surface-1)] text-[var(--text)]"
-                      : "border-[var(--accent)] bg-[var(--surface-2)] text-[var(--text)]"
+              <div className="mt-3 space-y-1">
+                <div className="h-2 w-full overflow-hidden rounded-full bg-[var(--surface-3)]">
+                  <div className="h-full bg-[var(--accent)] transition-all duration-150 ease-out" style={{ width: `${generationPercent}%` }} />
+                </div>
+                <p className="text-xs text-[var(--text-muted)]">
+                  {generationStage}: {generationMessage}
+                </p>
+              </div>
+            </div>
+          </aside>
+
+          <div className="relative min-h-0 min-w-0 flex-1">
+            <div className="pointer-events-none absolute left-1/2 top-0 z-10 -translate-x-1/2">
+              <div className={`pointer-events-auto flex items-center gap-2 rounded-full px-3 py-2 transition-all duration-200 ease-out ${isLightMode ? "hover:bg-white/60" : "hover:bg-[#1c1917]/80"} ${warmGlassClass}`}>
+                <select
+                  value={preset}
+                  onChange={(event) => setPreset(event.target.value as GenerationPreset)}
+                  className={`h-9 min-w-32 rounded-lg px-3 text-sm outline-none transition duration-150 ease-out focus:border-[#a8a29e] focus:ring-2 focus:ring-[#a8a29e] ${
+                    isLightMode
+                      ? "border border-[#d6d3d1]/50 bg-white/50 text-[#1c1917]"
+                      : "border border-[#44403c]/50 bg-[#1c1917]/85 text-[#e7e5e4]"
+                  }`}
+                  disabled={isGenerating}
+                >
+                  <option value="fast">Fast</option>
+                  <option value="balanced">Balanced</option>
+                  <option value="quality">Quality</option>
+                </select>
+                <Button variant="primary" onClick={() => void handleRunGeneration()} disabled={selectedImages.length === 0 || isGenerating}>
+                  Generar 3D
+                </Button>
+                <Button
+                  variant="primary"
+                  onClick={() => void handleRunGenerationSkp()}
+                  disabled={selectedImages.length < 1 || selectedImages.length > 4 || isGenerating}
+                >
+                  Generar SKP
+                </Button>
+                <Button variant="ghost" onClick={() => void handleCancelGeneration()} disabled={!isGenerating}>
+                  Cancelar
+                </Button>
+              </div>
+            </div>
+
+            <div className="pointer-events-none absolute right-0 top-0 z-10">
+              <div className="flex items-center gap-2">
+                <span className={`${floatingButtonClass}`}>
+                  {generationDevice
+                    ? generationDevice.device === "cuda"
+                      ? `GPU: ${shortDeviceName(generationDevice.name)}`
+                      : "CPU"
+                    : "Detectando..."}
+                </span>
+                <button
+                  type="button"
+                  className={`pointer-events-auto ${floatingButtonClass}`}
+                  onClick={() => setIsAssistantOpen((current) => !current)}
+                >
+                  {isAssistantOpen ? "Ocultar asistente" : "Asistente"}
+                </button>
+              </div>
+            </div>
+
+            <div className="pointer-events-none absolute bottom-16 right-0 top-12 z-10">
+              <aside
+                className={`pointer-events-auto h-full w-[340px] rounded-2xl p-4 transition-all duration-500 ease-in-out ${
+                  isAssistantOpen ? "translate-x-0 opacity-100" : "translate-x-[120%] opacity-0"
+                } ${warmPanelClass}`}
+              >
+                <h2 className="mb-3 text-[11px] font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">{t("project.assistant")}</h2>
+
+                <div
+                  className={`min-h-0 h-[calc(100%-4.5rem)] space-y-3 overflow-y-auto rounded-xl p-3.5 ${
+                    isLightMode ? "border border-[#d6d3d1]/50 bg-white/40" : "border border-[#44403c]/50 bg-[#0c0a09]/55"
                   }`}
                 >
-                  <header className="mb-1.5 flex items-center justify-between text-[10px] uppercase tracking-[0.16em] text-[var(--text-muted)]">
-                    <span>{isAssistant ? t("project.assistantRole") : t("project.userRole")}</span>
-                    <time>{formatMessageTime(message.createdAt, language)}</time>
-                  </header>
-                  <p className="whitespace-pre-wrap text-sm leading-relaxed">{message.content}</p>
-                </article>
-              );
-            })}
-            <div ref={historyBottomRef} />
-          </div>
+                  {project.chatHistory.length === 0 ? <p className="text-sm leading-relaxed text-[var(--text-muted)]">{t("project.noMessages")}</p> : null}
 
-          <div className="mt-4 flex gap-4">
-            <TextField
-              value={chatInput}
-              onChange={(event) => setChatInput(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  submitChat();
-                }
-              }}
-              placeholder={t("project.promptPlaceholder")}
-              aria-label={t("project.assistant")}
-            />
-            <Button variant="primary" className="min-w-24" onClick={submitChat}>
-              {t("project.send")}
-            </Button>
+                  {project.chatHistory.map((message) => {
+                    const isAssistant = message.role === "assistant";
+
+                    return (
+                      <article
+                        key={message.id}
+                        className={`rounded-xl border p-3 ${
+                          isAssistant
+                            ? isLightMode
+                              ? "border-[#d6d3d1]/60 bg-white/45 text-[#1c1917]"
+                              : "border-[#44403c]/50 bg-[#0c0a09]/55 text-[#e7e5e4]"
+                            : isLightMode
+                              ? "border-[#a8a29e] bg-[#f5f5f4]/75 text-[#1c1917]"
+                              : "border-[#78716c] bg-[#1c1917]/80 text-[#e7e5e4]"
+                        }`}
+                      >
+                        <header className="mb-1.5 flex items-center justify-between text-[10px] uppercase tracking-[0.16em] text-[var(--text-muted)]">
+                          <span>{isAssistant ? t("project.assistantRole") : t("project.userRole")}</span>
+                          <time>{formatMessageTime(message.createdAt, language)}</time>
+                        </header>
+                        <p className="whitespace-pre-wrap text-sm leading-relaxed">{message.content}</p>
+                      </article>
+                    );
+                  })}
+                  <div ref={historyBottomRef} />
+                </div>
+
+                <div className="mt-3 flex gap-2">
+                  <TextField
+                    value={chatInput}
+                    onChange={(event) => setChatInput(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        submitChat();
+                      }
+                    }}
+                    placeholder={t("project.promptPlaceholder")}
+                    aria-label={t("project.assistant")}
+                  />
+                  <Button variant="primary" className="min-w-24" onClick={submitChat}>
+                    {t("project.send")}
+                  </Button>
+                </div>
+              </aside>
+            </div>
+
+            <div className="pointer-events-none absolute bottom-0 left-0 right-0 z-10">
+              <div
+                className={`pointer-events-auto overflow-hidden rounded-2xl transition-all duration-500 ease-in-out ${
+                  isNotesOpen ? "h-56" : "h-10"
+                } ${warmGlassClass}`}
+              >
+                <button
+                  type="button"
+                  className={`pointer-events-auto flex h-10 w-full items-center justify-between px-4 text-left text-xs font-medium uppercase tracking-[0.16em] transition-all duration-200 ease-out ${
+                    isLightMode ? "text-[#57534e] hover:bg-white/60" : "text-[#d6d3d1] hover:bg-[#1c1917]/80"
+                  }`}
+                  onClick={() => setIsNotesOpen((current) => !current)}
+                >
+                  <span>{t("project.notes")}</span>
+                  <span>{isNotesOpen ? "Ocultar" : "Mostrar"}</span>
+                </button>
+                <div className="h-[calc(100%-2.5rem)] px-4 pb-4">
+                  <TextArea
+                    value={project.notes}
+                    onChange={(event) => updateNotes(project.id, event.target.value)}
+                    rows={7}
+                    className="h-full min-h-0 leading-relaxed"
+                    placeholder={t("project.notesPlaceholder")}
+                    label=""
+                  />
+                </div>
+              </div>
+            </div>
           </div>
         </div>
-      </aside>
+      </div>
     </div>
   );
 }

@@ -13,7 +13,7 @@ export function Sidebar() {
   const { t } = useT();
 
   return (
-    <aside className="hidden w-44 shrink-0 flex-col border-r border-[var(--border)] bg-[var(--surface-1)] p-3 md:flex">
+    <aside className="hidden w-56 flex-col rounded-2xl border border-[var(--border)] bg-[var(--surface-1)] p-3 shadow-[var(--shadow)] md:flex">
       <p className="px-3 pb-2 text-[11px] uppercase tracking-[0.2em] text-[var(--text-muted)]">{t("nav.navigation")}</p>
       <nav className="space-y-1.5">
         <NavLink to="/" end className={({ isActive }) => navItemClass(isActive)}>

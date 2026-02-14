@@ -305,8 +305,9 @@ export function SettingsPage({
   }, [handleDetectPython]);
 
   return (
-    <div className="grid h-full w-full grid-cols-1 gap-4 overflow-y-auto p-4 lg:grid-cols-2">
-      <Card padding="md">
+    <div className="h-full w-full overflow-y-auto">
+      <div className="mx-auto grid max-w-6xl grid-cols-1 auto-rows-fr gap-6 p-8 md:grid-cols-2">
+      <Card padding="md" className="h-full">
         <p className="text-[11px] uppercase tracking-[0.2em] text-[var(--text-muted)]">{t("settings.workspace")}</p>
         <h1 className="mt-1 text-xl font-semibold tracking-[0.03em] text-[var(--text)]">{t("settings.title")}</h1>
         <h2 className="mt-4 text-sm font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">{t("settings.general")}</h2>
@@ -416,7 +417,7 @@ export function SettingsPage({
         </div>
       </Card>
 
-      <Card padding="md">
+      <Card padding="md" className="h-full">
         <h2 className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">{t("settings.window")}</h2>
         <div className="mt-3 space-y-3">
           <Select
@@ -441,7 +442,7 @@ export function SettingsPage({
         </div>
       </Card>
 
-      <Card padding="md">
+      <Card padding="md" className="h-full">
         <h2 className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">Sistema</h2>
         <div className="mt-3 space-y-3">
           <TextField label="Carpeta de datos" value={userDataPath} readOnly />
@@ -452,7 +453,7 @@ export function SettingsPage({
         </div>
       </Card>
 
-      <Card padding="md">
+      <Card padding="md" className="h-full">
         <h2 className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">Mantenimiento</h2>
         <div className="mt-3 space-y-3">
           <p className="text-xs text-[var(--text-muted)]">
@@ -480,7 +481,7 @@ export function SettingsPage({
         </div>
       </Card>
 
-      <Card padding="md">
+      <Card padding="md" className="h-full">
         <h2 className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">{t("settings.performance3d")}</h2>
         <div className="mt-3 space-y-3">
           <Select
@@ -513,7 +514,7 @@ export function SettingsPage({
         </div>
       </Card>
 
-      <Card padding="md">
+      <Card padding="md" className="h-full">
         <h2 className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">Generador 3D local (Python)</h2>
         <div className="mt-3 space-y-3">
           <Select
@@ -586,7 +587,7 @@ export function SettingsPage({
         </div>
       </Card>
 
-      <Card padding="md">
+      <Card padding="md" className="h-full">
         <h2 className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">{t("settings.data")}</h2>
         <div className="mt-3 grid grid-cols-1 gap-2">
           <Button variant="secondary" onClick={() => void onExportProjects()}>
@@ -609,6 +610,7 @@ export function SettingsPage({
           </Button>
         </div>
       </Card>
+      </div>
     </div>
   );
 }

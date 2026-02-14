@@ -33,6 +33,10 @@ type OrbitTargetClampProps = {
 type ProjectViewportProps = {
   glbPath?: string;
   glbVersion?: number;
+  showUtilityButtons?: boolean;
+  resetSignal?: number;
+  wireframe?: boolean;
+  onToggleWireframe?: () => void;
 };
 
 type LoadedModelProps = {
@@ -419,11 +423,11 @@ function getViewportThemeConfig(theme: ViewportTheme): ViewportThemeConfig {
   if (theme === "light") {
     return {
       isDark: false,
-      background: "#f0ebe3",
-      ground: "#bfb7ac",
-      gridMain: "#6a6358",
-      gridSub: "#8a8277",
-      gridOpacity: 0.45,
+      background: "#e7e5e4",
+      ground: "#d6d3d1",
+      gridMain: "#a8a29e",
+      gridSub: "#d6d3d1",
+      gridOpacity: 0.38,
       ambientIntensity: 0.18,
       hemisphereIntensity: 0.6,
       keyIntensity: 1.6,
@@ -483,7 +487,14 @@ function SceneRendererSetup({
   return null;
 }
 
-export function ProjectViewport({ glbPath, glbVersion }: ProjectViewportProps) {
+export function ProjectViewport({
+  glbPath,
+  glbVersion,
+  showUtilityButtons = true,
+  resetSignal,
+  wireframe: wireframeProp,
+  onToggleWireframe,
+}: ProjectViewportProps) {
   const { t } = useT();
   const { settings, resolvedTheme } = useSettings();
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -497,8 +508,9 @@ export function ProjectViewport({ glbPath, glbVersion }: ProjectViewportProps) {
     far: DEFAULT_CAMERA_SNAPSHOT.far,
   });
   const [size, setSize] = useState<ViewportSize>({ width: 0, height: 0 });
-  const [wireframe, setWireframe] = useState(false);
+  const [wireframeInternal, setWireframeInternal] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const wireframe = wireframeProp ?? wireframeInternal;
 
   useEffect(() => {
     const host = hostRef.current;
@@ -523,12 +535,36 @@ export function ProjectViewport({ glbPath, glbVersion }: ProjectViewportProps) {
     return () => observer.disconnect();
   }, []);
 
+  useEffect(() => {
+    const raf = window.requestAnimationFrame(() => {
+      const host = hostRef.current;
+      if (!host) {
+        window.dispatchEvent(new Event("resize"));
+        return;
+      }
+
+      const width = Math.max(1, host.clientWidth);
+      const height = Math.max(1, host.clientHeight);
+      setSize({ width, height });
+
+      if (rendererRef.current) {
+        rendererRef.current.setSize(width, height, false);
+      }
+
+      window.dispatchEvent(new Event("resize"));
+    });
+
+    return () => {
+      window.cancelAnimationFrame(raf);
+    };
+  }, []);
+
   const canRenderCanvas = size.width >= 10 && size.height >= 10;
   const viewportTheme = resolveViewportTheme(resolvedTheme);
   const themeConfig = getViewportThemeConfig(viewportTheme);
   const bgClass = themeConfig.isDark
     ? "bg-[#2b2926]"
-    : "bg-[#f0ebe3]";
+    : "bg-[#e7e5e4]";
 
   useEffect(() => {
     if (glbPath) {
@@ -568,11 +604,25 @@ export function ProjectViewport({ glbPath, glbVersion }: ProjectViewportProps) {
     }
   }, []);
 
+  useEffect(() => {
+    if (typeof resetSignal === "number") {
+      handleResetView();
+    }
+  }, [handleResetView, resetSignal]);
+
+  const handleToggleWireframe = useCallback(() => {
+    if (onToggleWireframe) {
+      onToggleWireframe();
+      return;
+    }
+    setWireframeInternal((current) => !current);
+  }, [onToggleWireframe]);
+
   return (
-    <div className="relative flex h-full min-h-0 w-full min-w-0 overflow-hidden">
+    <div className="absolute inset-0 z-0 h-full w-full overflow-hidden">
       <div
         ref={hostRef}
-        className={`relative flex-1 min-h-0 min-w-0 overflow-hidden ${bgClass}`}
+        className={`relative h-full w-full min-h-0 min-w-0 overflow-hidden ${bgClass}`}
       >
         <div className="pointer-events-none absolute left-3 top-3 z-10 rounded-md border border-[var(--border)] bg-[var(--surface-1)] px-2 py-1 text-[10px] uppercase tracking-[0.16em] text-[var(--text-muted)]">
           {t("project.viewport")}
@@ -580,33 +630,35 @@ export function ProjectViewport({ glbPath, glbVersion }: ProjectViewportProps) {
         <div className="pointer-events-none absolute bottom-3 left-3 z-10 rounded-md border border-[var(--border)] bg-[var(--surface-2)] px-2 py-1 text-[10px] text-[var(--text-muted)]">
           {t("project.viewportHint")}
         </div>
-        <div className="absolute right-3 top-3 z-20 flex items-center gap-2">
-          <button
-            type="button"
-            onClick={handleResetView}
-            className="rounded-md border border-[var(--border)] bg-[var(--surface-1)] px-2 py-1 text-[10px] uppercase tracking-[0.08em] text-[var(--text-muted)] transition-colors hover:text-[var(--text)]"
-          >
-            Reset View
-          </button>
-          <button
-            type="button"
-            onClick={() => setWireframe((current) => !current)}
-            className={`rounded-md border border-[var(--border)] px-2 py-1 text-[10px] uppercase tracking-[0.08em] transition-colors ${
-              wireframe
-                ? "bg-[var(--surface-3)] text-[var(--text)]"
-                : "bg-[var(--surface-1)] text-[var(--text-muted)] hover:text-[var(--text)]"
-            }`}
-          >
-            Wireframe
-          </button>
-          <button
-            type="button"
-            onClick={handleScreenshot}
-            className="rounded-md border border-[var(--border)] bg-[var(--surface-1)] px-2 py-1 text-[10px] uppercase tracking-[0.08em] text-[var(--text-muted)] transition-colors hover:text-[var(--text)]"
-          >
-            Screenshot
-          </button>
-        </div>
+        {showUtilityButtons ? (
+          <div className="absolute right-3 top-3 z-20 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleResetView}
+              className="rounded-md border border-[var(--border)] bg-[var(--surface-1)] px-2 py-1 text-[10px] uppercase tracking-[0.08em] text-[var(--text-muted)] transition-colors hover:text-[var(--text)]"
+            >
+              Reset View
+            </button>
+            <button
+              type="button"
+              onClick={handleToggleWireframe}
+              className={`rounded-md border border-[var(--border)] px-2 py-1 text-[10px] uppercase tracking-[0.08em] transition-colors ${
+                wireframe
+                  ? "bg-[var(--surface-3)] text-[var(--text)]"
+                  : "bg-[var(--surface-1)] text-[var(--text-muted)] hover:text-[var(--text)]"
+              }`}
+            >
+              Wireframe
+            </button>
+            <button
+              type="button"
+              onClick={handleScreenshot}
+              className="rounded-md border border-[var(--border)] bg-[var(--surface-1)] px-2 py-1 text-[10px] uppercase tracking-[0.08em] text-[var(--text-muted)] transition-colors hover:text-[var(--text)]"
+            >
+              Screenshot
+            </button>
+          </div>
+        ) : null}
         {loadError ? (
           <div className="pointer-events-none absolute inset-x-3 bottom-12 z-20 rounded-md border border-[#7e2d2d] bg-[#3c1515]/90 px-3 py-2 text-[11px] leading-snug text-[#ffd7d7]">
             {loadError}
@@ -642,6 +694,15 @@ export function ProjectViewport({ glbPath, glbVersion }: ProjectViewportProps) {
                 }
 
                 if (camera instanceof THREE.PerspectiveCamera) {
+                  const host = hostRef.current;
+                  if (host) {
+                    const width = Math.max(1, host.clientWidth);
+                    const height = Math.max(1, host.clientHeight);
+                    gl.setSize(width, height, false);
+                    camera.aspect = width / height;
+                    camera.updateProjectionMatrix();
+                    setSize({ width, height });
+                  }
                   cameraRef.current = camera;
                   applyCameraSnapshot(camera, controlsRef, cameraSnapshotRef.current);
                 }
