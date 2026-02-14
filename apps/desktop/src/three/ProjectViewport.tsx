@@ -69,8 +69,6 @@ type ViewportThemeConfig = {
 };
 
 const VIEW_TARGET = new THREE.Vector3(0, 0.4, 0);
-const MODEL_VIEW_TARGET = new THREE.Vector3(0, 0, 0);
-const MODEL_CAMERA_POSITION = new THREE.Vector3(0, 1.5, 3);
 const DEFAULT_CAMERA_SNAPSHOT: CameraSnapshot = {
   position: new THREE.Vector3(2.8, 2.2, 2.8),
   target: VIEW_TARGET.clone(),
@@ -93,7 +91,8 @@ function extractErrorMessage(error: unknown): string {
 function applyCameraSnapshot(
   camera: THREE.PerspectiveCamera,
   controlsRef: { current: OrbitControlsImpl | null },
-  snapshot: CameraSnapshot
+  snapshot: CameraSnapshot,
+  controlsFromThree: OrbitControlsImpl | null = null
 ) {
   camera.position.copy(snapshot.position);
   camera.near = snapshot.near;
@@ -101,76 +100,22 @@ function applyCameraSnapshot(
   camera.lookAt(snapshot.target);
   camera.updateProjectionMatrix();
 
-  if (controlsRef.current) {
-    controlsRef.current.target.copy(snapshot.target);
-    controlsRef.current.update();
+  const controls = controlsRef.current ?? controlsFromThree;
+  if (controls) {
+    controls.target.copy(snapshot.target);
+    controls.update();
   }
 }
 
-function fitCameraToObject(
-  camera: THREE.Camera,
-  object: THREE.Object3D,
-  controlsRef: { current: OrbitControlsImpl | null }
-): CameraSnapshot | null {
-  if (!(camera instanceof THREE.PerspectiveCamera)) {
+function asOrbitControls(value: unknown): OrbitControlsImpl | null {
+  if (!value || typeof value !== "object") {
     return null;
   }
-
-  const box = new THREE.Box3().setFromObject(object);
-  if (box.isEmpty()) {
+  const maybe = value as Partial<OrbitControlsImpl>;
+  if (!maybe.target || typeof maybe.update !== "function") {
     return null;
   }
-
-  const nextTarget = MODEL_VIEW_TARGET.clone();
-  const nextPosition = MODEL_CAMERA_POSITION.clone();
-  const near = 0.1;
-  const far = 200;
-
-  applyCameraSnapshot(camera, controlsRef, {
-    position: nextPosition,
-    target: nextTarget,
-    near,
-    far,
-  });
-
-  return {
-    position: nextPosition.clone(),
-    target: nextTarget.clone(),
-    near,
-    far,
-  };
-}
-
-function normalizeModelForViewport(object: THREE.Object3D, targetSize = 2) {
-  object.updateMatrixWorld(true);
-
-  const box = new THREE.Box3().setFromObject(object);
-  if (box.isEmpty()) {
-    return;
-  }
-
-  const center = box.getCenter(new THREE.Vector3());
-  const size = box.getSize(new THREE.Vector3());
-  object.position.sub(center);
-
-  const maxDim = Math.max(size.x, size.y, size.z);
-  if (Number.isFinite(maxDim) && maxDim > 0) {
-    const scale = targetSize / maxDim;
-    if (Number.isFinite(scale) && scale > 0) {
-      object.scale.setScalar(scale);
-    }
-  }
-
-  object.updateMatrixWorld(true);
-
-  const newBox = new THREE.Box3().setFromObject(object);
-  if (newBox.isEmpty()) {
-    return;
-  }
-
-  const newCenter = newBox.getCenter(new THREE.Vector3());
-  object.position.sub(newCenter);
-  object.updateMatrixWorld(true);
+  return maybe as OrbitControlsImpl;
 }
 
 function applyModelVisualSettings(object: THREE.Object3D, envMapIntensity: number, wireframe: boolean) {
@@ -213,13 +158,17 @@ function LoadedModel({
   onLoadError,
   onCameraFit,
 }: LoadedModelProps) {
-  const { camera, scene, invalidate } = useThree();
-  const modelRef = useRef<THREE.Object3D | null>(null);
+  const { camera, controls, invalidate } = useThree();
+  const modelRef = useRef<THREE.Group>(null);
+  const loadedSceneRef = useRef<THREE.Object3D | null>(null);
+  const [loadedModel, setLoadedModel] = useState<THREE.Object3D | null>(null);
 
   useEffect(() => {
-    if (modelRef.current) {
-      scene.remove(modelRef.current);
-      modelRef.current = null;
+    const container = modelRef.current;
+    if (container && loadedSceneRef.current) {
+      container.remove(loadedSceneRef.current);
+      loadedSceneRef.current = null;
+      setLoadedModel(null);
       invalidate();
     }
 
@@ -256,14 +205,15 @@ function LoadedModel({
               onLoadError("GLB loaded but no scene was found.");
               return;
             }
-            normalizeModelForViewport(model);
-            scene.add(model);
-            applyModelVisualSettings(model, envMapIntensity, wireframe);
-            modelRef.current = model;
-            const snapshot = fitCameraToObject(camera, model, controlsRef);
-            if (snapshot) {
-              onCameraFit(snapshot);
+            const container = modelRef.current;
+            if (!container) {
+              onLoadError("Model container unavailable.");
+              return;
             }
+            container.add(model);
+            applyModelVisualSettings(model, envMapIntensity, wireframe);
+            loadedSceneRef.current = model;
+            setLoadedModel(model);
             onLoadError(null);
             invalidate();
           },
@@ -282,24 +232,88 @@ function LoadedModel({
 
     return () => {
       active = false;
-      if (modelRef.current) {
-        scene.remove(modelRef.current);
-        modelRef.current = null;
+      const container = modelRef.current;
+      if (container && loadedSceneRef.current) {
+        container.remove(loadedSceneRef.current);
+        loadedSceneRef.current = null;
+        setLoadedModel(null);
         invalidate();
       }
     };
-  }, [camera, controlsRef, envMapIntensity, glbPath, glbVersion, invalidate, onCameraFit, onLoadError, scene, wireframe]);
+  }, [envMapIntensity, glbPath, glbVersion, invalidate, onLoadError, wireframe]);
 
   useEffect(() => {
-    if (!modelRef.current) {
+    if (!loadedModel || !(camera instanceof THREE.PerspectiveCamera)) {
       return;
     }
 
-    applyModelVisualSettings(modelRef.current, envMapIntensity, wireframe);
-    invalidate();
-  }, [envMapIntensity, invalidate, wireframe]);
+    loadedModel.updateMatrixWorld(true);
 
-  return null;
+    const box = new THREE.Box3().setFromObject(loadedModel);
+    if (box.isEmpty()) {
+      return;
+    }
+
+    const center = box.getCenter(new THREE.Vector3());
+    loadedModel.position.x -= center.x;
+    loadedModel.position.z -= center.z;
+    loadedModel.updateMatrixWorld(true);
+
+    const groundedBox = new THREE.Box3().setFromObject(loadedModel);
+    if (groundedBox.isEmpty()) {
+      return;
+    }
+    if (Number.isFinite(groundedBox.min.y)) {
+      loadedModel.position.y -= groundedBox.min.y;
+      loadedModel.updateMatrixWorld(true);
+    }
+
+    const finalBox = new THREE.Box3().setFromObject(loadedModel);
+    if (finalBox.isEmpty()) {
+      return;
+    }
+
+    const size = finalBox.getSize(new THREE.Vector3());
+    const finalCenter = finalBox.getCenter(new THREE.Vector3());
+    const maxDim = Math.max(size.x, size.y, size.z);
+    if (!Number.isFinite(maxDim) || maxDim <= 0) {
+      return;
+    }
+
+    const fovRad = THREE.MathUtils.degToRad(camera.fov);
+    const cameraZ = (maxDim / (2 * Math.tan(fovRad / 2))) * 1.4;
+    const near = Math.max(0.01, cameraZ / 100);
+    const far = Math.max(50, cameraZ * 20);
+    const nextTarget = new THREE.Vector3(0, finalCenter.y, 0);
+    const nextPosition = new THREE.Vector3(0, finalCenter.y + maxDim * 0.35, cameraZ);
+    const snapshot: CameraSnapshot = {
+      position: nextPosition,
+      target: nextTarget,
+      near,
+      far,
+    };
+
+    const controlsFromThree = asOrbitControls(controls);
+    applyCameraSnapshot(camera, controlsRef, snapshot, controlsFromThree);
+    onCameraFit({
+      position: snapshot.position.clone(),
+      target: snapshot.target.clone(),
+      near: snapshot.near,
+      far: snapshot.far,
+    });
+    invalidate();
+  }, [camera, controls, controlsRef, invalidate, loadedModel, onCameraFit]);
+
+  useEffect(() => {
+    if (!loadedModel) {
+      return;
+    }
+
+    applyModelVisualSettings(loadedModel, envMapIntensity, wireframe);
+    invalidate();
+  }, [envMapIntensity, invalidate, loadedModel, wireframe]);
+
+  return <group ref={modelRef} />;
 }
 
 function FrameLimiter({ fpsLimit }: FrameLimiterProps) {
@@ -555,10 +569,10 @@ export function ProjectViewport({ glbPath, glbVersion }: ProjectViewportProps) {
   }, []);
 
   return (
-    <div className="relative w-full">
+    <div className="relative flex h-full min-h-0 w-full min-w-0 overflow-hidden">
       <div
         ref={hostRef}
-        className={`relative w-full min-h-[260px] overflow-hidden rounded-xl border border-[var(--border)] shadow-[var(--shadow)] aspect-[16/9] ${bgClass}`}
+        className={`relative flex-1 min-h-0 min-w-0 overflow-hidden rounded-xl border border-[var(--border)] shadow-[var(--shadow)] ${bgClass}`}
       >
         <div className="pointer-events-none absolute left-3 top-3 z-10 rounded-md border border-[var(--border)] bg-[var(--surface-1)] px-2 py-1 text-[10px] uppercase tracking-[0.16em] text-[var(--text-muted)]">
           {t("project.viewport")}
@@ -599,11 +613,11 @@ export function ProjectViewport({ glbPath, glbVersion }: ProjectViewportProps) {
           </div>
         ) : null}
         {canRenderCanvas ? (
-          <div className="absolute inset-0">
+          <div className="absolute inset-0 min-h-0 min-w-0 overflow-hidden">
             <Canvas
               key={`viewport-fps-${settings.fpsLimit}`}
-              className="block !h-full !w-full"
-              style={{ display: "block" }}
+              className="block h-full w-full"
+              style={{ display: "block", width: "100%", height: "100%" }}
               camera={{ position: [8, 6, 8], fov: 48, near: 0.1, far: 200 }}
               dpr={[1, 2]}
               frameloop="demand"

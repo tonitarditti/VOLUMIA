@@ -21,20 +21,14 @@ function formatMessageTime(value: string, locale: string) {
   return new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit" }).format(new Date(value));
 }
 
-function toFileUrl(filePath: string) {
-  const normalized = filePath.replace(/\\/g, "/");
-  if (/^[a-zA-Z]:\//.test(normalized)) {
-    return `file:///${normalized}`;
-  }
-  if (normalized.startsWith("/")) {
-    return `file://${normalized}`;
-  }
-  return `file://${normalized}`;
-}
-
 function filenameFromPath(value: string) {
   const parts = value.split(/[/\\]/);
   return parts[parts.length - 1] ?? value;
+}
+
+function sanitizePathSegment(value: string) {
+  const normalized = value.trim().replace(/[<>:"/\\|?*\u0000-\u001F]/g, "_");
+  return normalized || "project";
 }
 
 function shortDeviceName(value: string) {
@@ -87,6 +81,7 @@ export function ProjectPage() {
   const [generationMessage, setGenerationMessage] = useState("Selecciona imagenes para iniciar.");
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationDevice, setGenerationDevice] = useState<GenerationDevice | null>(null);
+  const [imagePreviews, setImagePreviews] = useState<Record<string, string>>({});
   const historyBottomRef = useRef<HTMLDivElement | null>(null);
   const projectModel = getProjectModel(project?.model);
 
@@ -108,7 +103,53 @@ export function ProjectPage() {
     setGenerationMessage("Selecciona imagenes para iniciar.");
     setIsGenerating(false);
     setGenerationDevice(null);
+    setImagePreviews({});
   }, [project?.id]);
+
+  useEffect(() => {
+    let active = true;
+    if (!hasDesktopBridge()) {
+      setImagePreviews({});
+      return () => {
+        active = false;
+      };
+    }
+    if (selectedImages.length === 0) {
+      setImagePreviews({});
+      return () => {
+        active = false;
+      };
+    }
+
+    void (async () => {
+      const entries = await Promise.all(
+        selectedImages.map(async (imagePath) => {
+          try {
+            const dataUrl = await desktopApi.readGenerationImageAsDataUrl(imagePath);
+            return [imagePath, dataUrl] as const;
+          } catch {
+            return [imagePath, ""] as const;
+          }
+        })
+      );
+
+      if (!active) {
+        return;
+      }
+
+      const nextMap: Record<string, string> = {};
+      for (const [imagePath, dataUrl] of entries) {
+        if (dataUrl) {
+          nextMap[imagePath] = dataUrl;
+        }
+      }
+      setImagePreviews(nextMap);
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [selectedImages]);
 
   useEffect(() => {
     if (!hasDesktopBridge() || !project) {
@@ -141,10 +182,18 @@ export function ProjectPage() {
         return;
       }
 
+      if (payload.pipeline === "gen_skp") {
+        setIsGenerating(false);
+        setGenerationStage("done");
+        setGenerationPercent(100);
+        setGenerationMessage(payload.skpPath ? `SKP generado: ${payload.skpPath}` : "SKP generado correctamente.");
+        return;
+      }
+
       const nextModel: ProjectModel = {
         ...getProjectModel(project.model),
         sourceImages: payload.sourceImages ?? selectedImages,
-        glbPath: payload.glbPath,
+        glbPath: payload.glbPath ?? project.model?.glbPath,
         generatedAt: Date.now(),
         preset: payload.preset ?? preset,
       };
@@ -190,7 +239,7 @@ export function ProjectPage() {
     const userMessage = createChatMessage("user", trimmed);
     appendChatMessage(project.id, userMessage);
 
-    const assistantReplyText = buildMockAssistantReply(project.name, trimmed);
+    const assistantReplyText = buildMockAssistantReply(project.name, trimmed, language);
     const assistantMessage = createChatMessage("assistant", assistantReplyText);
     appendChatMessage(project.id, assistantMessage);
 
@@ -213,9 +262,10 @@ export function ProjectPage() {
       return;
     }
 
-    console.log("[gen][renderer] selected:", picked.length, picked[0] ?? "");
-    setSelectedImages(picked);
-    setGenerationMessage(`${picked.length} imagen(es) seleccionada(s).`);
+    const limited = picked.slice(0, 4);
+    console.log("[gen][renderer] selected:", limited.length, limited[0] ?? "");
+    setSelectedImages(limited);
+    setGenerationMessage(`${limited.length} imagen(es) seleccionada(s).`);
   };
 
   const handleRunGeneration = async () => {
@@ -238,6 +288,7 @@ export function ProjectPage() {
       imagePaths: selectedImages,
       preset,
       pythonPath: settings.pythonPath,
+      pipeline: "depth_glb",
     });
 
     if (!result.ok) {
@@ -252,6 +303,47 @@ export function ProjectPage() {
       sourceImages: selectedImages,
       preset,
     });
+  };
+
+  const handleRunGenerationSkp = async () => {
+    if (!hasDesktopBridge()) {
+      return;
+    }
+
+    if (selectedImages.length < 1 || selectedImages.length > 4 || isGenerating) {
+      return;
+    }
+
+    const projectName = project.name.trim() || "Untitled Project";
+    const userDataPath = await desktopApi.getUserDataPath();
+    const safeId = sanitizePathSegment(project.id);
+    const workDir = `${userDataPath}\\skp-work\\${safeId}`;
+    const outputDir = `${userDataPath}\\skp-output`;
+
+    setIsGenerating(true);
+    setGenerationStage("running");
+    setGenerationPercent(1);
+    setGenerationMessage("Iniciando generacion SKP IA...");
+    setGenerationDevice(null);
+
+    const result = await desktopApi.runGeneration({
+      projectId: project.id,
+      imagePaths: selectedImages,
+      preset,
+      pythonPath: settings.pythonPath,
+      pipeline: "gen_skp",
+      inputs: selectedImages,
+      projectName,
+      workDir,
+      outputDir,
+      quality: preset === "fast" ? "fast" : "high",
+    });
+
+    if (!result.ok) {
+      setIsGenerating(false);
+      setGenerationStage("error");
+      setGenerationMessage(result.error);
+    }
   };
 
   const handleCancelGeneration = async () => {
@@ -306,6 +398,13 @@ export function ProjectPage() {
                 <Button variant="primary" onClick={() => void handleRunGeneration()} disabled={selectedImages.length === 0 || isGenerating}>
                   Generar 3D
                 </Button>
+                <Button
+                  variant="primary"
+                  onClick={() => void handleRunGenerationSkp()}
+                  disabled={selectedImages.length < 1 || selectedImages.length > 4 || isGenerating}
+                >
+                  Generar SKP (IA)
+                </Button>
                 <span className="inline-flex h-10 items-center rounded-full border border-[var(--border)] bg-[var(--surface-2)] px-3 text-xs text-[var(--text-muted)]">
                   {generationDevice
                     ? generationDevice.device === "cuda"
@@ -322,11 +421,15 @@ export function ProjectPage() {
               </div>
 
               {selectedImages.length > 0 ? (
-                <div className="grid grid-cols-3 gap-2 md:grid-cols-4 xl:grid-cols-6">
+                <div className="max-h-56 space-y-2 overflow-y-auto pr-1">
                   {selectedImages.map((imagePath) => (
-                    <figure key={imagePath} className="overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface-2)]">
-                      <img src={toFileUrl(imagePath)} alt={filenameFromPath(imagePath)} className="h-20 w-full object-cover" />
-                      <figcaption className="truncate px-2 py-1 text-[10px] text-[var(--text-muted)]">{filenameFromPath(imagePath)}</figcaption>
+                    <figure key={imagePath} className="flex items-center gap-2 overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface-2)] p-2">
+                      {imagePreviews[imagePath] ? (
+                        <img src={imagePreviews[imagePath]} alt={filenameFromPath(imagePath)} className="h-16 w-16 shrink-0 rounded object-cover" />
+                      ) : (
+                        <div className="h-16 w-16 shrink-0 rounded bg-[var(--surface-3)]" />
+                      )}
+                      <figcaption className="truncate text-[11px] text-[var(--text-muted)]">{filenameFromPath(imagePath)}</figcaption>
                     </figure>
                   ))}
                 </div>
@@ -343,9 +446,9 @@ export function ProjectPage() {
             </div>
           </Card>
 
-          <Card padding="md" className="flex min-h-0 flex-1 flex-col">
+          <Card padding="md" className="flex min-h-0 flex-1 flex-col overflow-hidden">
             <h2 className="mb-3 text-[11px] font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">{t("project.viewport")}</h2>
-            <div className="min-h-0 flex-1">
+            <div className="flex min-h-0 flex-1 overflow-hidden">
               <ProjectViewport glbPath={project.model?.glbPath} glbVersion={project.model?.generatedAt} />
             </div>
           </Card>

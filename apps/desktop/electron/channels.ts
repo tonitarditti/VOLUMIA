@@ -130,6 +130,8 @@ export type ModelMetadata = {
 };
 
 export type GenerationPreset = "fast" | "balanced" | "quality";
+export type GenerationPipeline = "depth_glb" | "gen_skp";
+export type GenerationSkpQuality = "fast" | "high";
 
 export type ProjectModel = {
   sourceImages: string[];
@@ -217,6 +219,13 @@ export type GenerationRunPayload = {
   imagePaths: string[];
   preset: GenerationPreset;
   pythonPath?: string;
+  pipeline?: GenerationPipeline;
+  inputs?: string[];
+  projectName?: string;
+  workDir?: string;
+  outputDir?: string;
+  quality?: GenerationSkpQuality;
+  sketchupExe?: string;
 };
 
 export type GenerationRunResult =
@@ -243,7 +252,9 @@ export type GenerationDevice = {
 
 export type GenerationDonePayload = {
   projectId: string;
-  glbPath: string;
+  pipeline?: GenerationPipeline;
+  glbPath?: string;
+  skpPath?: string;
   outGlbPath?: string;
   sourceImages?: string[];
   preset?: GenerationPreset;

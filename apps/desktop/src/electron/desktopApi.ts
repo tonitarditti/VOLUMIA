@@ -54,6 +54,7 @@ export type VolumiaGenerationBridge = {
   cancel: (projectId: string) => Promise<void>;
   check: () => Promise<GenerationCheckResult>;
   test: () => Promise<GenerationTestResult>;
+  readImageAsDataUrl: (imagePath: string) => Promise<string>;
   openOutputFolder: (glbPath: string) => Promise<{ ok: boolean; path: string; error?: string }>;
   onProgress: (callback: (payload: GenerationProgressPayload) => void) => void;
   offProgress: (callback: (payload: GenerationProgressPayload) => void) => void;
@@ -156,6 +157,7 @@ function ensureGenerationBridge(): VolumiaGenerationBridge {
     !generation.cancel ||
     !generation.check ||
     !generation.test ||
+    !generation.readImageAsDataUrl ||
     !generation.openOutputFolder ||
     !generation.onProgress ||
     !generation.offProgress ||
@@ -256,6 +258,9 @@ export const desktopApi = {
   },
   runLocalGeneratorTest(): Promise<GenerationTestResult> {
     return ensureGenerationBridge().test();
+  },
+  readGenerationImageAsDataUrl(imagePath: string): Promise<string> {
+    return ensureGenerationBridge().readImageAsDataUrl(imagePath);
   },
   openGenerationOutputFolder(glbPath: string): Promise<{ ok: boolean; path: string; error?: string }> {
     return ensureGenerationBridge().openOutputFolder(glbPath);
