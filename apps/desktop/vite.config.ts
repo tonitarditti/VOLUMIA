@@ -15,7 +15,6 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
-      "@volumia/shared": path.resolve(__dirname, "../../packages/shared/src/index.ts"),
     },
   },
   build: {

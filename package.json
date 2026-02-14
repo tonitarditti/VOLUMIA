@@ -5,16 +5,18 @@
   "packageManager": "pnpm@9.0.0",
   "workspaces": ["apps/*", "packages/*"],
   "scripts": {
-    "dev": "node scripts/dev.cjs",
-    "dev:service": "node apps/service/run-service.cjs",
-    "dev:desktop": "cross-env VOLUMIA_SERVICE_MANAGED_EXTERNALLY=1 npm --workspace @volumia/desktop run dev",
-    "build": "npm --workspace @volumia/shared run build && npm --workspace @volumia/desktop run build",
-    "lint": "npm --workspace @volumia/shared run lint && npm --workspace @volumia/desktop run lint",
+    "dev": "npm --workspace @volumia/desktop run dev",
+    "build": "npm --workspace @volumia/desktop run build",
+    "lint": "npm --workspace @volumia/desktop run lint",
+    "typecheck": "npm --workspace @volumia/desktop run typecheck",
+    "test": "npm --workspace @volumia/desktop run test",
     "format": "prettier --write \"apps/**/*.{ts,tsx,css,json,md,py}\" \"packages/**/*.{ts,json,md}\""
   },
+  "overrides": {
+    "@types/react": "18.3.28",
+    "@types/react-dom": "18.3.7"
+  },
   "devDependencies": {
-    "concurrently": "^9.2.1",
-    "cross-env": "^7.0.3",
     "prettier": "^3.4.2",
     "typescript": "^5.7.3"
   }

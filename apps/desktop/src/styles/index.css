@@ -1,0 +1,72 @@
+@import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+:root,
+:root.dark {
+  --volume-bg: #0f1113;
+  --volume-panel: #171a1f;
+  --volume-panel-alt: #1d2127;
+  --volume-stroke: #2a303a;
+  --volume-text: #dde4ee;
+  --volume-muted: #8c99aa;
+  --volume-accent: #8fa7bf;
+}
+
+:root:not(.dark) {
+  color-scheme: light;
+  --volume-bg: #eceff3;
+  --volume-panel: #ffffff;
+  --volume-panel-alt: #f4f7fa;
+  --volume-stroke: #d7dee8;
+  --volume-text: #162030;
+  --volume-muted: #4f5f75;
+  --volume-accent: #4b6b8e;
+}
+
+@layer base {
+  * {
+    @apply box-border;
+  }
+
+  html,
+  body,
+  #root {
+    @apply m-0 h-full w-full;
+  }
+
+  body {
+    @apply overflow-hidden bg-volume-bg text-volume-text antialiased;
+  }
+}
+
+@layer utilities {
+  .drag-region {
+    -webkit-app-region: drag;
+  }
+
+  .no-drag,
+  .no-drag * {
+    -webkit-app-region: no-drag;
+  }
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #374151;
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}

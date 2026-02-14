@@ -16,10 +16,9 @@
     "allowSyntheticDefaultImports": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"],
-      "@volumia/shared": ["../../packages/shared/src/index.ts"]
+      "@/*": ["src/*"]
     },
-    "types": ["vite/client"]
+    "types": ["vite/client", "@react-three/fiber"]
   },
   "include": ["src"],
   "references": [{ "path": "./tsconfig.node.json" }]

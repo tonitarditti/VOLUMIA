@@ -1,0 +1,111 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+
+  --bg: #1a1613;
+  --surface-1: #25201b;
+  --surface-2: #2f2822;
+  --surface-3: #3a312a;
+  --border: #4f4439;
+  --text: #ebe2d5;
+  --text-muted: #b6a99a;
+  --accent: #b08a60;
+  --accent-2: #99734d;
+  --danger: #aa6f66;
+  --shadow: 0 18px 48px -30px rgba(13, 9, 6, 0.72), 0 10px 24px -18px rgba(18, 12, 8, 0.54);
+  --focus-ring: rgba(176, 138, 96, 0.3);
+
+  --volume-bg: var(--bg);
+  --volume-panel: var(--surface-1);
+  --volume-panel-alt: var(--surface-2);
+  --volume-control: var(--surface-3);
+  --volume-stroke: var(--border);
+  --volume-text: var(--text);
+  --volume-muted: var(--text-muted);
+  --volume-accent: var(--accent);
+  --volume-accent-2: var(--accent-2);
+  --volume-danger: var(--danger);
+}
+
+:root.dark {
+  color-scheme: dark;
+}
+
+:root:not(.dark) {
+  color-scheme: light;
+
+  --bg: #f1ece3;
+  --surface-1: #fbf8f1;
+  --surface-2: #f4eee5;
+  --surface-3: #ede4d9;
+  --border: #d7cab8;
+  --text: #2e251d;
+  --text-muted: #6f6152;
+  --accent: #9a754d;
+  --accent-2: #886241;
+  --danger: #9d5f57;
+  --shadow: 0 18px 44px -32px rgba(63, 44, 28, 0.36), 0 8px 20px -16px rgba(68, 49, 32, 0.24);
+  --focus-ring: rgba(154, 117, 77, 0.24);
+}
+
+@layer base {
+  * {
+    @apply box-border;
+  }
+
+  html,
+  body,
+  #root {
+    @apply m-0 h-full w-full;
+  }
+
+  body {
+    @apply overflow-hidden bg-volume-bg text-volume-text antialiased;
+    background-image: radial-gradient(circle at 100% 0%, rgba(176, 138, 96, 0.09), transparent 42%);
+  }
+
+  h1,
+  h2,
+  h3 {
+    letter-spacing: 0.02em;
+  }
+
+  button,
+  input,
+  textarea {
+    font: inherit;
+  }
+
+  :focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--focus-ring);
+  }
+}
+
+@layer utilities {
+  .drag-region {
+    -webkit-app-region: drag;
+  }
+
+  .no-drag,
+  .no-drag * {
+    -webkit-app-region: no-drag;
+  }
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
