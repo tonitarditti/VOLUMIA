@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import importlib
 import inspect
 import json
 import math
@@ -23,25 +24,41 @@ STEP_PARAM_NAMES = (
     "num_inference_steps",
 )
 RESOLUTION_PARAM_NAMES = (
-    "resolution",
     "mc_resolution",
+    "resolution",
     "mesh_resolution",
     "grid_resolution",
 )
+MULTIVIEW_PARAM_NAMES = (
+    "num_views",
+    "n_views",
+    "view_count",
+    "num_images",
+)
+DENSITY_THRESHOLD_PARAM_NAMES = (
+    "density_threshold",
+    "threshold",
+    "iso_threshold",
+    "level",
+)
+
+MULTIVIEW_COUNT = 6
+FIXED_MC_RESOLUTION = 512
+STRICT_DENSITY_THRESHOLD = 12.0
 
 QUALITY_CONFIG: Dict[str, Dict[str, int]] = {
     "fast": {
         "steps": 20,
         "resolution": 256,
         "chunk_size": 16384,
-        "smooth_iterations": 6,
+        "smooth_iterations": 3,
         "target_faces": 120_000,
     },
     "high": {
         "steps": 60,
         "resolution": 512,
         "chunk_size": 4096,
-        "smooth_iterations": 16,
+        "smooth_iterations": 5,
         "target_faces": 220_000,
     },
 }
@@ -126,52 +143,357 @@ def mesh_from_output(mesh_or_scene: Any, trimesh: Any) -> Any:
     if isinstance(mesh_or_scene, trimesh.Scene):
         geometries = [g for g in mesh_or_scene.geometry.values() if isinstance(g, trimesh.Trimesh)]
         if not geometries:
-            raise RuntimeError("TripoSR returned an empty scene.")
+            raise RuntimeError("InstantMesh returned an empty scene.")
         return trimesh.util.concatenate(geometries)
     raise RuntimeError(f"Unsupported mesh output type: {type(mesh_or_scene)!r}")
 
 
-def create_base_cap(mesh: Any, trimesh: Any) -> Optional[Any]:
-    bounds = getattr(mesh, "bounds", None)
-    if bounds is None:
+def _as_pil_image(value: Any, image_mod: Any, np_mod: Any) -> Optional[Any]:
+    if value is None:
         return None
-    mins = bounds[0]
-    maxs = bounds[1]
-    extents = [float(maxs[i] - mins[i]) for i in range(3)]
-    if any(v <= 0.0 for v in extents):
+    if isinstance(value, image_mod.Image):
+        return value.convert("RGB")
+
+    array = None
+    if hasattr(value, "detach") and hasattr(value, "cpu"):
+        try:
+            tensor = value.detach().cpu()
+            if hasattr(tensor, "numpy"):
+                array = tensor.numpy()
+        except Exception:
+            array = None
+    elif isinstance(value, np_mod.ndarray):
+        array = value
+
+    if array is None:
         return None
 
-    up_axis = 1
-    thickness = max(extents[up_axis] * 0.01, 1e-4)
-    cap_extents = extents[:]
-    cap_extents[up_axis] = thickness
-    center = [(float(mins[i]) + float(maxs[i])) * 0.5 for i in range(3)]
-    center[up_axis] = float(mins[up_axis]) + thickness * 0.5
-    transform = trimesh.transformations.translation_matrix(center)
-    return trimesh.creation.box(extents=cap_extents, transform=transform)
+    if array.ndim == 4:
+        return None
+    if array.ndim == 3 and array.shape[0] in (1, 3, 4) and array.shape[-1] not in (3, 4):
+        array = np_mod.transpose(array, (1, 2, 0))
+    if array.ndim == 2:
+        array = np_mod.stack([array, array, array], axis=-1)
+    if array.ndim != 3:
+        return None
+    if array.shape[-1] == 1:
+        array = np_mod.repeat(array, 3, axis=-1)
+    if array.shape[-1] > 3:
+        array = array[..., :3]
+
+    if np_mod.issubdtype(array.dtype, np_mod.floating):
+        array = np_mod.clip(array * 255.0 if array.max() <= 1.5 else array, 0, 255).astype(np_mod.uint8)
+    else:
+        array = np_mod.clip(array, 0, 255).astype(np_mod.uint8)
+    return image_mod.fromarray(array, mode="RGB")
+
+
+def _extract_images_from_output(output: Any) -> list[Any]:
+    if output is None:
+        return []
+    if isinstance(output, dict):
+        for key in ("views", "images", "multi_views", "mv_images", "samples"):
+            value = output.get(key)
+            if isinstance(value, (list, tuple)):
+                return list(value)
+            if value is not None:
+                return [value]
+    if isinstance(output, (list, tuple)):
+        if not output:
+            return []
+        if len(output) == 1 and isinstance(output[0], (list, tuple)):
+            return list(output[0])
+        return list(output)
+    return [output]
+
+
+def _to_pil_images(output: Any, image_mod: Any, np_mod: Any) -> list[Any]:
+    extracted = _extract_images_from_output(output)
+    pil_images: list[Any] = []
+    for item in extracted:
+        if isinstance(item, (list, tuple)):
+            for nested in item:
+                image = _as_pil_image(nested, image_mod, np_mod)
+                if image is not None:
+                    pil_images.append(image)
+            continue
+        image = _as_pil_image(item, image_mod, np_mod)
+        if image is not None:
+            pil_images.append(image)
+    return pil_images
+
+
+def _resolve_instantmesh_pipeline_class() -> Any:
+    candidates = (
+        ("instantmesh.pipeline", "InstantMeshPipeline"),
+        ("instantmesh", "InstantMeshPipeline"),
+        ("instant_mesh.pipeline", "InstantMeshPipeline"),
+        ("instant_mesh", "InstantMeshPipeline"),
+    )
+    for module_name, class_name in candidates:
+        try:
+            module = importlib.import_module(module_name)
+        except Exception:
+            continue
+        pipeline_cls = getattr(module, class_name, None)
+        if pipeline_cls is not None:
+            return pipeline_cls
+    raise RuntimeError(
+        "InstantMesh pipeline class was not found. Install InstantMesh runtime and dependencies."
+    )
+
+
+def _load_instantmesh_pipeline(device: str, torch_mod: Any) -> Any:
+    pipeline_cls = _resolve_instantmesh_pipeline_class()
+    model_candidates = (
+        "TencentARC/InstantMesh",
+        "InstantMesh/InstantMesh",
+    )
+
+    pipeline = None
+    if hasattr(pipeline_cls, "from_pretrained"):
+        for model_id in model_candidates:
+            try:
+                pipeline = pipeline_cls.from_pretrained(model_id)
+                break
+            except Exception:
+                continue
+    if pipeline is None:
+        try:
+            pipeline = pipeline_cls()
+        except Exception as error:
+            raise RuntimeError("Unable to initialize InstantMesh pipeline.") from error
+
+    if hasattr(pipeline, "to"):
+        try:
+            pipeline = pipeline.to(device)
+        except Exception:
+            pass
+    if device == "cuda" and hasattr(pipeline, "half"):
+        try:
+            pipeline = pipeline.half()
+        except Exception:
+            pass
+    return pipeline
+
+
+def _extract_mesh_candidate(output: Any, trimesh: Any) -> Optional[Any]:
+    if output is None:
+        return None
+    try:
+        if isinstance(output, (trimesh.Trimesh, trimesh.Scene)):
+            return mesh_from_output(output, trimesh)
+    except Exception:
+        pass
+
+    if isinstance(output, dict):
+        for key in ("mesh", "meshes", "scene", "result", "outputs"):
+            value = output.get(key)
+            if value is None:
+                continue
+            candidate = _extract_mesh_candidate(value, trimesh)
+            if candidate is not None:
+                return candidate
+        return None
+
+    if isinstance(output, (list, tuple)):
+        for item in output:
+            candidate = _extract_mesh_candidate(item, trimesh)
+            if candidate is not None:
+                return candidate
+    return None
+
+
+def _safe_call_model_method(method: Any, primary_arg: Any, fallback_arg: Any, kwargs: Dict[str, Any]) -> Any:
+    try:
+        return method(primary_arg, **kwargs)
+    except TypeError:
+        return method(fallback_arg, **kwargs)
+
+
+def _load_optional_preprocess_utils() -> Tuple[Any, Any]:
+    try:
+        utils_module = importlib.import_module("tsr.utils")
+        remove_background = getattr(utils_module, "remove_background", None)
+        resize_foreground = getattr(utils_module, "resize_foreground", None)
+        if callable(remove_background) and callable(resize_foreground):
+            return remove_background, resize_foreground
+    except Exception:
+        pass
+
+    def _noop_remove_background(image: Any) -> Any:
+        return image
+
+    def _noop_resize_foreground(image: Any, _ratio: float) -> Any:
+        return image
+
+    return _noop_remove_background, _noop_resize_foreground
+
+
+def generate_multiviews_with_instantmesh(
+    pipeline: Any,
+    base_image: Any,
+    config: Dict[str, int],
+    device: str,
+    torch_mod: Any,
+    image_mod: Any,
+    np_mod: Any,
+) -> list[Any]:
+    method_names = (
+        "generate_multiview",
+        "generate_multiviews",
+        "generate_views",
+        "generate_mvs",
+        "infer_views",
+        "create_multiview_images",
+        "__call__",
+    )
+    for name in method_names:
+        method = getattr(pipeline, name, None)
+        if not callable(method):
+            continue
+
+        kwargs: Dict[str, Any] = {}
+        kwargs.update(pick_supported_kwarg(method, STEP_PARAM_NAMES, config["steps"]))
+        kwargs.update(pick_supported_kwarg(method, MULTIVIEW_PARAM_NAMES, MULTIVIEW_COUNT))
+        kwargs.update(pick_supported_kwarg(method, ("device",), device))
+        with torch_mod.no_grad():
+            try:
+                output = _safe_call_model_method(method, base_image, [base_image], kwargs)
+            except Exception:
+                continue
+
+        views = _to_pil_images(output, image_mod, np_mod)
+        if len(views) >= MULTIVIEW_COUNT:
+            return views[:MULTIVIEW_COUNT]
+
+    raise RuntimeError(
+        "InstantMesh multi-view generation failed. Ensure diffusion multi-view stage is available."
+    )
+
+
+def reconstruct_mesh_with_instantmesh(
+    pipeline: Any,
+    views: Sequence[Any],
+    config: Dict[str, int],
+    device: str,
+    torch_mod: Any,
+    trimesh: Any,
+) -> Any:
+    direct_mesh_methods = (
+        "reconstruct_mesh",
+        "generate_mesh",
+        "mesh_from_views",
+        "predict_mesh",
+    )
+    for name in direct_mesh_methods:
+        method = getattr(pipeline, name, None)
+        if not callable(method):
+            continue
+        kwargs: Dict[str, Any] = {}
+        kwargs.update(pick_supported_kwarg(method, STEP_PARAM_NAMES, config["steps"]))
+        kwargs.update(pick_supported_kwarg(method, RESOLUTION_PARAM_NAMES, FIXED_MC_RESOLUTION))
+        kwargs.update(pick_supported_kwarg(method, DENSITY_THRESHOLD_PARAM_NAMES, STRICT_DENSITY_THRESHOLD))
+        kwargs.update(pick_supported_kwarg(method, ("device",), device))
+        with torch_mod.no_grad():
+            try:
+                output = _safe_call_model_method(method, list(views), views, kwargs)
+            except Exception:
+                continue
+        mesh = _extract_mesh_candidate(output, trimesh)
+        if mesh is not None:
+            return mesh
+
+    infer_methods = ("infer", "forward", "__call__", "encode_views", "encode")
+    extract_methods = ("extract_mesh", "decode_mesh", "marching_cubes", "reconstruct")
+    for infer_name in infer_methods:
+        infer_method = getattr(pipeline, infer_name, None)
+        if not callable(infer_method):
+            continue
+        infer_kwargs: Dict[str, Any] = {}
+        infer_kwargs.update(pick_supported_kwarg(infer_method, STEP_PARAM_NAMES, config["steps"]))
+        infer_kwargs.update(pick_supported_kwarg(infer_method, MULTIVIEW_PARAM_NAMES, MULTIVIEW_COUNT))
+        infer_kwargs.update(pick_supported_kwarg(infer_method, ("device",), device))
+        with torch_mod.no_grad():
+            try:
+                features = _safe_call_model_method(infer_method, list(views), views, infer_kwargs)
+            except Exception:
+                continue
+
+        for extract_name in extract_methods:
+            extract_method = getattr(pipeline, extract_name, None)
+            if not callable(extract_method):
+                continue
+            extract_kwargs: Dict[str, Any] = {}
+            extract_kwargs.update(pick_supported_kwarg(extract_method, RESOLUTION_PARAM_NAMES, FIXED_MC_RESOLUTION))
+            extract_kwargs.update(pick_supported_kwarg(extract_method, DENSITY_THRESHOLD_PARAM_NAMES, STRICT_DENSITY_THRESHOLD))
+            extract_kwargs.update(pick_supported_kwarg(extract_method, ("device",), device))
+            with torch_mod.no_grad():
+                try:
+                    output = extract_method(features, **extract_kwargs)
+                except Exception:
+                    continue
+            mesh = _extract_mesh_candidate(output, trimesh)
+            if mesh is not None:
+                return mesh
+
+    raise RuntimeError(
+        "InstantMesh reconstruction failed. No compatible mesh extraction method found for multi-view output."
+    )
 
 
 def ensure_texture_uv(mesh: Any, np_mod: Any, trimesh: Any) -> Any:
-    uv = getattr(getattr(mesh, "visual", None), "uv", None)
-    if uv is not None and len(uv) == len(mesh.vertices):
-        return mesh
-
     vertices = np_mod.asarray(mesh.vertices, dtype=np_mod.float64)
     if len(vertices) == 0:
         return mesh
-    centered = vertices - vertices.mean(axis=0)
-    radius = np_mod.linalg.norm(centered, axis=1)
-    safe_radius = np_mod.where(radius > 1e-8, radius, 1.0)
-    nx = centered[:, 0] / safe_radius
-    ny = centered[:, 1] / safe_radius
-    nz = centered[:, 2] / safe_radius
-    u = 0.5 + np_mod.arctan2(nz, nx) / (2.0 * np_mod.pi)
-    v = 0.5 - np_mod.arcsin(np_mod.clip(ny, -1.0, 1.0)) / np_mod.pi
-    generated_uv = np_mod.column_stack((u, v)).astype(np_mod.float32)
+
+    # Frontal planar mapping (projection on X/Y plane, front along Z axis).
+    mins = vertices.min(axis=0)
+    maxs = vertices.max(axis=0)
+    span = np_mod.maximum(maxs - mins, 1e-8)
+    u = (vertices[:, 0] - mins[0]) / span[0]
+    v = (vertices[:, 1] - mins[1]) / span[1]
+    v = 1.0 - v
+    generated_uv = np_mod.column_stack(
+        (np_mod.clip(u, 0.0, 1.0), np_mod.clip(v, 0.0, 1.0))
+    ).astype(np_mod.float32)
+
     image = getattr(getattr(mesh, "visual", None), "material", None)
     image = getattr(image, "image", None)
     mesh.visual = trimesh.visual.texture.TextureVisuals(uv=generated_uv, image=image)
     return mesh
+
+
+def keep_largest_connected_component(mesh: Any, trimesh: Any) -> Any:
+    if not hasattr(mesh, "split"):
+        return mesh
+    try:
+        components = mesh.split(only_watertight=False)
+    except Exception:
+        return mesh
+    if not components or len(components) <= 1:
+        return mesh
+
+    largest = max(
+        components,
+        key=lambda component: (
+            int(len(getattr(component, "faces", ()))),
+            float(getattr(component, "area", 0.0)),
+        ),
+    )
+    return largest.copy() if hasattr(largest, "copy") else largest
+
+
+def apply_edge_preserving_smoothing(mesh: Any, smoothing: Any, iterations: int) -> None:
+    safe_iterations = max(1, int(iterations))
+    if hasattr(smoothing, "filter_taubin"):
+        smoothing.filter_taubin(mesh, lamb=0.5, nu=-0.53, iterations=safe_iterations)
+        return
+    if hasattr(smoothing, "filter_humphrey"):
+        smoothing.filter_humphrey(mesh, alpha=0.1, beta=0.5, iterations=safe_iterations)
+        return
+    # Fallback for older trimesh versions without edge-preserving filters.
+    smoothing.filter_laplacian(mesh, lamb=0.35, iterations=safe_iterations)
 
 
 def cleanup_mesh(mesh: Any, quality: str, trimesh: Any, smoothing: Any) -> Any:
@@ -184,16 +506,16 @@ def cleanup_mesh(mesh: Any, quality: str, trimesh: Any, smoothing: Any) -> Any:
     if isinstance(processed, trimesh.Trimesh):
         mesh = processed
 
-    smoothing.filter_laplacian(mesh, lamb=0.5, iterations=config["smooth_iterations"])
+    mesh = keep_largest_connected_component(mesh, trimesh)
+
+    if len(mesh.faces) > 10_000:
+        smooth_iterations = max(1, min(int(config["smooth_iterations"]), 5))
+        apply_edge_preserving_smoothing(mesh, smoothing, smooth_iterations)
     if hasattr(mesh, "fill_holes"):
         try:
             mesh.fill_holes()
         except Exception:
             pass
-    if not bool(getattr(mesh, "is_watertight", False)):
-        base_cap = create_base_cap(mesh, trimesh)
-        if base_cap is not None:
-            mesh = trimesh.util.concatenate([mesh, base_cap])
 
     target_faces = config["target_faces"]
     if len(mesh.faces) > target_faces and hasattr(mesh, "simplify_quadratic_decimation"):
@@ -204,6 +526,7 @@ def cleanup_mesh(mesh: Any, quality: str, trimesh: Any, smoothing: Any) -> Any:
         except Exception:
             pass
 
+    mesh = keep_largest_connected_component(mesh, trimesh)
     mesh.remove_degenerate_faces()
     mesh.remove_unreferenced_vertices()
     mesh.fix_normals()
@@ -211,19 +534,14 @@ def cleanup_mesh(mesh: Any, quality: str, trimesh: Any, smoothing: Any) -> Any:
     return mesh
 
 
-def blend_texture(images: Sequence[str], target_size: int, image_mod: Any, np_mod: Any) -> Any:
-    arrays = []
+def load_primary_texture(images: Sequence[str], image_mod: Any) -> Any:
     for image_path in images:
         try:
-            image = image_mod.open(image_path).convert("RGB").resize((target_size, target_size), image_mod.LANCZOS)
-            arrays.append(np_mod.asarray(image, dtype=np_mod.float32))
+            with image_mod.open(image_path) as image:
+                return image.convert("RGB").copy()
         except Exception:
             continue
-    if not arrays:
-        raise RuntimeError("Failed to build texture from input images.")
-    blend = np_mod.mean(np_mod.stack(arrays, axis=0), axis=0)
-    blend = np_mod.clip(blend, 0, 255).astype(np_mod.uint8)
-    return image_mod.fromarray(blend, mode="RGB")
+    raise RuntimeError("Failed to load texture from input images.")
 
 
 def safe_id(value: str) -> str:
@@ -474,53 +792,52 @@ def run_pipeline(args: argparse.Namespace) -> str:
         import trimesh  # type: ignore
         import trimesh.smoothing as smoothing  # type: ignore
         from PIL import Image  # type: ignore
-        from tsr.system import TSR  # type: ignore
-        from tsr.utils import remove_background, resize_foreground  # type: ignore
     except Exception as error:
         raise RuntimeError(
-            "Missing dependencies. Install torch, pillow, trimesh and TripoSR runtime in your environment."
+            "Missing dependencies. Install torch, pillow, trimesh and InstantMesh runtime in your environment."
         ) from error
 
-    emit_progress("texture", 20, "Building texture map")
-    texture_image = blend_texture(input_paths, 1024 if args.quality == "high" else 768, Image, np)
-    texture_image.save(texture_path)
-
-    emit_progress("infer", 30, "Loading TripoSR model")
+    remove_background, resize_foreground = _load_optional_preprocess_utils()
     device = resolve_device(args.device)
+    pipeline = _load_instantmesh_pipeline(device, torch)
+
+    emit_progress("texture", 20, "Building texture map")
+    texture_image = load_primary_texture(input_paths, Image)
+    texture_image.save(texture_path, format="PNG")
+
+    emit_progress("infer", 30, "Preparing InstantMesh inputs")
     config = QUALITY_CONFIG[args.quality]
     base_image = Image.open(input_paths[0]).convert("RGB")
     base_image = remove_background(base_image)
-    base_image = resize_foreground(base_image, 0.85)
+    base_image = resize_foreground(base_image, 0.95)
+    if hasattr(pipeline, "to"):
+        try:
+            pipeline.to(device)
+        except Exception:
+            pass
+    if hasattr(pipeline, "renderer") and hasattr(pipeline.renderer, "set_chunk_size"):
+        pipeline.renderer.set_chunk_size(config["chunk_size"])
 
-    model = TSR.from_pretrained(
-        "stabilityai/TripoSR",
-        config_name="config.yaml",
-        weight_name="model.ckpt",
+    emit_progress("multiview", 44, f"Generating {MULTIVIEW_COUNT} orthographic views")
+    multiview_images = generate_multiviews_with_instantmesh(
+        pipeline=pipeline,
+        base_image=base_image,
+        config=config,
+        device=device,
+        torch_mod=torch,
+        image_mod=Image,
+        np_mod=np,
     )
-    model.to(device)
-    if hasattr(model, "renderer") and hasattr(model.renderer, "set_chunk_size"):
-        model.renderer.set_chunk_size(config["chunk_size"])
 
-    infer_kwargs = pick_supported_kwarg(model.__call__, STEP_PARAM_NAMES, config["steps"])
-    extract_kwargs = pick_supported_kwarg(model.extract_mesh, RESOLUTION_PARAM_NAMES, config["resolution"])
-    if not extract_kwargs:
-        extract_kwargs = {"resolution": config["resolution"]}
-
-    emit_progress("infer", 46, f"Running geometry generation on {device}")
-    with torch.no_grad():
-        try:
-            scene_codes = model([base_image], device=device, **infer_kwargs)
-        except TypeError:
-            scene_codes = model([base_image], device=device)
-
-        try:
-            meshes = model.extract_mesh(scene_codes, **extract_kwargs)
-        except TypeError:
-            meshes = model.extract_mesh(scene_codes, resolution=config["resolution"])
-
-    if not meshes:
-        raise RuntimeError("TripoSR did not return any mesh.")
-    mesh = mesh_from_output(meshes[0], trimesh)
+    emit_progress("infer", 56, f"Reconstructing mesh from {len(multiview_images)} views")
+    mesh = reconstruct_mesh_with_instantmesh(
+        pipeline=pipeline,
+        views=multiview_images,
+        config=config,
+        device=device,
+        torch_mod=torch,
+        trimesh=trimesh,
+    )
 
     emit_progress("mesh_cleanup", 62, "Cleaning mesh and completing open areas")
     mesh = cleanup_mesh(mesh, args.quality, trimesh, smoothing)

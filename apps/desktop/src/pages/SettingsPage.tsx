@@ -305,7 +305,7 @@ export function SettingsPage({
   }, [handleDetectPython]);
 
   return (
-    <div className="grid h-full w-full grid-cols-1 gap-5 overflow-y-auto pr-1 xl:grid-cols-2">
+    <div className="grid h-full w-full grid-cols-1 gap-4 overflow-y-auto p-4 lg:grid-cols-2">
       <Card padding="md">
         <p className="text-[11px] uppercase tracking-[0.2em] text-[var(--text-muted)]">{t("settings.workspace")}</p>
         <h1 className="mt-1 text-xl font-semibold tracking-[0.03em] text-[var(--text)]">{t("settings.title")}</h1>

@@ -1,13 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Navigate, useParams } from "react-router-dom";
-import { SplitView } from "@/layout/SplitView";
 import { createChatMessage } from "@/projects/factory";
 import { useProjects } from "@/projects/context";
 import { selectProjectById } from "@/projects/selectors";
 import type { GenerationPreset, ProjectModel } from "@/projects/types";
 import { buildMockAssistantReply, summarizeReply } from "@/projects/mockAssistant";
 import { desktopApi, hasDesktopBridge } from "@/electron/desktopApi";
-import { Button, Card, TextArea, TextField } from "@/ui/primitives";
+import { Button, TextArea, TextField } from "@/ui/primitives";
 import { ProjectViewport } from "@/three/ProjectViewport";
 import { useT } from "@/volumia/i18n/useT";
 import { useSettings } from "@/volumia/settings/context";
@@ -82,6 +81,8 @@ export function ProjectPage() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationDevice, setGenerationDevice] = useState<GenerationDevice | null>(null);
   const [imagePreviews, setImagePreviews] = useState<Record<string, string>>({});
+  const [isNotesOpen, setIsNotesOpen] = useState(false);
+  const [isAssistantOpen, setIsAssistantOpen] = useState(true);
   const historyBottomRef = useRef<HTMLDivElement | null>(null);
   const projectModel = getProjectModel(project?.model);
 
@@ -104,6 +105,7 @@ export function ProjectPage() {
     setIsGenerating(false);
     setGenerationDevice(null);
     setImagePreviews({});
+    setIsNotesOpen(false);
   }, [project?.id]);
 
   useEffect(() => {
@@ -366,107 +368,111 @@ export function ProjectPage() {
   };
 
   return (
-    <SplitView
-      left={
-        <>
-          <Card padding="md">
-            <TextField
-              value={project.name}
-              onChange={(event) => renameProject(project.id, event.target.value)}
-              aria-label={t("dashboard.projectNameLabel")}
-              label={t("project.projectName")}
-            />
-          </Card>
+    <div className="flex h-full min-h-0 w-full min-w-0 gap-4 overflow-hidden p-0">
+      <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">
+        <ProjectViewport glbPath={project.model?.glbPath} glbVersion={project.model?.generatedAt} />
 
-          <Card padding="md">
-            <h2 className="mb-3 text-[11px] font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">Image to 3D</h2>
-            <div className="space-y-3">
-              <div className="flex flex-wrap items-center gap-2">
-                <Button variant="secondary" onClick={() => void handleSelectImages()} disabled={isGenerating}>
-                  Agregar imagenes
-                </Button>
-                <select
-                  value={preset}
-                  onChange={(event) => setPreset(event.target.value as GenerationPreset)}
-                  className="h-10 min-w-40 rounded-lg border border-[var(--border)] bg-[var(--surface-3)] px-3 text-sm text-[var(--text)] outline-none transition duration-150 ease-out focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--focus-ring)]"
-                  disabled={isGenerating}
-                >
-                  <option value="fast">Fast</option>
-                  <option value="balanced">Balanced</option>
-                  <option value="quality">Quality</option>
-                </select>
-                <Button variant="primary" onClick={() => void handleRunGeneration()} disabled={selectedImages.length === 0 || isGenerating}>
-                  Generar 3D
-                </Button>
-                <Button
-                  variant="primary"
-                  onClick={() => void handleRunGenerationSkp()}
-                  disabled={selectedImages.length < 1 || selectedImages.length > 4 || isGenerating}
-                >
-                  Generar SKP (IA)
-                </Button>
-                <span className="inline-flex h-10 items-center rounded-full border border-[var(--border)] bg-[var(--surface-2)] px-3 text-xs text-[var(--text-muted)]">
-                  {generationDevice
-                    ? generationDevice.device === "cuda"
-                      ? `GPU: ${shortDeviceName(generationDevice.name)}`
-                      : "CPU"
-                    : "Detectando..."}
-                </span>
-                <Button variant="ghost" onClick={() => void handleCancelGeneration()} disabled={!isGenerating}>
-                  Cancelar
-                </Button>
-                <Button variant="secondary" onClick={() => void handleOpenOutputFolder()} disabled={!project.model?.glbPath}>
-                  Abrir carpeta de salida
-                </Button>
-              </div>
+        <div className="absolute left-4 top-4 z-30 w-72 rounded-xl border border-[var(--border)] bg-[var(--surface-1)]/70 p-3 backdrop-blur">
+          <TextField
+            value={project.name}
+            onChange={(event) => renameProject(project.id, event.target.value)}
+            aria-label={t("dashboard.projectNameLabel")}
+            label={t("project.projectName")}
+          />
+        </div>
 
-              {selectedImages.length > 0 ? (
-                <div className="max-h-56 space-y-2 overflow-y-auto pr-1">
-                  {selectedImages.map((imagePath) => (
-                    <figure key={imagePath} className="flex items-center gap-2 overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface-2)] p-2">
-                      {imagePreviews[imagePath] ? (
-                        <img src={imagePreviews[imagePath]} alt={filenameFromPath(imagePath)} className="h-16 w-16 shrink-0 rounded object-cover" />
-                      ) : (
-                        <div className="h-16 w-16 shrink-0 rounded bg-[var(--surface-3)]" />
-                      )}
-                      <figcaption className="truncate text-[11px] text-[var(--text-muted)]">{filenameFromPath(imagePath)}</figcaption>
-                    </figure>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-xs text-[var(--text-muted)]">No hay imagenes seleccionadas.</p>
-              )}
+        <div className="absolute left-1/2 top-4 z-30 flex max-w-[calc(100%-2rem)] -translate-x-1/2 flex-wrap items-center justify-center gap-4 rounded-xl border border-[var(--border)] bg-[var(--surface-1)]/50 px-4 py-3 backdrop-blur">
+          <Button variant="secondary" onClick={() => void handleSelectImages()} disabled={isGenerating}>
+            Agregar imagenes
+          </Button>
+          <select
+            value={preset}
+            onChange={(event) => setPreset(event.target.value as GenerationPreset)}
+            className="h-10 min-w-40 rounded-lg border border-[var(--border)] bg-[var(--surface-3)] px-3 text-sm text-[var(--text)] outline-none transition duration-150 ease-out focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--focus-ring)]"
+            disabled={isGenerating}
+          >
+            <option value="fast">Fast</option>
+            <option value="balanced">Balanced</option>
+            <option value="quality">Quality</option>
+          </select>
+          <Button variant="primary" onClick={() => void handleRunGeneration()} disabled={selectedImages.length === 0 || isGenerating}>
+            Generar 3D
+          </Button>
+          <Button
+            variant="primary"
+            onClick={() => void handleRunGenerationSkp()}
+            disabled={selectedImages.length < 1 || selectedImages.length > 4 || isGenerating}
+          >
+            Generar SKP (IA)
+          </Button>
+          <Button variant="ghost" onClick={() => void handleCancelGeneration()} disabled={!isGenerating}>
+            Cancelar
+          </Button>
+          <Button variant="secondary" onClick={() => void handleOpenOutputFolder()} disabled={!project.model?.glbPath}>
+            Abrir salida
+          </Button>
+          <span className="inline-flex h-10 items-center rounded-full border border-[var(--border)] bg-[var(--surface-2)] px-3 text-xs text-[var(--text-muted)]">
+            {generationDevice
+              ? generationDevice.device === "cuda"
+                ? `GPU: ${shortDeviceName(generationDevice.name)}`
+                : "CPU"
+              : "Detectando..."}
+          </span>
+          <span className="text-xs text-[var(--text-muted)]">{generationStage}: {generationMessage}</span>
+        </div>
 
-              <div className="space-y-1">
-                <div className="h-2 w-full overflow-hidden rounded-full bg-[var(--surface-3)]">
-                  <div className="h-full bg-[var(--accent)] transition-all duration-150 ease-out" style={{ width: `${generationPercent}%` }} />
-                </div>
-                <p className="text-xs text-[var(--text-muted)]">{generationStage}: {generationMessage}</p>
-              </div>
-            </div>
-          </Card>
+        {selectedImages.length > 0 ? (
+          <div className="absolute left-4 top-24 z-20 w-72 max-h-64 space-y-2 overflow-y-auto rounded-xl border border-[var(--border)] bg-[var(--surface-1)]/75 p-2 backdrop-blur">
+            {selectedImages.map((imagePath) => (
+              <figure key={imagePath} className="flex items-center gap-2 overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface-2)] p-2">
+                {imagePreviews[imagePath] ? (
+                  <img src={imagePreviews[imagePath]} alt={filenameFromPath(imagePath)} className="h-14 w-14 shrink-0 rounded object-cover" />
+                ) : (
+                  <div className="h-14 w-14 shrink-0 rounded bg-[var(--surface-3)]" />
+                )}
+                <figcaption className="truncate text-[11px] text-[var(--text-muted)]">{filenameFromPath(imagePath)}</figcaption>
+              </figure>
+            ))}
+          </div>
+        ) : null}
 
-          <Card padding="md" className="flex min-h-0 flex-1 flex-col overflow-hidden">
-            <h2 className="mb-3 text-[11px] font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">{t("project.viewport")}</h2>
-            <div className="flex min-h-0 flex-1 overflow-hidden">
-              <ProjectViewport glbPath={project.model?.glbPath} glbVersion={project.model?.generatedAt} />
-            </div>
-          </Card>
-
-          <Card padding="md">
+        <div
+          className="absolute inset-x-4 bottom-4 z-30 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface-1)]/70 backdrop-blur transition-[max-height] duration-200 ease-out"
+          style={{ maxHeight: isNotesOpen ? 200 : 40 }}
+        >
+          <div className="flex h-10 items-center justify-between px-3">
+            <h2 className="text-[11px] font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">{t("project.notes")}</h2>
+            <Button variant="ghost" className="h-8 px-2 text-xs" onClick={() => setIsNotesOpen((value) => !value)}>
+              {isNotesOpen ? "Ocultar" : "Abrir"}
+            </Button>
+          </div>
+          <div className="h-[160px] px-3 pb-3">
             <TextArea
               value={project.notes}
               onChange={(event) => updateNotes(project.id, event.target.value)}
               rows={7}
-              className="min-h-36 leading-relaxed"
+              className="h-full min-h-0 leading-relaxed"
               placeholder={t("project.notesPlaceholder")}
-              label={t("project.notes")}
+              label=""
             />
-          </Card>
-        </>
-      }
-      right={
-        <Card padding="md" className="flex h-full min-h-0 flex-1 flex-col">
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => setIsAssistantOpen((value) => !value)}
+          className="absolute right-4 top-4 z-40 rounded-md border border-[var(--border)] bg-[var(--surface-1)]/70 px-2 py-1 text-[10px] uppercase tracking-[0.08em] text-[var(--text-muted)] backdrop-blur transition-colors hover:text-[var(--text)]"
+        >
+          {isAssistantOpen ? "Ocultar asistente" : "Mostrar asistente"}
+        </button>
+      </div>
+
+      <aside
+        className={`relative h-full min-h-0 overflow-hidden border-l border-[var(--border)] bg-[var(--surface-1)] transition-[width,opacity] duration-200 ease-out ${
+          isAssistantOpen ? "w-[300px] opacity-100" : "w-0 opacity-0 pointer-events-none"
+        }`}
+      >
+        <div className="flex h-full w-[300px] min-h-0 flex-col p-4">
           <h2 className="mb-3 text-[11px] font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">{t("project.assistant")}</h2>
 
           <div className="min-h-0 flex-1 space-y-3 overflow-y-auto rounded-xl border border-[var(--border)] bg-[var(--surface-2)] p-3.5">
@@ -499,7 +505,7 @@ export function ProjectPage() {
             <div ref={historyBottomRef} />
           </div>
 
-          <div className="mt-3 flex gap-2">
+          <div className="mt-4 flex gap-4">
             <TextField
               value={chatInput}
               onChange={(event) => setChatInput(event.target.value)}
@@ -516,8 +522,8 @@ export function ProjectPage() {
               {t("project.send")}
             </Button>
           </div>
-        </Card>
-      }
-    />
+        </div>
+      </aside>
+    </div>
   );
 }

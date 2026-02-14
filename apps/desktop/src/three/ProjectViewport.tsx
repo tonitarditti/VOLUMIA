@@ -572,7 +572,7 @@ export function ProjectViewport({ glbPath, glbVersion }: ProjectViewportProps) {
     <div className="relative flex h-full min-h-0 w-full min-w-0 overflow-hidden">
       <div
         ref={hostRef}
-        className={`relative flex-1 min-h-0 min-w-0 overflow-hidden rounded-xl border border-[var(--border)] shadow-[var(--shadow)] ${bgClass}`}
+        className={`relative flex-1 min-h-0 min-w-0 overflow-hidden ${bgClass}`}
       >
         <div className="pointer-events-none absolute left-3 top-3 z-10 rounded-md border border-[var(--border)] bg-[var(--surface-1)] px-2 py-1 text-[10px] uppercase tracking-[0.16em] text-[var(--text-muted)]">
           {t("project.viewport")}

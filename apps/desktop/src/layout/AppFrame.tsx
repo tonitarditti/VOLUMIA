@@ -17,7 +17,7 @@ export function AppFrame({ notice, onDismissNotice, children }: AppFrameProps) {
       <TopBar />
       {notice ? (
         <div className="border-b border-[var(--border)] bg-[var(--surface-2)] px-4 py-2">
-          <div className="mx-auto flex w-full max-w-[1680px] items-center justify-between gap-3 text-sm">
+          <div className="flex w-full items-center justify-between gap-3 text-sm">
             <span className="text-[var(--text-muted)]">{notice}</span>
             <Button type="button" variant="ghost" className="h-8 px-3 text-xs" onClick={onDismissNotice}>
               {t("common.dismiss")}
@@ -26,9 +26,9 @@ export function AppFrame({ notice, onDismissNotice, children }: AppFrameProps) {
         </div>
       ) : null}
 
-      <div className="mx-auto flex h-full w-full max-w-[1680px] flex-1 gap-4 overflow-hidden p-4">
+      <div className="flex h-full w-full flex-1 gap-4 overflow-hidden p-0">
         <Sidebar />
-        <main className="flex min-h-0 flex-1 overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface-1)] p-4">
+        <main className="flex min-h-0 flex-1 overflow-hidden bg-[var(--surface-1)]">
           {children}
         </main>
       </div>
