@@ -25,6 +25,12 @@ FACE_TARGETS = {
     "balanced": (15000, 30000),
     "high": (30000, 60000),
 }
+MIN_VERTS = 1500
+MIN_FACES = 3000
+MIN_BYTES_ABSOLUTE = 40 * 1024
+SOFT_WARN_BYTES = 200 * 1024
+BROKEN_MIN_VERTS = 500
+BROKEN_MIN_FACES = 800
 
 
 @dataclass
@@ -911,8 +917,6 @@ def export_scene_with_metadata(scene, out_path: str, metadata_objects: Sequence[
     with open(metadata_path, "w", encoding="utf-8") as handle:
         json.dump(metadata_payload, handle, ensure_ascii=False, indent=2)
 
-    glb_kb = float(glb_size) / 1024.0
-    log(f"[EXPORT] vertices={total_vertices} faces={total_faces} glb_size={glb_kb:.1f}KB")
     return glb_size, metadata_path, int(total_triangles), total_vertices, total_faces
 
 
@@ -1543,20 +1547,48 @@ def main() -> int:
             metadata_objects=metadata_objects,
             total_triangles=total_triangles,
         )
-        object_count = len(metadata_objects)
-        log(f"[EXPORT] objects={object_count} triangles={total_triangles} glb_bytes={glb_size} out={out_path}")
-        log(f"[EXPORT] vertices={total_vertices} faces={total_faces} glb_size={glb_size / 1024.0:.1f}KB")
-        log(f"[EXPORT] glb_kb={glb_size / 1024.0:.1f} out={out_path} device={runtime_device}")
-        log(f"[EXPORT] metadata={metadata_path}")
+        detail_low = total_vertices < MIN_VERTS or total_faces < MIN_FACES
+        if detail_low:
+            log(
+                f"[RETRY] reason=low_detail attempt=1 verts={total_vertices} "
+                f"faces={total_faces} -> increasing density"
+            )
+            retry_quality = "high"
+            emit_progress("mesh", 86, "Reintentando con mayor densidad")
+            scene, metadata_objects, total_triangles = build_multi_object_textured_scene(
+                rgb=rgb,
+                depth=depth,
+                objects=objects,
+                quality=retry_quality,
+            )
+            emit_progress("export", 95, "Reexportando GLB")
+            glb_size, metadata_path, total_triangles, total_vertices, total_faces = export_scene_with_metadata(
+                scene=scene,
+                out_path=out_path,
+                metadata_objects=metadata_objects,
+                total_triangles=total_triangles,
+            )
+
+        if glb_size < SOFT_WARN_BYTES:
+            log(f"[WARN] GLB under 200KB ({glb_size} bytes). This is OK if geometry thresholds are met.")
+
+        log(f"[EXPORT] vertices={total_vertices} faces={total_faces} glb_bytes={glb_size} out={out_path}")
+        log(f"[META] metadata={metadata_path}")
         log(f"OUT_SIZE_BYTES={glb_size}")
 
         if not os.path.exists(out_path):
             log_error(f"GLB not created: {out_path}")
             return 1
 
-        min_glb_size = 120 * 1024 if args.quality == "fast" else 200 * 1024
-        if glb_size < min_glb_size:
-            log_error(f"GLB too small ({glb_size} bytes): {out_path}")
+        if (
+            glb_size < MIN_BYTES_ABSOLUTE
+            or total_vertices < BROKEN_MIN_VERTS
+            or total_faces < BROKEN_MIN_FACES
+        ):
+            log_error(
+                f"Broken GLB export after retry: vertices={total_vertices} "
+                f"faces={total_faces} glb_bytes={glb_size} out={out_path}"
+            )
             return 1
 
         emit_progress("done", 100, "Modelo 3D listo")
