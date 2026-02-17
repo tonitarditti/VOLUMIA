@@ -67,6 +67,7 @@ type GenerationRunHandlerResult = GenerationRunSuccessResult | GenerationRunErro
 type ResolvedPythonCommand = {
   cmd: string;
   prefixArgs: string[];
+  source: "env" | "conda_prefix" | "common_path" | "requested" | "path_fallback";
 };
 type GenerationRunPayloadDepth = GenerationRunPayload & {
   pipeline?: "depth_glb";
@@ -98,6 +99,7 @@ const MAX_STDERR_CHARS = 10_000_000;
 const TRUNCATION_SUFFIX = "\n...truncated";
 const STDOUT_TAIL_LINES = 8;
 const STDERR_PREVIEW_CHARS = 2_000;
+const DEFAULT_CONDA_PYTHON = "F:\\MINICONDA\\envs\\volumia\\python.exe";
 let generationLogFilePath: string | null = null;
 
 function formatLogArg(value: unknown) {
@@ -227,20 +229,21 @@ function extractPythonStructuredError(stdout: string, stderr: string): ParsedPyt
   return null;
 }
 
-function buildPythonRunLog(stdout: string, stderr: string) {
-  return `[STDOUT]\n${stdout || "(empty)"}\n\n[STDERR]\n${stderr || "(empty)"}\n`;
+function buildPythonRunLog(stdout: string, stderr: string, preflight?: string) {
+  const preflightSection = preflight?.trim() ? `[PREFLIGHT]\n${preflight}\n\n` : "";
+  return `${preflightSection}[STDOUT]\n${stdout || "(empty)"}\n\n[STDERR]\n${stderr || "(empty)"}\n`;
 }
 
-function writePythonRunLog(logDir: string, stdout: string, stderr: string) {
+function writePythonRunLog(logDir: string, stdout: string, stderr: string, preflight?: string) {
   const fallbackPath = getGenerationLogFilePath();
   try {
     fs.mkdirSync(logDir, { recursive: true });
     const logPath = path.join(logDir, "python-last-run.log");
-    fs.writeFileSync(logPath, buildPythonRunLog(stdout, stderr), "utf8");
+    fs.writeFileSync(logPath, buildPythonRunLog(stdout, stderr, preflight), "utf8");
     return logPath;
   } catch {
     try {
-      fs.appendFileSync(fallbackPath, `\n${buildPythonRunLog(stdout, stderr)}`, "utf8");
+      fs.appendFileSync(fallbackPath, `\n${buildPythonRunLog(stdout, stderr, preflight)}`, "utf8");
     } catch {
       // No-op by design.
     }
@@ -297,7 +300,14 @@ function createGenerationRunErrorResult(error: unknown): GenerationRunErrorResul
       ? lastNonEmptyLines(pyError.stdout, STDOUT_TAIL_LINES) || pyError.stdout
       : undefined;
   const logPath = typeof pyError?.logPath === "string" ? pyError.logPath : undefined;
-  const shortMessage = pyError?.structuredMessage?.trim() || asErrorMessage(error);
+  const rawMessage = pyError?.structuredMessage?.trim() || asErrorMessage(error);
+  const messageHaystack = `${rawMessage}\n${stdout ?? ""}\n${stderr ?? ""}`.toLowerCase();
+  const shortMessage =
+    messageHaystack.includes("missing dependency: pymcubes")
+    || messageHaystack.includes("no module named 'mcubes'")
+    || messageHaystack.includes("pymcubes is required when torchmcubes is unavailable")
+      ? "TripoSR unavailable: install PyMCubes (pip install PyMCubes)"
+      : rawMessage;
 
   return {
     ok: false,
@@ -439,12 +449,13 @@ function isPathLikePython(value: string) {
   );
 }
 
-function isValidPythonCommand(cmd: string, prefixArgs: string[]) {
+function isValidPythonCommand(cmd: string, prefixArgs: string[], spawnEnv?: NodeJS.ProcessEnv) {
   try {
     const result = spawnSync(cmd, [...prefixArgs, "--version"], {
       windowsHide: true,
       shell: false,
       encoding: "utf8",
+      env: spawnEnv,
     });
     const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
     return result.status === 0 && output.includes("Python");
@@ -453,23 +464,69 @@ function isValidPythonCommand(cmd: string, prefixArgs: string[]) {
   }
 }
 
-function resolvePythonCommand(pythonPath?: string): ResolvedPythonCommand | null {
-  const trimmed = typeof pythonPath === "string" ? pythonPath.trim() : "";
-  const candidates: ResolvedPythonCommand[] = [];
+function sanitizeCandidatePath(candidate: string) {
+  const trimmed = candidate.trim();
+  const quoteWrapped = trimmed.match(/^"(.*)"$/);
+  return quoteWrapped ? quoteWrapped[1] : trimmed;
+}
 
-  if (trimmed) {
-    candidates.push({ cmd: trimmed, prefixArgs: [] });
+function collectPythonPathCandidates(requestedPath?: string) {
+  const candidates: Array<{ path: string; source: ResolvedPythonCommand["source"] }> = [];
+  const seen = new Set<string>();
+  const userProfile = (process.env.USERPROFILE ?? "").trim();
+  const condaPrefix = (process.env.CONDA_PREFIX ?? "").trim();
+  const preferredEnvPath = (process.env.VOLUMIA_PYTHON ?? "").trim();
+  const requested = typeof requestedPath === "string" ? requestedPath.trim() : "";
+  const commonPaths = [
+    DEFAULT_CONDA_PYTHON,
+    userProfile ? path.join(userProfile, "miniconda3", "envs", "volumia", "python.exe") : "",
+    userProfile ? path.join(userProfile, "anaconda3", "envs", "volumia", "python.exe") : "",
+  ];
+
+  const addPathCandidate = (value: string, source: ResolvedPythonCommand["source"]) => {
+    if (!value.trim()) {
+      return;
+    }
+    const cleanPath = sanitizeCandidatePath(value);
+    const normalized = path.normalize(cleanPath);
+    const dedupeKey = normalized.toLowerCase();
+    if (seen.has(dedupeKey)) {
+      return;
+    }
+    seen.add(dedupeKey);
+    candidates.push({ path: normalized, source });
+  };
+
+  addPathCandidate(preferredEnvPath, "env");
+  if (condaPrefix) {
+    addPathCandidate(path.join(condaPrefix, "python.exe"), "conda_prefix");
   }
-  candidates.push({ cmd: "py", prefixArgs: ["-3"] });
-  candidates.push({ cmd: "python", prefixArgs: [] });
+  for (const candidatePath of commonPaths) {
+    addPathCandidate(candidatePath, "common_path");
+  }
+  addPathCandidate(requested, "requested");
 
-  for (const candidate of candidates) {
-    if (candidate.cmd === trimmed && trimmed && isPathLikePython(trimmed) && !fs.existsSync(trimmed)) {
+  return candidates;
+}
+
+function resolvePythonCommand(pythonPath?: string): ResolvedPythonCommand | null {
+  for (const candidate of collectPythonPathCandidates(pythonPath)) {
+    if (!fs.existsSync(candidate.path)) {
+      logErr("[gen] python candidate missing", `source=${candidate.source}`, `path=${candidate.path}`);
       continue;
     }
-    if (isValidPythonCommand(candidate.cmd, candidate.prefixArgs)) {
-      return candidate;
+    if (!isValidPythonCommand(candidate.path, [])) {
+      logErr("[gen] python candidate invalid", `source=${candidate.source}`, `path=${candidate.path}`);
+      continue;
     }
+    return { cmd: candidate.path, prefixArgs: [], source: candidate.source };
+  }
+
+  if (isValidPythonCommand("python", [])) {
+    logErr(
+      "[gen] WARNING: falling back to PATH python. Set VOLUMIA_PYTHON or activate the conda env 'volumia' to force the correct interpreter."
+    );
+    return { cmd: "python", prefixArgs: [], source: "path_fallback" };
   }
 
   return null;
@@ -478,12 +535,55 @@ function resolvePythonCommand(pythonPath?: string): ResolvedPythonCommand | null
 function formatPythonCommand(command: ResolvedPythonCommand | null, requestedPath?: string) {
   if (!command) {
     const trimmed = typeof requestedPath === "string" ? requestedPath.trim() : "";
-    return trimmed || "py -3";
+    return trimmed || "python";
   }
   if (command.prefixArgs.length > 0) {
     return `${command.cmd} ${command.prefixArgs.join(" ")}`.trim();
   }
   return command.cmd;
+}
+
+function runPythonPreflight(command: ResolvedPythonCommand, spawnEnv: NodeJS.ProcessEnv) {
+  const preflightArgs = [
+    ...command.prefixArgs,
+    "-c",
+    "import sys, torch; print('PY',sys.executable); print('TORCH',torch.__version__); print('CUDA',torch.cuda.is_available())",
+  ];
+  const commandLabel = formatPythonCommand(command);
+  try {
+    const result = spawnSync(command.cmd, preflightArgs, {
+      windowsHide: true,
+      shell: false,
+      encoding: "utf8",
+      env: spawnEnv,
+    });
+    const stdout = `${result.stdout ?? ""}`.trim();
+    const stderr = `${result.stderr ?? ""}`.trim();
+    const status = result.status ?? -1;
+    const combined = [stdout, stderr].filter(Boolean).join("\n");
+    const output = `cmd=${commandLabel}\nsource=${command.source}\nstatus=${status}\n${combined || "(empty)"}`;
+    const logLineText = `[VOLUMIA][PY][PREFLIGHT]\n${output}`;
+    if (status === 0) {
+      logInfo(logLineText);
+      console.log(logLineText);
+    } else {
+      logErr(logLineText);
+      console.error(logLineText);
+    }
+    return {
+      ok: status === 0,
+      output,
+    };
+  } catch (error) {
+    const output = `cmd=${commandLabel}\nsource=${command.source}\nstatus=-1\n${asErrorMessage(error)}`;
+    const logLineText = `[VOLUMIA][PY][PREFLIGHT]\n${output}`;
+    logErr(logLineText);
+    console.error(logLineText);
+    return {
+      ok: false,
+      output,
+    };
+  }
 }
 
 function validateRunPayload(payload: unknown): payload is GenerationRunPayload {
@@ -773,6 +873,7 @@ async function runLocalPythonGeneration(
   const logs: string[] = [];
   let device: GenerationDevice | undefined;
   let outGlb = "";
+  let preflightOutput = "";
 
   try {
     const assetsDir = ensureAssetsDir();
@@ -797,6 +898,8 @@ async function runLocalPythonGeneration(
       PIP_CACHE_DIR: pipDir,
       VOLUMIA_FORCE_DEVICE: "cuda",
     };
+    const preflight = runPythonPreflight(pythonCommand, spawnEnv);
+    preflightOutput = preflight.output;
     logInfo("[VOLUMIA] OpenMP duplicate workaround enabled");
     const generationMode = resolveGenerationMode(payload.mode);
 
@@ -827,9 +930,10 @@ async function runLocalPythonGeneration(
     logInfo("[PY] exit:", code);
     logInfo("[PY] stdout:", stdout);
     logErr("[PY] stderr:", stderr);
-    const logPath = writePythonRunLog(path.dirname(outGlb), stdout, stderr);
+    const logPath = writePythonRunLog(path.dirname(outGlb), stdout, stderr, preflightOutput);
 
     logs.push(`[py] exit: ${code}`);
+    logs.push(...preflightOutput.split(/\r?\n/).filter(Boolean).map((line) => `[preflight] ${line}`));
     if (stdout.trim()) {
       logs.push(...stdout.split(/\r?\n/).filter(Boolean).map((line) => `[stdout] ${line}`));
     }
@@ -897,7 +1001,10 @@ async function runLocalPythonGeneration(
     const pyError = error as PythonRunError;
     const stdoutText = typeof pyError.stdout === "string" ? pyError.stdout : "";
     const stderrText = typeof pyError.stderr === "string" ? pyError.stderr : "";
-    const logPath = writePythonRunLog(path.dirname(outGlb || ensureAssetsDir()), stdoutText, stderrText);
+    const logPath = writePythonRunLog(path.dirname(outGlb || ensureAssetsDir()), stdoutText, stderrText, preflightOutput);
+    if (preflightOutput.trim()) {
+      logs.push(...preflightOutput.split(/\r?\n/).filter(Boolean).map((line) => `[preflight] ${line}`));
+    }
     if (typeof pyError.stdout === "string" && pyError.stdout.trim()) {
       logs.push(...pyError.stdout.split(/\r?\n/).filter(Boolean).map((line) => `[stdout] ${line}`));
     }
@@ -926,6 +1033,7 @@ async function runGenSkpPythonGeneration(
   const logs: string[] = [];
   const outputDir = resolve(payload.outputDir);
   const logDir = outputDir || ensureAssetsDir();
+  let preflightOutput = "";
 
   try {
     const inputs = payload.inputs.map((value) => resolve(value));
@@ -953,6 +1061,8 @@ async function runGenSkpPythonGeneration(
       HF_HUB_DISABLE_PROGRESS_BARS: "1",
       VOLUMIA_FORCE_DEVICE: "cuda",
     };
+    const preflight = runPythonPreflight(pythonCommand, spawnEnv);
+    preflightOutput = preflight.output;
 
     const { stdout, stderr } = await runPython(
       pythonCommand.cmd,
@@ -966,8 +1076,11 @@ async function runGenSkpPythonGeneration(
     ).finally(() => {
       job.process = null;
     });
-    const logPath = writePythonRunLog(logDir, stdout, stderr);
+    const logPath = writePythonRunLog(logDir, stdout, stderr, preflightOutput);
 
+    if (preflightOutput.trim()) {
+      logs.push(...preflightOutput.split(/\r?\n/).filter(Boolean).map((line) => `[preflight] ${line}`));
+    }
     if (stdout.trim()) {
       logs.push(...stdout.split(/\r?\n/).filter(Boolean).map((line) => `[stdout] ${line}`));
     }
@@ -1033,7 +1146,10 @@ async function runGenSkpPythonGeneration(
     const pyError = error as PythonRunError;
     const stdoutText = typeof pyError.stdout === "string" ? pyError.stdout : "";
     const stderrText = typeof pyError.stderr === "string" ? pyError.stderr : "";
-    const logPath = writePythonRunLog(logDir, stdoutText, stderrText);
+    const logPath = writePythonRunLog(logDir, stdoutText, stderrText, preflightOutput);
+    if (preflightOutput.trim()) {
+      logs.push(...preflightOutput.split(/\r?\n/).filter(Boolean).map((line) => `[preflight] ${line}`));
+    }
     if (typeof pyError.stdout === "string" && pyError.stdout.trim()) {
       logs.push(...pyError.stdout.split(/\r?\n/).filter(Boolean).map((line) => `[stdout] ${line}`));
     }
@@ -1067,7 +1183,8 @@ async function runGenerationJob(
 
     const resolvedPython = resolvePythonCommand(genPayload.pythonPath);
     if (!resolvedPython) {
-      const message = "No se encontro Python valido. Configure pythonPath o instale 'py -3' / 'python'.";
+      const message =
+        "No se encontro Python valido. Configure VOLUMIA_PYTHON o instale/active el entorno conda 'volumia'.";
       logErr("[gen] python resolve failed", `requested=${genPayload.pythonPath ?? ""}`);
       sendError(getWindow, { projectId, message });
       throw new Error(message);
@@ -1178,7 +1295,8 @@ async function runGenerationJob(
 
   const resolvedPython = resolvePythonCommand(depthPayload.pythonPath);
   if (!resolvedPython) {
-    const message = "No se encontro Python valido. Configure pythonPath o instale 'py -3' / 'python'.";
+    const message =
+      "No se encontro Python valido. Configure VOLUMIA_PYTHON o instale/active el entorno conda 'volumia'.";
     logErr("[gen] python resolve failed", `requested=${depthPayload.pythonPath ?? ""}`);
     sendError(getWindow, { projectId, message });
     throw new Error(message);
@@ -1261,15 +1379,20 @@ function buildGeneratorCheckResult(pythonPath?: string): GenerationCheckResult {
   const pythonCommand = formatPythonCommand(resolvedPython, pythonPath);
   const venvPath =
     resolvedPython && isPathLikePython(resolvedPython.cmd) ? path.dirname(path.dirname(resolvedPython.cmd)) : "";
+  const source = resolvedPython?.source ?? "none";
   const logs = [
     `script: ${scriptPath ?? "not found"}`,
     `furniture_script: ${furnitureScriptPath ?? "not found"}`,
     `gen_skp_script: ${genSkpScriptPath ?? "not found"}`,
     `python: ${pythonCommand}`,
+    `pythonSource: ${source}`,
     `pythonFound: ${pythonFound}`,
     "generator: image_to_3d_depth_glb.py",
     "generator_modes: auto | neural | architectural",
   ];
+  if (resolvedPython?.source === "path_fallback") {
+    logs.push("warning: using PATH python fallback. Set VOLUMIA_PYTHON for deterministic conda runtime.");
+  }
 
   return {
     pythonFound,

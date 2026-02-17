@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import importlib
 import inspect
 import json
 import os
@@ -13,6 +14,26 @@ from typing import Any, Dict, Optional
 
 def emit(stage: str, percent: int, message: str) -> None:
     print(json.dumps({"stage": stage, "percent": percent, "message": message}), flush=True)
+
+
+def cleanup_degenerate(mesh):
+    """Compatibility cleanup for trimesh versions without remove_degenerate_faces()."""
+    # Remove degenerate faces
+    if hasattr(mesh, "remove_degenerate_faces"):
+        mesh.remove_degenerate_faces()
+    else:
+        try:
+            mask = mesh.nondegenerate_faces()
+            if mask is not None:
+                mesh.update_faces(mask)
+        except Exception:
+            pass  # optional cleanup
+
+    # Remove unreferenced vertices (this exists on trimesh 4.x)
+    try:
+        mesh.remove_unreferenced_vertices()
+    except Exception:
+        pass
 
 
 def ensure_output_path(path: str) -> str:
@@ -114,6 +135,31 @@ RESOLUTION_PARAM_NAMES = (
     "mesh_resolution",
     "grid_resolution",
 )
+
+
+def preflight_runtime_dependencies() -> None:
+    print(f"[PREFLIGHT] PYTHON={sys.executable}", flush=True)
+    requirements = [
+        ("torch", "torch"),
+        ("PIL", "pillow"),
+        ("trimesh", "trimesh"),
+        ("mcubes", "PyMCubes"),
+    ]
+    missing: list[tuple[str, str]] = []
+    for module_name, package_name in requirements:
+        try:
+            importlib.import_module(module_name)
+        except Exception:
+            missing.append((module_name, package_name))
+
+    if missing:
+        missing_text = ", ".join(f"{module_name} ({package_name})" for module_name, package_name in missing)
+        print(f"[PREFLIGHT] MISSING={missing_text}", flush=True)
+        if any(module_name == "mcubes" for module_name, _ in missing):
+            raise RuntimeError("Missing dependency: PyMCubes (mcubes). Install: pip install PyMCubes")
+        raise RuntimeError(f"Missing dependencies: {missing_text}")
+
+    print("[PREFLIGHT] MISSING=none", flush=True)
 
 
 def pick_supported_kwarg(func: Any, names: tuple[str, ...], value: Any) -> Dict[str, Any]:
@@ -353,11 +399,17 @@ def run_triposr(image_path: str, out_glb: str, preset: str, requested_device: st
     if not os.path.exists(image_path):
         raise RuntimeError(f"Input image not found: {image_path}")
 
+    preflight_runtime_dependencies()
+
     try:
         import torch  # type: ignore
         from PIL import Image  # type: ignore
         import trimesh  # type: ignore
         import trimesh.smoothing as smoothing  # type: ignore
+        try:
+            import mcubes  # type: ignore  # noqa: F401
+        except Exception as error:
+            raise RuntimeError("Missing dependency: PyMCubes (mcubes). Install: pip install PyMCubes") from error
         install_torchmcubes_compat_shim()
         from tsr.system import TSR  # type: ignore
     except RuntimeError:
@@ -409,12 +461,12 @@ def run_triposr(image_path: str, out_glb: str, preset: str, requested_device: st
             scene_codes = model([image], device=device)
 
         try:
-            meshes = model.extract_mesh(scene_codes, **extract_kwargs)
+            meshes = model.extract_mesh(scene_codes, has_vertex_color=False, **extract_kwargs)
         except TypeError:
             try:
-                meshes = model.extract_mesh(scene_codes, resolution=preset_config["resolution"])
+                meshes = model.extract_mesh(scene_codes, has_vertex_color=False, resolution=preset_config["resolution"])
             except TypeError:
-                meshes = model.extract_mesh(scene_codes)
+                meshes = model.extract_mesh(scene_codes, has_vertex_color=False)
 
     if not meshes:
         raise RuntimeError("TripoSR did not return any mesh.")
@@ -422,8 +474,7 @@ def run_triposr(image_path: str, out_glb: str, preset: str, requested_device: st
     mesh = mesh_from_output(meshes[0], trimesh)
 
     emit("mesh_cleanup", 80, "Cleaning and smoothing mesh")
-    mesh.remove_degenerate_faces()
-    mesh.remove_unreferenced_vertices()
+    cleanup_degenerate(mesh)
     mesh.rezero()
     mesh.fix_normals()
     processed = mesh.process(validate=True)
@@ -432,8 +483,7 @@ def run_triposr(image_path: str, out_glb: str, preset: str, requested_device: st
 
     smoothing.filter_laplacian(mesh, lamb=0.5, iterations=preset_config["smooth_iterations"])
     for _ in range(max(0, preset_config["refine_passes"] - 1)):
-        mesh.remove_degenerate_faces()
-        mesh.remove_unreferenced_vertices()
+        cleanup_degenerate(mesh)
         mesh.fix_normals()
         mesh.process(validate=True)
 
@@ -441,8 +491,7 @@ def run_triposr(image_path: str, out_glb: str, preset: str, requested_device: st
 
     emit("base_close", 88, "Checking mesh boundaries")
     mesh, base_message = close_base_if_needed(mesh, trimesh)
-    mesh.remove_degenerate_faces()
-    mesh.remove_unreferenced_vertices()
+    cleanup_degenerate(mesh)
     mesh.fix_normals()
     mesh.process(validate=True)
     emit("base_close", 91, base_message)

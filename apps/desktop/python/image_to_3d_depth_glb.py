@@ -45,6 +45,7 @@ AUTO_MAX_BBOX_RATIO = 25.0
 AUTO_MIN_MAX_DIM = 0.1
 AUTO_GROUND_EPSILON = 0.05
 TRIPOSR_INSTALL_HINT = "TripoSR not installed. Install: pip install git+https://github.com/VAST-AI-Research/TripoSR.git"
+TRIPOSR_PYMCUBES_HINT = "TripoSR unavailable: install PyMCubes (pip install PyMCubes)"
 
 
 @dataclass
@@ -802,6 +803,12 @@ def run_triposr(image_path: str, out_glb_path: str, preset: str, device: str) ->
         normalized_output = joined_output.lower()
         if "triposr not installed" in normalized_output or "github.com/vast-ai-research/triposr" in normalized_output:
             raise RuntimeError(TRIPOSR_INSTALL_HINT)
+        if (
+            "missing dependency: pymcubes" in normalized_output
+            or "no module named 'mcubes'" in normalized_output
+            or "pymcubes is required when torchmcubes is unavailable" in normalized_output
+        ):
+            raise RuntimeError(TRIPOSR_PYMCUBES_HINT)
         raise RuntimeError(f"TripoSR generation failed (code={return_code}).")
 
     if not os.path.exists(out_glb_path):
@@ -1248,6 +1255,24 @@ def run_auto_pipeline(image_path: str, out_path: str, quality: str, runtime_devi
     except Exception as triposr_error:
         errors.append(f"triposr failed: {triposr_error}")
         log_error(f"[AUTO] triposr failed: {triposr_error}")
+        triposr_error_text = str(triposr_error).lower()
+        if (
+            "missing dependency: pymcubes" in triposr_error_text
+            or "no module named 'mcubes'" in triposr_error_text
+            or "pymcubes is required when torchmcubes is unavailable" in triposr_error_text
+            or "triposr unavailable: install pymcubes" in triposr_error_text
+        ):
+            _write_auto_meta(
+                out_path,
+                "triposr",
+                {
+                    "ok": False,
+                    "metrics": {},
+                    "reason": TRIPOSR_PYMCUBES_HINT,
+                },
+                errors,
+            )
+            raise RuntimeError(TRIPOSR_PYMCUBES_HINT) from triposr_error
 
     emit_progress("arch_generate", 70, "Generating ARCH fallback")
     try:
