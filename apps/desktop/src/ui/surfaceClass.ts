@@ -9,8 +9,8 @@ export function getSurfaceClass(glassStyle: boolean, variant: SurfaceClassVarian
   }
 
   if (variant === "soft") {
-    return "border border-white/10 bg-white/[0.03] backdrop-blur-md shadow-md";
+    return "glass glass-strong glass-soft";
   }
 
-  return "border border-white/10 bg-white/[0.05] backdrop-blur-md shadow-lg";
+  return "glass";
 }
