@@ -241,9 +241,11 @@ function writePythonRunLog(logDir: string, stdout: string, stderr: string, prefl
   const fallbackPath = getGenerationLogFilePath();
   try {
     fs.mkdirSync(logDir, { recursive: true });
-    const logPath = path.join(logDir, "python-last-run.log");
-    fs.writeFileSync(logPath, buildPythonRunLog(stdout, stderr, preflight), "utf8");
-    return logPath;
+    const combinedLogPath = path.join(logDir, "python-last-run.log");
+    const stderrLogPath = path.join(logDir, "python-last-run.stderr.log");
+    fs.writeFileSync(combinedLogPath, buildPythonRunLog(stdout, stderr, preflight), "utf8");
+    fs.writeFileSync(stderrLogPath, stderr || "(empty)\n", "utf8");
+    return combinedLogPath;
   } catch {
     try {
       fs.appendFileSync(fallbackPath, `\n${buildPythonRunLog(stdout, stderr, preflight)}`, "utf8");
@@ -305,12 +307,36 @@ function createGenerationRunErrorResult(error: unknown): GenerationRunErrorResul
   const logPath = typeof pyError?.logPath === "string" ? pyError.logPath : undefined;
   const rawMessage = pyError?.structuredMessage?.trim() || asErrorMessage(error);
   const messageHaystack = `${rawMessage}\n${stdout ?? ""}\n${stderr ?? ""}`.toLowerCase();
-  const shortMessage =
+  const hasMissingDeps =
+    messageHaystack.includes("missing dependencies")
+    || messageHaystack.includes("missing dependency")
+    || messageHaystack.includes("faltan deps");
+  const missingPkgs = [
+    messageHaystack.includes("einops") ? "einops" : "",
+    messageHaystack.includes("omegaconf") ? "omegaconf" : "",
+    messageHaystack.includes("pymcubes") || messageHaystack.includes("mcubes") ? "PyMCubes" : "",
+    messageHaystack.includes("pillow") || messageHaystack.includes("no module named 'pil'") ? "pillow" : "",
+  ].filter(Boolean);
+  const dependencyCommand =
+    missingPkgs.length > 0
+      ? `conda activate volumia && pip install -U ${Array.from(new Set(missingPkgs)).join(" ")}`
+      : "conda activate volumia && pip install -U einops omegaconf PyMCubes pillow";
+  let shortMessage = rawMessage;
+  if (
     messageHaystack.includes("missing dependency: pymcubes")
     || messageHaystack.includes("no module named 'mcubes'")
     || messageHaystack.includes("pymcubes is required when torchmcubes is unavailable")
-      ? "TripoSR unavailable: install PyMCubes (pip install PyMCubes)"
-      : rawMessage;
+  ) {
+    shortMessage = "TripoSR unavailable: install PyMCubes (pip install PyMCubes)";
+  } else if (hasMissingDeps) {
+    shortMessage = `Faltan deps para TripoSR. Ejecuta: ${dependencyCommand}`;
+  } else if (
+    messageHaystack.includes("triposr not available")
+    || messageHaystack.includes("no module named 'tsr'")
+    || messageHaystack.includes("github.com/vast-ai-research/triposr")
+  ) {
+    shortMessage = "TripoSR unavailable: instala runtime en el entorno volumia (pip install git+https://github.com/VAST-AI-Research/TripoSR.git)";
+  }
 
   return {
     ok: false,
@@ -413,6 +439,19 @@ function ensureAssetsDir() {
   const assetsDir = path.join(app.getPath("userData"), "project-assets");
   fs.mkdirSync(assetsDir, { recursive: true });
   return assetsDir;
+}
+
+function ensureProjectAssetsDir(projectId: string) {
+  const safeProjectId = sanitizeProjectId(projectId);
+  const projectAssetsDir = path.join(app.getPath("userData"), "project-assets", safeProjectId);
+  fs.mkdirSync(projectAssetsDir, { recursive: true });
+  return projectAssetsDir;
+}
+
+function ensureProjectLogsDir(projectAssetsDir: string) {
+  const logsDir = path.join(projectAssetsDir, "logs");
+  fs.mkdirSync(logsDir, { recursive: true });
+  return logsDir;
 }
 
 async function ensureGlbOk(outPath: string) {
@@ -893,19 +932,20 @@ async function runLocalPythonGeneration(
   job: GenerationJobState,
   getWindow: WindowGetter,
   scriptPath: string,
-  pythonCommand: ResolvedPythonCommand
+  pythonCommand: ResolvedPythonCommand,
+  projectAssetsDir: string
 ): Promise<LocalGenerationResult> {
   const logs: string[] = [];
   let device: GenerationDevice | undefined;
   let outGlb = "";
   let preflightOutput = "";
+  const logsDir = ensureProjectLogsDir(projectAssetsDir);
 
   try {
-    const assetsDir = ensureAssetsDir();
-    outGlb = path.join(assetsDir, "latest.glb");
-    const modelsDir = path.join(assetsDir, "models");
-    const pipDir = path.join(assetsDir, "pip");
-    const tmpDir = path.join(assetsDir, "tmp");
+    outGlb = path.join(projectAssetsDir, "latest.glb");
+    const modelsDir = path.join(projectAssetsDir, "models");
+    const pipDir = path.join(projectAssetsDir, "pip");
+    const tmpDir = path.join(projectAssetsDir, "tmp");
     fs.mkdirSync(modelsDir, { recursive: true });
     fs.mkdirSync(pipDir, { recursive: true });
     fs.mkdirSync(tmpDir, { recursive: true });
@@ -916,7 +956,7 @@ async function runLocalPythonGeneration(
       PYTHONUNBUFFERED: "1",
       TQDM_DISABLE: "1",
       HF_HUB_DISABLE_PROGRESS_BARS: "1",
-      VOLUMIA_CACHE_DIR: assetsDir,
+      VOLUMIA_CACHE_DIR: projectAssetsDir,
       HF_HOME: modelsDir,
       TRANSFORMERS_CACHE: modelsDir,
       TORCH_HOME: modelsDir,
@@ -959,7 +999,7 @@ async function runLocalPythonGeneration(
     logInfo("[PY] exit:", code);
     logInfo("[PY] stdout:", stdout);
     logErr("[PY] stderr:", stderr);
-    const logPath = writePythonRunLog(path.dirname(outGlb), stdout, stderr, preflightOutput);
+    const logPath = writePythonRunLog(logsDir, stdout, stderr, preflightOutput);
 
     logs.push(`[py] exit: ${code}`);
     logs.push(...preflightOutput.split(/\r?\n/).filter(Boolean).map((line) => `[preflight] ${line}`));
@@ -1031,8 +1071,8 @@ async function runLocalPythonGeneration(
     const pyError = error as PythonRunError;
     const stdoutText = typeof pyError.stdout === "string" ? pyError.stdout : "";
     const stderrText = typeof pyError.stderr === "string" ? pyError.stderr : "";
-    const logDir = outGlb ? path.dirname(outGlb) : ensureAssetsDir();
-    const logPath = writePythonRunLog(logDir, stdoutText, stderrText, preflightOutput);
+    const fallbackLogsDir = ensureProjectLogsDir(projectAssetsDir);
+    const logPath = writePythonRunLog(fallbackLogsDir, stdoutText, stderrText, preflightOutput);
     if (preflightOutput.trim()) {
       logs.push(...preflightOutput.split(/\r?\n/).filter(Boolean).map((line) => `[preflight] ${line}`));
     }
@@ -1265,16 +1305,14 @@ async function runGenerationJob(
 
   const depthPayload = payload as GenerationRunPayloadDepth;
   const projectId = payload.projectId;
-  const safeProjectId = sanitizeProjectId(payload.projectId);
   const userDataPath = app.getPath("userData");
-  const baseDir = path.join(userDataPath, "project-assets", safeProjectId);
+  const baseDir = ensureProjectAssetsDir(payload.projectId);
   const imagesDir = path.join(baseDir, "images");
-  const outGlbPath = path.join(ensureAssetsDir(), "latest.glb");
   const copiedImages: string[] = [];
 
   fs.mkdirSync(imagesDir, { recursive: true });
   logInfo("[gen] userData:", userDataPath);
-  logInfo("[gen] outGlb:", outGlbPath);
+  logInfo("[gen] outGlb:", path.join(baseDir, "latest.glb"));
 
   sendProgress(getWindow, {
     projectId,
@@ -1351,7 +1389,8 @@ async function runGenerationJob(
     job,
     getWindow,
     scriptPath,
-    resolvedPython
+    resolvedPython,
+    baseDir
   );
 
   if (!localResult.ok || !localResult.outGlbPath) {
@@ -1564,7 +1603,8 @@ export function registerGenerationHandlers(getWindow: WindowGetter) {
       testJob,
       getWindow,
       scriptPath,
-      resolvedPython
+      resolvedPython,
+      ensureProjectAssetsDir(testPayload.projectId)
     );
 
     if (!localResult.ok || !localResult.outGlbPath) {
@@ -1612,12 +1652,21 @@ export function registerGenerationHandlers(getWindow: WindowGetter) {
 
   ipcMain.handle("gen:open-output-folder", async (_event, payload: { glbPath?: string } | undefined) => {
     const fallbackPath = path.join(app.getPath("userData"), "project-assets");
-    const outGlbPath = payload?.glbPath ? payload.glbPath : fallbackPath;
-    shell.showItemInFolder(outGlbPath);
+    const targetPath = payload?.glbPath ? resolve(payload.glbPath) : fallbackPath;
+    let folderPath = targetPath;
+    try {
+      if (!fs.existsSync(folderPath) || !fs.statSync(folderPath).isDirectory()) {
+        folderPath = path.dirname(folderPath);
+      }
+    } catch {
+      folderPath = fallbackPath;
+    }
+    const openError = await shell.openPath(folderPath);
 
     return {
-      ok: true,
-      path: outGlbPath,
+      ok: openError.length === 0,
+      path: folderPath,
+      error: openError || undefined,
     };
   });
 

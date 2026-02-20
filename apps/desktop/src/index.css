@@ -11,7 +11,7 @@
   --input-border: #44403c;
   --border: #44403c;
   --text: #f2eee6;
-  --text-muted: #a8a29e;
+  --text-muted: rgba(242, 238, 230, 0.65);
   --accent: #a89f94;
   --accent-2: #8c7e6d;
   --danger: #b34b46;
@@ -33,7 +33,7 @@
   --input-border: #e5e5e3;
   --border: #d6d3d1;
   --text: #2d2a26;
-  --text-muted: #57534e;
+  --text-muted: rgba(45, 42, 38, 0.65);
   --accent: #8c7e6d;
   --accent-2: #8c7e6d;
   --danger: #a24440;
@@ -55,7 +55,7 @@
   --input-border: #44403c;
   --border: #44403c;
   --text: #f2eee6;
-  --text-muted: #a8a29e;
+  --text-muted: rgba(242, 238, 230, 0.65);
   --accent: #a89f94;
   --accent-2: #8c7e6d;
   --danger: #b34b46;
@@ -182,6 +182,23 @@
     background: radial-gradient(1200px 800px at 50% 30%, rgba(255, 255, 255, 0.06), rgba(0, 0, 0, 0)), var(--bg);
   }
 
+  .app-scene header,
+  .app-scene aside,
+  .app-scene main,
+  .app-scene section,
+  .glass {
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  .app-scene input,
+  .app-scene textarea,
+  .app-scene [contenteditable="true"],
+  .app-scene [contenteditable=""] {
+    user-select: text;
+    -webkit-user-select: text;
+  }
+
   .glass {
     position: relative;
     isolation: isolate;
@@ -208,12 +225,30 @@
     background: linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.02));
     pointer-events: none;
     opacity: 0.6;
+    z-index: 1;
+  }
+
+  .glass::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: rgba(0, 0, 0, 0.18);
+    pointer-events: none;
+    z-index: 0;
   }
 
   .glass > * {
     position: relative;
-    z-index: 1;
+    z-index: 2;
   }
+}
+
+body.is-orbiting,
+body.is-orbiting * {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+  cursor: grabbing !important;
 }
 
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {

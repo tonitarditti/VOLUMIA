@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
@@ -34,6 +34,7 @@ type ProjectViewportProps = {
   glbPath?: string;
   glbVersion?: number;
   showUtilityButtons?: boolean;
+  showChrome?: boolean;
   resetSignal?: number;
   wireframe?: boolean;
   onToggleWireframe?: () => void;
@@ -428,9 +429,9 @@ function getViewportThemeConfig(theme: ViewportTheme): ViewportThemeConfig {
     return {
       isDark: false,
       background: "#f4f1ee",
-      ground: "#d6d3d1",
-      gridMain: "#a8a29e",
-      gridSub: "#d6d3d1",
+      ground: "#8e867c",
+      gridMain: "#756d63",
+      gridSub: "#7f776d",
       gridOpacity: 0.38,
       ambientIntensity: 0.18,
       hemisphereIntensity: 0.6,
@@ -444,9 +445,9 @@ function getViewportThemeConfig(theme: ViewportTheme): ViewportThemeConfig {
   return {
     isDark: true,
     background: "#0c0a09",
-    ground: "#4a4640",
-    gridMain: "#6a6358",
-    gridSub: "#4a443c",
+    ground: "#433f39",
+    gridMain: "#3a352f",
+    gridSub: "#36322d",
     gridOpacity: 0.35,
     ambientIntensity: 0.22,
     hemisphereIntensity: 0.9,
@@ -497,6 +498,7 @@ export function ProjectViewport({
   glbPath,
   glbVersion,
   showUtilityButtons = true,
+  showChrome = true,
   resetSignal,
   wireframe: wireframeProp,
   onToggleWireframe,
@@ -517,6 +519,7 @@ export function ProjectViewport({
   const [wireframeInternal, setWireframeInternal] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const wireframe = wireframeProp ?? wireframeInternal;
+  const isOrbitingRef = useRef(false);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -635,49 +638,99 @@ export function ProjectViewport({
     setWireframeInternal((current) => !current);
   }, [onToggleWireframe]);
 
+  const stopOrbiting = useCallback(() => {
+    if (!isOrbitingRef.current) {
+      return;
+    }
+    isOrbitingRef.current = false;
+    document.body.classList.remove("is-orbiting");
+  }, []);
+
+  const handleViewportPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!(event.target instanceof Element) || !event.target.closest("canvas")) {
+      return;
+    }
+    const element = event.currentTarget;
+    if (!element.hasPointerCapture(event.pointerId)) {
+      element.setPointerCapture(event.pointerId);
+    }
+    isOrbitingRef.current = true;
+    document.body.classList.add("is-orbiting");
+  }, []);
+
+  const handleViewportPointerUp = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    const element = event.currentTarget;
+    if (element.hasPointerCapture(event.pointerId)) {
+      element.releasePointerCapture(event.pointerId);
+    }
+    stopOrbiting();
+  }, [stopOrbiting]);
+
+  const handleViewportPointerCancel = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    const element = event.currentTarget;
+    if (element.hasPointerCapture(event.pointerId)) {
+      element.releasePointerCapture(event.pointerId);
+    }
+    stopOrbiting();
+  }, [stopOrbiting]);
+
+  useEffect(() => {
+    return () => {
+      document.body.classList.remove("is-orbiting");
+    };
+  }, []);
+
   return (
-    <div className="relative flex h-full min-h-0 w-full min-w-0 overflow-hidden">
+    <div
+      className="relative flex h-full min-h-0 w-full min-w-0 overflow-hidden"
+      onPointerDown={handleViewportPointerDown}
+      onPointerUp={handleViewportPointerUp}
+      onPointerCancel={handleViewportPointerCancel}
+      onMouseLeave={stopOrbiting}
+    >
       <div
         ref={hostRef}
         className={`relative flex h-full w-full min-h-0 min-w-0 flex-col overflow-hidden ${bgClass}`}
       >
-        <div className={headerClass}>
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <span className={`${chipClass} text-[10px] uppercase tracking-[0.16em] text-[var(--text-muted)]`}>
-                {t("project.viewport")}
-              </span>
-              <span className={`${hintChipClass} text-[10px] text-[var(--text-muted)]`}>
-                {t("project.viewportHint")}
-              </span>
-            </div>
-            {showUtilityButtons ? (
+        {showChrome ? (
+          <div className={headerClass}>
+            <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={handleResetView}
-                  className={utilityButtonBaseClass}
-                >
-                  Reset View
-                </button>
-                <button
-                  type="button"
-                  onClick={handleToggleWireframe}
-                  className={utilityWireframeClass}
-                >
-                  Wireframe
-                </button>
-                <button
-                  type="button"
-                  onClick={handleScreenshot}
-                  className={utilityButtonBaseClass}
-                >
-                  Screenshot
-                </button>
+                <span className={`${chipClass} text-[10px] uppercase tracking-[0.16em] text-[var(--text-muted)]`}>
+                  {t("project.viewport")}
+                </span>
+                <span className={`${hintChipClass} text-[10px] text-[var(--text-muted)]`}>
+                  {t("project.viewportHint")}
+                </span>
               </div>
-            ) : null}
+              {showUtilityButtons ? (
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleResetView}
+                    className={utilityButtonBaseClass}
+                  >
+                    Reset View
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleToggleWireframe}
+                    className={utilityWireframeClass}
+                  >
+                    Wireframe
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleScreenshot}
+                    className={utilityButtonBaseClass}
+                  >
+                    Screenshot
+                  </button>
+                </div>
+              ) : null}
+            </div>
           </div>
-        </div>
+        ) : null}
         <div className="relative flex-1 min-h-0 w-full overflow-hidden">
           {loadError ? (
             <div className="pointer-events-none absolute inset-x-3 top-3 z-20 rounded-md border border-[#7e2d2d] bg-[#3c1515]/90 px-3 py-2 text-[11px] leading-snug text-[#ffd7d7]">

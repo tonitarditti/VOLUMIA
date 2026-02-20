@@ -90,6 +90,24 @@ AUTO_ORGANIC_LIKE = {
     "potted plant",
     "plant",
 }
+AUTO_ARCH_LIKE = {
+    "building",
+    "house",
+    "apartment",
+    "room",
+    "interior",
+    "kitchen",
+    "bedroom",
+    "bathroom",
+    "living room",
+    "office",
+    "architecture",
+    "city",
+    "tower",
+    "facade",
+    "corridor",
+    "scene",
+}
 TRIPOSR_INSTALL_HINT = "TripoSR not installed. Install: pip install git+https://github.com/VAST-AI-Research/TripoSR.git"
 TRIPOSR_PYMCUBES_HINT = "TripoSR unavailable: install PyMCubes (pip install PyMCubes)"
 
@@ -849,6 +867,7 @@ def run_triposr(image_path: str, out_glb_path: str, preset: str, device: str) ->
     if return_code != 0:
         joined_output = "\n".join(stdout_lines + stderr_lines)
         normalized_output = joined_output.lower()
+        dep_hint = "conda activate volumia && pip install -U einops omegaconf PyMCubes pillow"
         if "triposr not installed" in normalized_output or "github.com/vast-ai-research/triposr" in normalized_output:
             raise RuntimeError(TRIPOSR_INSTALL_HINT)
         if (
@@ -857,6 +876,15 @@ def run_triposr(image_path: str, out_glb_path: str, preset: str, device: str) ->
             or "pymcubes is required when torchmcubes is unavailable" in normalized_output
         ):
             raise RuntimeError(TRIPOSR_PYMCUBES_HINT)
+        if (
+            "missing dependencies:" in normalized_output
+            or "missing dependency:" in normalized_output
+            or "no module named 'einops'" in normalized_output
+            or "no module named 'omegaconf'" in normalized_output
+            or "no module named 'pillow'" in normalized_output
+            or "no module named 'pil'" in normalized_output
+        ):
+            raise RuntimeError(f"Faltan deps para TripoSR. Ejecuta: {dep_hint}")
         raise RuntimeError(f"TripoSR generation failed (code={return_code}).")
 
     if not os.path.exists(out_glb_path):
@@ -1305,9 +1333,11 @@ def run_auto_pipeline(
     classify = _classify_auto_surface_profile(preprocess_info, profile)
     hard_surface_score = float(classify.get("hard_surface_score", 0.0))
     is_hard_surface = bool(classify.get("is_hard_surface", False))
+    is_architecture_scene = bool(classify.get("is_architecture_scene", False))
     has_strong_furniture_label = bool(classify.get("has_strong_furniture_label", False))
     if has_strong_furniture_label and profile != "organic":
         is_hard_surface = True
+        is_architecture_scene = False
         hard_surface_score = max(hard_surface_score, 0.92)
         classify["is_hard_surface"] = True
         classify["hard_surface_score"] = hard_surface_score
@@ -1350,11 +1380,17 @@ def run_auto_pipeline(
         auto_preset_reason = f"forced hard_surface by furniture label (score={hard_surface_score:.3f})"
 
     use_hard_surface_route = profile == "hard_surface" or (profile != "organic" and is_hard_surface)
+    use_architecture_route = profile == "auto" and (not use_hard_surface_route) and is_architecture_scene
     log(f"[AUTO][PRESET] selected={auto_preset} reason={auto_preset_reason}")
+    log(
+        f"[AUTO][ROUTER] hard_surface={use_hard_surface_route} "
+        f"architecture={use_architecture_route} profile={profile}"
+    )
 
     classification_payload = {
         "hardSurfaceScore": hard_surface_score,
         "isHardSurface": bool(use_hard_surface_route),
+        "isArchitectureScene": bool(use_architecture_route),
         "reason": classify.get("reason", ""),
         "signals": signals,
         "autoProfile": profile,
@@ -1543,6 +1579,18 @@ def run_auto_pipeline(
         if try_blockout():
             return "blockout"
         raise RuntimeError("AUTO hard-surface pipeline failed after TripoSR and blockout fallback.")
+
+    if use_architecture_route:
+        emit_progress("neural_bootstrap", 40, "AUTO architecture route: InstantMesh/ARCH preferred")
+        if try_instantmesh():
+            return "instantmesh"
+        if try_arch():
+            return "arch"
+        if try_triposr(raise_on_missing_pymcubes=False):
+            return "triposr"
+        if try_blockout():
+            return "blockout"
+        raise RuntimeError("AUTO architecture pipeline failed after InstantMesh, ARCH and blockout fallbacks.")
 
     emit_progress("neural_bootstrap", 40, "AUTO organic/default route")
     if try_instantmesh():
@@ -1856,6 +1904,12 @@ def _is_strong_hard_surface_label(label: str) -> bool:
     return _label_has_token(label, AUTO_LABEL_STRONG_HARD)
 
 
+def _is_architecture_label(label: str) -> bool:
+    if _label_has_token(label, AUTO_ARCH_LIKE):
+        return True
+    return any(token in label for token in ("building", "interior", "room", "house", "architecture", "city"))
+
+
 def _compute_hard_surface_visual_signals(rgb_canvas, mask_canvas) -> Dict[str, float]:
     mask_u8 = (np.asarray(mask_canvas) > 0).astype(np.uint8)
     rgb_u8 = np.asarray(rgb_canvas, dtype=np.uint8)
@@ -1953,6 +2007,7 @@ def _classify_auto_surface_profile(preprocess_info: Dict[str, Any], auto_profile
     normalized_labels: List[Dict[str, float | str]] = []
     strongest_hard_conf = 0.0
     strongest_organic_conf = 0.0
+    strongest_arch_conf = 0.0
     has_strong_furniture_label = False
 
     for entry in label_candidates:
@@ -1969,6 +2024,8 @@ def _classify_auto_surface_profile(preprocess_info: Dict[str, Any], auto_profile
             has_strong_furniture_label = has_strong_furniture_label or confidence >= 0.20
         if _is_organic_label(label):
             strongest_organic_conf = max(strongest_organic_conf, confidence)
+        if _is_architecture_label(label):
+            strongest_arch_conf = max(strongest_arch_conf, confidence)
 
     if not normalized_labels:
         fallback_label = _normalize_auto_label(str(preprocess_info.get("class_label", "")))
@@ -1981,6 +2038,8 @@ def _classify_auto_surface_profile(preprocess_info: Dict[str, Any], auto_profile
                 has_strong_furniture_label = has_strong_furniture_label or fallback_conf >= 0.20
             if _is_organic_label(fallback_label):
                 strongest_organic_conf = max(strongest_organic_conf, fallback_conf)
+            if _is_architecture_label(fallback_label):
+                strongest_arch_conf = max(strongest_arch_conf, fallback_conf)
 
     edge_density = float(preprocess_info.get("edge_density", 0.0))
     hough_lines = int(round(float(preprocess_info.get("hough_lines", 0.0))))
@@ -1993,28 +2052,38 @@ def _classify_auto_surface_profile(preprocess_info: Dict[str, Any], auto_profile
     if profile == "hard_surface":
         score = 1.0
         is_hard_surface = True
+        is_architecture_scene = False
         reason = "manual override: hard_surface"
     elif profile == "organic":
         score = 0.0
         is_hard_surface = False
+        is_architecture_scene = False
         reason = "manual override: organic"
     else:
-        score = float(np.clip(0.35 + geometry_score * 0.45, 0.0, 1.0))
+        score = float(np.clip(0.45 + geometry_score * 0.40, 0.0, 1.0))
         if strongest_hard_conf > 0.0:
-            score = max(score, float(np.clip(0.52 + strongest_hard_conf * 0.45, 0.0, 0.98)))
-        if strongest_organic_conf > 0.0 and strongest_hard_conf < 0.35:
+            score = max(score, float(np.clip(0.56 + strongest_hard_conf * 0.42, 0.0, 0.98)))
+        if strongest_organic_conf > 0.0 and strongest_hard_conf < 0.35 and strongest_arch_conf < 0.35:
             score = min(score, float(np.clip(0.50 - strongest_organic_conf * 0.32, 0.0, 1.0)))
+        is_architecture_scene = bool(
+            strongest_arch_conf >= 0.45
+            and strongest_hard_conf < 0.35
+            and not has_strong_furniture_label
+        )
+        if is_architecture_scene:
+            score = min(score, 0.48)
         if has_strong_furniture_label:
             score = max(score, 0.92)
         is_hard_surface = bool(score >= AUTO_HARD_SURFACE_THRESHOLD or has_strong_furniture_label)
         reason = (
             f"profile=auto geometry={geometry_score:.3f} hard_conf={strongest_hard_conf:.3f} "
-            f"organic_conf={strongest_organic_conf:.3f}"
+            f"organic_conf={strongest_organic_conf:.3f} arch_conf={strongest_arch_conf:.3f}"
         )
 
     return {
         "hard_surface_score": float(np.clip(score, 0.0, 1.0)),
         "is_hard_surface": bool(is_hard_surface),
+        "is_architecture_scene": bool(is_architecture_scene),
         "reason": reason,
         "signals": {
             "labels": normalized_labels,
@@ -2022,6 +2091,7 @@ def _classify_auto_surface_profile(preprocess_info: Dict[str, Any], auto_profile
             "edgeDensity": float(edge_density),
             "straightLineRatio": float(straight_line_ratio),
             "lineStrength": float(line_strength),
+            "architectureConfidence": float(strongest_arch_conf),
         },
         "has_strong_furniture_label": has_strong_furniture_label,
     }
@@ -2990,6 +3060,23 @@ def _sanitize_invalid_mesh(mesh, trimesh_module):
     return mesh_work
 
 
+def _cleanup_degenerate_faces_compat(mesh) -> None:
+    try:
+        try:
+            mask = mesh.nondegenerate_faces()
+        except TypeError:
+            mask = mesh.nondegenerate_faces
+        if mask is not None:
+            mesh.update_faces(mask)
+    except Exception:
+        pass
+
+    try:
+        mesh.remove_unreferenced_vertices()
+    except Exception:
+        pass
+
+
 def normalize_scene_mesh_for_export(scene, target_size: float = 2.0):
     import trimesh
 
@@ -3009,16 +3096,7 @@ def normalize_scene_mesh_for_export(scene, target_size: float = 2.0):
     # 2) Recompute normals and remove degenerates.
     try:
         mesh.rezero()
-        if hasattr(mesh, "remove_degenerate_faces"):
-            mesh.remove_degenerate_faces()
-        else:
-            try:
-                mask = mesh.nondegenerate_faces()
-            except TypeError:
-                mask = mesh.nondegenerate_faces
-            mesh.update_faces(mask)
-        if hasattr(mesh, "remove_unreferenced_vertices"):
-            mesh.remove_unreferenced_vertices()
+        _cleanup_degenerate_faces_compat(mesh)
         mesh.fix_normals()
     except Exception as e:
         print(f"[WARN] cleanup skipped: {e}", flush=True)
@@ -3045,16 +3123,7 @@ def normalize_scene_mesh_for_export(scene, target_size: float = 2.0):
 
     mesh = _sanitize_invalid_mesh(mesh, trimesh)
     try:
-        if hasattr(mesh, "remove_degenerate_faces"):
-            mesh.remove_degenerate_faces()
-        else:
-            try:
-                mask = mesh.nondegenerate_faces()
-            except TypeError:
-                mask = mesh.nondegenerate_faces
-            mesh.update_faces(mask)
-        if hasattr(mesh, "remove_unreferenced_vertices"):
-            mesh.remove_unreferenced_vertices()
+        _cleanup_degenerate_faces_compat(mesh)
         mesh.fix_normals()
     except Exception as e:
         print(f"[WARN] cleanup skipped: {e}", flush=True)

@@ -4,12 +4,11 @@ import importlib
 import inspect
 import json
 import os
-import shutil
 import sys
 import traceback
 import types
 from io import BytesIO
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 
 def emit(stage: str, percent: int, message: str) -> None:
@@ -39,6 +38,58 @@ def ensure_output_path(path: str) -> str:
     if parent:
         os.makedirs(parent, exist_ok=True)
     return absolute_path
+
+
+def build_dependency_install_command(missing_packages: List[str]) -> str:
+    ordered = sorted(set(missing_packages), key=lambda item: item.lower())
+    return "pip install -U " + " ".join(ordered)
+
+
+def resolve_triposr_repo_root() -> Optional[str]:
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    user_home = os.path.expanduser("~")
+    env_root = (os.environ.get("VOLUMIA_TRIPOSR_ROOT") or "").strip()
+    candidates = [
+        env_root,
+        os.path.join(script_dir, "..", "TripoSR"),
+        os.path.join(os.getcwd(), "tools", "TripoSR"),
+        os.path.join(user_home, "TripoSR"),
+        r"C:\Users\Usuario\TripoSR",
+    ]
+    for candidate in candidates:
+        if not candidate:
+            continue
+        absolute = os.path.abspath(candidate)
+        marker = os.path.join(absolute, "tsr", "system.py")
+        if os.path.exists(marker):
+            return absolute
+    return None
+
+
+def import_triposr_runtime() -> Tuple[Any, str]:
+    repo_root = resolve_triposr_repo_root()
+    if repo_root:
+        normalized_root = os.path.normcase(os.path.abspath(repo_root))
+        current_paths = {os.path.normcase(os.path.abspath(item)) for item in sys.path if isinstance(item, str)}
+        if normalized_root not in current_paths:
+            sys.path.insert(0, os.path.abspath(repo_root))
+    try:
+        from tsr.system import TSR  # type: ignore
+    except Exception as error:
+        install_cmd = build_dependency_install_command(["einops", "omegaconf", "pillow", "PyMCubes"])
+        raise RuntimeError(
+            "TripoSR not available. Missing tsr runtime. "
+            "Use conda env 'volumia' and install deps with: "
+            f"{install_cmd} ; pip install git+https://github.com/VAST-AI-Research/TripoSR.git"
+        ) from error
+
+    if repo_root:
+        return TSR, f"repo:{os.path.abspath(repo_root)}"
+
+    tsr_module = sys.modules.get("tsr")
+    tsr_source = getattr(tsr_module, "__file__", "")
+    source_text = tsr_source if isinstance(tsr_source, str) and tsr_source else "python-path"
+    return TSR, f"python:{source_text}"
 
 
 def resolve_device(requested: str) -> str:
@@ -180,6 +231,8 @@ def preflight_runtime_dependencies() -> None:
         ("PIL", "pillow"),
         ("trimesh", "trimesh"),
         ("mcubes", "PyMCubes"),
+        ("einops", "einops"),
+        ("omegaconf", "omegaconf"),
     ]
     missing: list[tuple[str, str]] = []
     for module_name, package_name in requirements:
@@ -191,9 +244,12 @@ def preflight_runtime_dependencies() -> None:
     if missing:
         missing_text = ", ".join(f"{module_name} ({package_name})" for module_name, package_name in missing)
         print(f"[PREFLIGHT] MISSING={missing_text}", flush=True)
-        if any(module_name == "mcubes" for module_name, _ in missing):
-            raise RuntimeError("Missing dependency: PyMCubes (mcubes). Install: pip install PyMCubes")
-        raise RuntimeError(f"Missing dependencies: {missing_text}")
+        install_cmd = build_dependency_install_command([package_name for _, package_name in missing])
+        raise RuntimeError(
+            f"Missing dependencies: {missing_text}. "
+            "Activate conda env 'volumia' and run: "
+            f"{install_cmd}"
+        )
 
     print("[PREFLIGHT] MISSING=none", flush=True)
 
@@ -290,26 +346,14 @@ def close_base_if_needed(mesh: Any, trimesh: Any) -> tuple[Any, str]:
     return combined, f"Base cap added on min{axis_name} using safe mesh concatenate."
 
 
-def resolve_template_glb() -> Optional[str]:
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    candidates = [
-        os.path.join(script_dir, "..", "..", "apps", "desktop", "assets", "templates", "box.glb"),
-        os.path.join(os.getcwd(), "apps", "desktop", "assets", "templates", "box.glb"),
-    ]
-    for candidate in candidates:
-        absolute = os.path.abspath(candidate)
-        if os.path.exists(absolute):
-            return absolute
-    return None
-
-
 def validate_glb(out_glb: str, trimesh: Any) -> None:
+    min_valid_glb_bytes = int(os.environ.get("VOLUMIA_MIN_VALID_GLB_BYTES", str(100 * 1024)))
     if not os.path.exists(out_glb):
         raise RuntimeError("GLB was not created.")
 
     size = os.path.getsize(out_glb)
-    if size < 4_000:
-        raise RuntimeError(f"Generated GLB is too small (< 4000 bytes): {size} bytes")
+    if size < min_valid_glb_bytes:
+        raise RuntimeError(f"Generated GLB is too small (< {min_valid_glb_bytes} bytes): {size} bytes")
 
     try:
         loaded = trimesh.load(out_glb, file_type="glb", force="scene")
@@ -325,15 +369,7 @@ def export_glb_with_fallback(mesh: Any, out_glb: str, trimesh: Any) -> tuple[boo
         validate_glb(out_glb, trimesh)
         return False, "Primary GLB export validated."
     except Exception as export_error:
-        template_glb = resolve_template_glb()
-        if not template_glb:
-            raise RuntimeError(
-                f"Primary GLB export failed and template fallback was not found: {export_error}"
-            ) from export_error
-
-        shutil.copyfile(template_glb, out_glb)
-        validate_glb(out_glb, trimesh)
-        return True, f"Primary export failed; fallback template used: {template_glb}"
+        raise RuntimeError(f"Primary GLB export failed: {export_error}") from export_error
 
 
 def _get_lanczos_resample(pil_image_module: Any) -> Any:
@@ -447,12 +483,15 @@ def run_triposr(image_path: str, out_glb: str, preset: str, requested_device: st
         except Exception as error:
             raise RuntimeError("Missing dependency: PyMCubes (mcubes). Install: pip install PyMCubes") from error
         install_torchmcubes_compat_shim()
-        from tsr.system import TSR  # type: ignore
+        TSR, triposr_source = import_triposr_runtime()
     except RuntimeError:
         raise
     except Exception as error:
+        install_cmd = build_dependency_install_command(["einops", "omegaconf", "pillow", "PyMCubes"])
         raise RuntimeError(
-            "TripoSR dependencies are not installed. Install torch, pillow and triposr runtime first."
+            "TripoSR dependencies are not installed. "
+            "Activate conda env 'volumia' and run: "
+            f"{install_cmd} ; pip install git+https://github.com/VAST-AI-Research/TripoSR.git"
         ) from error
 
     try:
@@ -465,6 +504,8 @@ def run_triposr(image_path: str, out_glb: str, preset: str, requested_device: st
 
     device = resolve_device(requested_device)
     preset_config = PRESET_CONFIG[preset]
+    emit("infer", 42, f"TripoSR available ({triposr_source})")
+    print(f"[TRIPOSR] available source={triposr_source}", flush=True)
 
     emit("infer", 45, f"Loading TripoSR model on {device}")
     model = TSR.from_pretrained(
@@ -481,6 +522,12 @@ def run_triposr(image_path: str, out_glb: str, preset: str, requested_device: st
     extract_kwargs = pick_supported_kwarg(model.extract_mesh, RESOLUTION_PARAM_NAMES, preset_config["resolution"])
     if not extract_kwargs:
         extract_kwargs = {"resolution": preset_config["resolution"]}
+    supports_vertex_color = False
+    try:
+        extract_signature = inspect.signature(model.extract_mesh)
+        supports_vertex_color = "has_vertex_color" in extract_signature.parameters
+    except Exception:
+        supports_vertex_color = False
 
     emit(
         "infer",
@@ -496,13 +543,22 @@ def run_triposr(image_path: str, out_glb: str, preset: str, requested_device: st
         except TypeError:
             scene_codes = model([image], device=device)
 
+        extract_call_kwargs = dict(extract_kwargs)
+        if supports_vertex_color:
+            extract_call_kwargs["has_vertex_color"] = False
         try:
-            meshes = model.extract_mesh(scene_codes, has_vertex_color=False, **extract_kwargs)
+            meshes = model.extract_mesh(scene_codes, **extract_call_kwargs)
         except TypeError:
+            fallback_kwargs = {"resolution": preset_config["resolution"]}
+            if supports_vertex_color:
+                fallback_kwargs["has_vertex_color"] = False
             try:
-                meshes = model.extract_mesh(scene_codes, has_vertex_color=False, resolution=preset_config["resolution"])
+                meshes = model.extract_mesh(scene_codes, **fallback_kwargs)
             except TypeError:
-                meshes = model.extract_mesh(scene_codes, has_vertex_color=False)
+                if supports_vertex_color:
+                    meshes = model.extract_mesh(scene_codes, has_vertex_color=False)
+                else:
+                    meshes = model.extract_mesh(scene_codes)
 
     if not meshes:
         raise RuntimeError("TripoSR did not return any mesh.")

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type PropsWithChildren } from "react";
 import { Navigate, useParams } from "react-router-dom";
 import { createChatMessage } from "@/projects/factory";
 import { useProjects } from "@/projects/context";
@@ -98,6 +98,23 @@ function getProjectModel(model: ProjectModel | undefined): ProjectModel {
     preset: model?.preset,
     mode: model?.mode ?? "auto",
   };
+}
+
+type ViewportBackgroundProps = {
+  glbPath?: string;
+  glbVersion?: number;
+};
+
+function ViewportBackground({ glbPath, glbVersion }: ViewportBackgroundProps) {
+  return (
+    <div className="absolute inset-4 z-0 overflow-hidden rounded-2xl pointer-events-auto">
+      <ProjectViewport glbPath={glbPath} glbVersion={glbVersion} showUtilityButtons={false} showChrome={false} />
+    </div>
+  );
+}
+
+function UILayer({ children }: PropsWithChildren) {
+  return <div className="relative z-10 h-full w-full pointer-events-none">{children}</div>;
 }
 
 export function ProjectPage() {
@@ -450,15 +467,14 @@ export function ProjectPage() {
     ? "glass text-[var(--text)]"
     : `${getSurfaceClass(false, "panel")} text-[var(--text)]`;
   const panelSoftClass = getSurfaceClass(false, "soft");
-  const viewportShellClass = settings.glassStyle
-    ? "border border-[var(--glass-border)] bg-transparent text-[var(--text)]"
-    : `${getSurfaceClass(false, "panel")} text-[var(--text)]`;
   const selectClass = "border-[var(--border)] bg-[var(--surface-3)] text-[var(--text)] hover:border-[var(--accent)] focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--focus-ring)]";
 
   return (
-    <div className="h-full min-h-0 w-full min-w-0 overflow-hidden p-4">
-      <div className={`grid h-full min-h-0 w-full min-w-0 gap-4 ${isAssistantOpen ? "grid-cols-[320px_minmax(0,1fr)_340px]" : "grid-cols-[320px_minmax(0,1fr)]"}`}>
-        <aside className={`flex min-h-0 flex-col rounded-2xl p-4 ${floatingPanelClass}`}>
+    <div className="relative h-full min-h-0 w-full min-w-0 overflow-hidden p-4">
+      <ViewportBackground glbPath={project.model?.glbPath} glbVersion={project.model?.generatedAt} />
+      <UILayer>
+        <div className={`grid h-full min-h-0 w-full min-w-0 gap-4 ${isAssistantOpen ? "grid-cols-[320px_minmax(0,1fr)_340px]" : "grid-cols-[320px_minmax(0,1fr)]"}`}>
+          <aside className={`pointer-events-auto flex min-h-0 flex-col rounded-2xl p-4 ${floatingPanelClass}`}>
           <TextField
             value={project.name}
             onChange={(event) => renameProject(project.id, event.target.value)}
@@ -512,8 +528,8 @@ export function ProjectPage() {
           </div>
         </aside>
 
-        <section className="flex min-h-0 min-w-0 flex-col gap-3">
-          <div className={`shrink-0 rounded-2xl p-3 ${floatingPanelClass}`}>
+        <section className="pointer-events-none flex min-h-0 min-w-0 flex-col gap-3">
+          <div className={`pointer-events-auto shrink-0 rounded-2xl p-3 ${floatingPanelClass}`}>
             <div className="flex flex-wrap items-center gap-2">
               <select
                 value={preset}
@@ -577,11 +593,9 @@ export function ProjectPage() {
             </div>
           </div>
 
-          <div className={`flex-1 min-h-0 min-w-0 overflow-hidden rounded-2xl ${viewportShellClass}`}>
-            <ProjectViewport glbPath={project.model?.glbPath} glbVersion={project.model?.generatedAt} showUtilityButtons />
-          </div>
+          <div className="flex-1 min-h-0 min-w-0" aria-hidden />
 
-          <div className={`shrink-0 overflow-hidden rounded-2xl ${floatingPanelClass}`}>
+          <div className={`pointer-events-auto shrink-0 overflow-hidden rounded-2xl ${floatingPanelClass}`}>
             <button
               type="button"
               className="flex h-10 w-full items-center justify-between px-4 text-left text-xs font-medium uppercase tracking-[0.16em] text-[var(--text-muted)] transition-all duration-200 ease-out hover:bg-[var(--surface-2)]/80"
@@ -605,8 +619,8 @@ export function ProjectPage() {
           </div>
         </section>
 
-        {isAssistantOpen ? (
-          <aside className={`flex min-h-0 flex-col rounded-2xl p-4 ${floatingPanelClass}`}>
+          {isAssistantOpen ? (
+            <aside className={`pointer-events-auto flex min-h-0 flex-col rounded-2xl p-4 ${floatingPanelClass}`}>
             <h2 className="mb-3 text-[11px] font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">{t("project.assistant")}</h2>
 
             <div className={`min-h-0 flex-1 space-y-3 overflow-y-auto rounded-xl p-3.5 ${panelSoftClass}`}>
@@ -652,9 +666,10 @@ export function ProjectPage() {
                 {t("project.send")}
               </Button>
             </div>
-          </aside>
-        ) : null}
-      </div>
+            </aside>
+          ) : null}
+        </div>
+      </UILayer>
     </div>
   );
 }
