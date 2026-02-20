@@ -1,27 +1,18 @@
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
+import { buildSDXLCannyWorkflow, type PromptWorkflow, type SDXLCannyParams } from "./comfyui-workflows/sdxlCanny";
 
 export type ComfyMultiviewPreset = "hard_surface" | "balanced" | "organic";
+export type { SDXLCannyParams } from "./comfyui-workflows/sdxlCanny";
 
-type ViewSpec = {
-  key: string;
-  suffix: string;
-  prompt: string;
-};
+export type MultiviewViewKey = "front" | "v45" | "side" | "rear";
 
-type PresetConfig = {
-  positivePrompt: string;
-  negativePrompt: string;
-  denoise: number;
-  controlStrength: number;
-  steps: number;
-  cfg: number;
-};
-
-type ModelSelection = {
-  checkpointName: string;
-  controlnetName: string;
+export type MultiviewViewSpec = {
+  key: MultiviewViewKey;
+  suffixPrompt: string;
+  outputSuffix: string;
+  seedOffset?: number;
 };
 
 type HistoryImage = {
@@ -36,69 +27,169 @@ type UploadedImage = {
   type?: string;
 };
 
-export type ComfyMultiviewResult = {
+type ModelSelection = {
+  checkpointName: string;
+  controlnetName: string;
+};
+
+type PresetConfig = {
+  basePrompt: string;
+  negativePrompt: string;
+  width: number;
+  height: number;
+  cannyLow: number;
+  cannyHigh: number;
+  controlStrength: number;
+  steps: number;
+  cfg: number;
+  sampler: string;
+  scheduler: string;
+  denoise: number;
+};
+
+export type ComfyPresetRuntimeConfig = {
+  basePrompt: string;
+  negativePrompt: string;
+  params: Omit<SDXLCannyParams, "seed" | "checkpointName" | "controlNetName">;
+};
+
+export type RunSDXLCannyRefineSingleArgs = {
+  baseUrl?: string;
+  inputImagePath: string;
+  prompt: string;
+  negative: string;
+  outputDir: string;
+  outputPrefix: string;
+  params: SDXLCannyParams;
+  isCanceled?: () => boolean;
+  onPoll?: (elapsedMs: number, promptId: string) => void;
+};
+
+export type RunSDXLCannyRefineSingleResult = {
+  promptId: string;
+  outputPath: string;
+  outputImage: HistoryImage;
+  logs: string[];
+};
+
+export type RunMultiviewCannyRefineArgs = {
+  baseUrl?: string;
+  inputImagePath: string;
+  outputDir?: string;
+  basePrompt: string;
+  negative: string;
+  params: SDXLCannyParams;
+  views?: Array<MultiviewViewSpec>;
+  maxConcurrency?: number;
+  useSeedOffsets?: boolean;
+  isCanceled?: () => boolean;
+  onProgress?: (progress: { percent: number; message: string }) => void;
+};
+
+export type RunMultiviewViewResult = {
+  key: MultiviewViewKey;
+  promptId: string;
+  outputPath: string;
+  outputPrefix: string;
+  seed: number;
+};
+
+export type RunMultiviewCannyRefineResult = {
   viewsDir: string;
   viewPaths: string[];
   seed: number;
   checkpointName: string;
   controlnetName: string;
   logs: string[];
+  results: RunMultiviewViewResult[];
 };
 
-type GenerateComfyMultiviewArgs = {
-  baseUrl: string;
-  imagePath: string;
-  outputDir: string;
-  preset: ComfyMultiviewPreset;
-  isCanceled?: () => boolean;
-  onProgress?: (progress: { percent: number; message: string }) => void;
-};
-
-const WORKFLOW_PATH_SEGMENTS = ["tools", "comfyui", "workflows", "multiview_sdxl_canny.json"] as const;
-const INSTALL_DOC_PATH = path.join("docs", "README_COMFYUI_MODELS.md");
+const DEFAULT_BASE_URL = "http://127.0.0.1:8188";
 const POLL_INTERVAL_MS = 1_200;
 const HISTORY_TIMEOUT_MS = 180_000;
-const DEFAULT_BASE_URL = "http://127.0.0.1:8188";
-const MAX_REPO_ROOT_ASCENT = 10;
-const DEBUG_PATHS_ENABLED = process.env.VOLUMIA_DEBUG_PATHS === "1";
+const INSTALL_DOC_PATH = path.join("docs", "README_COMFYUI_MODELS.md");
+const DEBUG_COMFYUI = process.env.VOLUMIA_DEBUG_COMFYUI === "1";
 
-const VIEW_SPECS: ViewSpec[] = [
-  { key: "front", suffix: "front", prompt: "front view, centered camera, product shot" },
-  { key: "front_left", suffix: "front_left", prompt: "front-left view, 45 degree yaw, centered object" },
-  { key: "left", suffix: "left", prompt: "left side view, profile view, centered object" },
-  { key: "back", suffix: "back", prompt: "back view, 180 degree yaw, centered object" },
-  { key: "right", suffix: "right", prompt: "right side view, profile view, centered object" },
-  { key: "front_right", suffix: "front_right", prompt: "front-right view, -45 degree yaw, centered object" },
+const DEFAULT_VIEWS: MultiviewViewSpec[] = [
+  {
+    key: "front",
+    suffixPrompt: "front elevation view, straight-on camera, centered, no tilt, 35mm lens",
+    outputSuffix: "front",
+    seedOffset: 0,
+  },
+  {
+    key: "v45",
+    suffixPrompt: "three-quarter view, 45 degree angle, eye level, 35mm lens",
+    outputSuffix: "45",
+    seedOffset: 1,
+  },
+  {
+    key: "side",
+    suffixPrompt: "side elevation view, minimal distortion, technical framing",
+    outputSuffix: "side",
+    seedOffset: 2,
+  },
+  {
+    key: "rear",
+    suffixPrompt: "rear view, consistent lighting direction, documentation framing",
+    outputSuffix: "rear",
+    seedOffset: 3,
+  },
 ];
 
 const PRESET_CONFIGS: Record<ComfyMultiviewPreset, PresetConfig> = {
   hard_surface: {
-    positivePrompt:
+    basePrompt:
       "clean hard-surface industrial object, crisp edges, planar surfaces, symmetric proportions, studio lighting, white background",
     negativePrompt:
       "organic shape, blob, melted geometry, warped topology, asymmetry, deformed silhouette, noise, extra limbs",
-    denoise: 0.3,
+    width: 1024,
+    height: 1024,
+    cannyLow: 0.4,
+    cannyHigh: 0.8,
     controlStrength: 0.84,
     steps: 28,
     cfg: 6.5,
+    sampler: "dpmpp_2m",
+    scheduler: "karras",
+    denoise: 0.3,
   },
   balanced: {
-    positivePrompt: "clean product render, consistent geometry, controlled perspective, studio lighting, neutral background",
+    basePrompt: "clean product render, consistent geometry, controlled perspective, studio lighting, neutral background",
     negativePrompt: "deformed silhouette, warped topology, extra limbs, heavy artifacts, noisy geometry",
-    denoise: 0.45,
+    width: 1024,
+    height: 1024,
+    cannyLow: 0.4,
+    cannyHigh: 0.8,
     controlStrength: 0.62,
     steps: 26,
-    cfg: 6.0,
+    cfg: 6,
+    sampler: "dpmpp_2m",
+    scheduler: "karras",
+    denoise: 0.45,
   },
   organic: {
-    positivePrompt: "organic object render, smooth continuous forms, consistent silhouette, studio lighting, neutral background",
+    basePrompt: "organic object render, smooth continuous forms, consistent silhouette, studio lighting, neutral background",
     negativePrompt: "hard faceted artifacts, broken silhouette, melted geometry, excessive noise, duplicated parts",
-    denoise: 0.62,
+    width: 1024,
+    height: 1024,
+    cannyLow: 0.4,
+    cannyHigh: 0.8,
     controlStrength: 0.4,
     steps: 24,
     cfg: 5.8,
+    sampler: "dpmpp_2m",
+    scheduler: "karras",
+    denoise: 0.62,
   },
 };
+
+function debugComfyLog(...args: unknown[]) {
+  if (!DEBUG_COMFYUI) {
+    return;
+  }
+  console.log("[ComfyUI:debug]", ...args);
+}
 
 function assertNotCanceled(isCanceled?: () => boolean) {
   if (isCanceled?.()) {
@@ -106,139 +197,22 @@ function assertNotCanceled(isCanceled?: () => boolean) {
   }
 }
 
-function debugPathLog(...args: unknown[]) {
-  if (!DEBUG_PATHS_ENABLED) {
-    return;
-  }
-  console.log("[ComfyUI:path]", ...args);
+function normalizeBaseUrl(baseUrl?: string) {
+  return (baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, "");
 }
 
-function isDirectory(entryPath: string) {
-  try {
-    return fs.statSync(entryPath).isDirectory();
-  } catch {
-    return false;
-  }
+function normalizeSeed(value: number) {
+  const parsed = Number.isFinite(value) ? Math.floor(value) : 0;
+  return parsed & 0x7fffffff;
 }
 
-function collectAncestorDirs(startDir: string) {
-  const inspected: string[] = [];
-  let cursor = path.resolve(startDir);
-
-  for (let depth = 0; depth <= MAX_REPO_ROOT_ASCENT; depth += 1) {
-    inspected.push(cursor);
-    const parent = path.dirname(cursor);
-    if (parent === cursor) {
-      break;
-    }
-    cursor = parent;
-  }
-
-  return inspected;
+function sanitizeBaseName(value: string) {
+  return value.replace(/[^a-zA-Z0-9._-]/g, "_");
 }
 
-function hasWorkspacePackageJson(dir: string): boolean {
-  const packageJsonPath = path.join(dir, "package.json");
-  if (!fs.existsSync(packageJsonPath)) {
-    return false;
-  }
-
-  try {
-    const parsed = JSON.parse(fs.readFileSync(packageJsonPath, "utf8")) as Record<string, unknown>;
-    return Object.prototype.hasOwnProperty.call(parsed, "workspaces");
-  } catch (error) {
-    debugPathLog("Failed to parse package.json while resolving repo root:", packageJsonPath, error);
-    return false;
-  }
-}
-
-function hasRepoMarkers(dir: string): boolean {
-  const toolsComfyPath = path.join(dir, "tools", "comfyui");
-  const appsPath = path.join(dir, "apps");
-  const desktopAppsPath = path.join(appsPath, "desktop");
-
-  return isDirectory(toolsComfyPath) && (isDirectory(appsPath) || isDirectory(desktopAppsPath));
-}
-
-export function findRepoRoot(startDir: string): string {
-  const inspectedDirs = collectAncestorDirs(startDir);
-
-  for (const currentDir of inspectedDirs) {
-    const workspaceMarker = hasWorkspacePackageJson(currentDir);
-    const folderMarkers = hasRepoMarkers(currentDir);
-    debugPathLog(`Inspecting "${currentDir}"`, { workspaceMarker, folderMarkers });
-
-    if (workspaceMarker || folderMarkers) {
-      debugPathLog(`Resolved repo root: "${currentDir}"`);
-      return currentDir;
-    }
-  }
-
-  throw new Error(
-    [
-      `[ComfyUI] No se pudo resolver la raiz del monorepo desde: ${path.resolve(startDir)}`,
-      `Inspeccion realizada (max ${MAX_REPO_ROOT_ASCENT} niveles):`,
-      ...inspectedDirs.map((dir) => ` - ${dir}`),
-      "Se esperaba encontrar package.json con workspaces o carpetas tools/comfyui y apps (o apps/desktop).",
-    ].join("\n")
-  );
-}
-
-export function resolveWorkflowPath(): string {
-  const inspectedRoots = collectAncestorDirs(__dirname);
-  const repoRoot = findRepoRoot(__dirname);
-  const workflowPath = path.join(repoRoot, ...WORKFLOW_PATH_SEGMENTS);
-
-  debugPathLog("Resolved workflow path candidate:", workflowPath);
-
-  if (!fs.existsSync(workflowPath)) {
-    const attemptedRoots = Array.from(new Set([repoRoot, ...inspectedRoots]));
-    throw new Error(
-      [
-        "[ComfyUI] Workflow template no encontrado.",
-        `Ruta esperada: ${workflowPath}`,
-        `Repo root resuelto: ${repoRoot}`,
-        "Roots inspeccionados:",
-        ...attemptedRoots.map((item) => ` - ${item}`),
-        "El workflow debe existir SOLO en: <repoRoot>/tools/comfyui/workflows/multiview_sdxl_canny.json",
-      ].join("\n")
-    );
-  }
-
-  return workflowPath;
-}
-
-function loadWorkflowTemplate() {
-  const workflowPath = resolveWorkflowPath();
-  const raw = fs.readFileSync(workflowPath, "utf8");
-  return JSON.parse(raw) as Record<string, unknown>;
-}
-
-function withPlaceholders(node: unknown, placeholders: Record<string, string | number>): unknown {
-  if (typeof node === "string") {
-    if (Object.prototype.hasOwnProperty.call(placeholders, node)) {
-      return placeholders[node];
-    }
-    let nextValue = node;
-    for (const [key, value] of Object.entries(placeholders)) {
-      nextValue = nextValue.split(key).join(String(value));
-    }
-    return nextValue;
-  }
-
-  if (Array.isArray(node)) {
-    return node.map((item) => withPlaceholders(item, placeholders));
-  }
-
-  if (node && typeof node === "object") {
-    const output: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(node)) {
-      output[key] = withPlaceholders(value, placeholders);
-    }
-    return output;
-  }
-
-  return node;
+function toInputImageReference(image: UploadedImage) {
+  const normalizedSubfolder = image.subfolder ? image.subfolder.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "") : "";
+  return normalizedSubfolder ? `${normalizedSubfolder}/${image.name}` : image.name;
 }
 
 function getMimeFromPath(filePath: string) {
@@ -257,10 +231,10 @@ function extractStringOptionsByKey(root: unknown, keyName: string): string[] {
 
     if (Array.isArray(node)) {
       if (
-        keyHint === keyName &&
-        node.length > 0 &&
-        Array.isArray(node[0]) &&
-        node[0].every((item) => typeof item === "string")
+        keyHint === keyName
+        && node.length > 0
+        && Array.isArray(node[0])
+        && node[0].every((item) => typeof item === "string")
       ) {
         for (const item of node[0] as string[]) {
           found.add(item);
@@ -270,13 +244,14 @@ function extractStringOptionsByKey(root: unknown, keyName: string): string[] {
           found.add(item);
         }
       }
+
       for (const item of node) {
         visit(item);
       }
       return;
     }
 
-    if (typeof node === "object") {
+    if (node && typeof node === "object") {
       for (const [key, value] of Object.entries(node)) {
         visit(value, key);
       }
@@ -311,9 +286,13 @@ function pickControlnetName(names: string[]) {
 function buildInstallHint() {
   return [
     "Modelos de ComfyUI faltantes para Multiview.",
-    `Necesarios: models/checkpoints/sd_xl_base_1.0.safetensors y models/controlnet/controlnet-canny-sdxl-1.0.safetensors.`,
+    "Necesarios: models/checkpoints/sd_xl_base_1.0.safetensors y models/controlnet/controlnet-canny-sdxl-1.0.safetensors.",
     `Como instalar: revisa ${INSTALL_DOC_PATH}`,
   ].join(" ");
+}
+
+function summarizeWorkflow(workflow: PromptWorkflow) {
+  return Object.values(workflow).map((node) => node.class_type);
 }
 
 async function fetchJson(baseUrl: string, route: string, init?: RequestInit) {
@@ -323,6 +302,23 @@ async function fetchJson(baseUrl: string, route: string, init?: RequestInit) {
     throw new Error(`ComfyUI ${route} fallo (${response.status}): ${body || response.statusText}`);
   }
   return (await response.json()) as unknown;
+}
+
+async function ensureComfyUiReachable(baseUrl: string) {
+  try {
+    const response = await fetch(`${baseUrl}/system_stats`);
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      throw new Error(
+        `ComfyUI not running on ${baseUrl}. /system_stats returned ${response.status}: ${body || response.statusText}`
+      );
+    }
+  } catch (error) {
+    if (error instanceof Error && error.message.includes("ComfyUI not running")) {
+      throw error;
+    }
+    throw new Error(`ComfyUI not running on ${baseUrl}`);
+  }
 }
 
 async function resolveModelSelection(baseUrl: string): Promise<ModelSelection> {
@@ -346,12 +342,6 @@ async function resolveModelSelection(baseUrl: string): Promise<ModelSelection> {
     checkpointName,
     controlnetName,
   };
-}
-
-function toDeterministicSeed(imagePath: string, preset: ComfyMultiviewPreset) {
-  const buffer = fs.readFileSync(imagePath);
-  const hash = crypto.createHash("sha1").update(buffer).update("|").update(preset).digest("hex");
-  return Number.parseInt(hash.slice(0, 8), 16) & 0x7fffffff;
 }
 
 async function uploadImage(baseUrl: string, imagePath: string): Promise<UploadedImage> {
@@ -382,6 +372,29 @@ async function uploadImage(baseUrl: string, imagePath: string): Promise<Uploaded
   };
 }
 
+async function queuePrompt(baseUrl: string, workflow: PromptWorkflow): Promise<string> {
+  const response = await fetch(`${baseUrl}/prompt`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ prompt: workflow }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    throw new Error(`ComfyUI /prompt fallo (${response.status}): ${body || response.statusText}`);
+  }
+
+  const payload = (await response.json()) as Record<string, unknown>;
+  const promptId = String(payload.prompt_id ?? "").trim();
+  if (!promptId) {
+    throw new Error("ComfyUI /prompt no devolvio prompt_id.");
+  }
+
+  return promptId;
+}
+
 function collectHistoryImages(historyEntry: unknown): HistoryImage[] {
   if (!historyEntry || typeof historyEntry !== "object") {
     return [];
@@ -390,15 +403,26 @@ function collectHistoryImages(historyEntry: unknown): HistoryImage[] {
   if (!output || typeof output !== "object") {
     return [];
   }
+
   const images: HistoryImage[] = [];
   for (const nodeOutput of Object.values(output as Record<string, unknown>)) {
-    if (!nodeOutput || typeof nodeOutput !== "object") continue;
+    if (!nodeOutput || typeof nodeOutput !== "object") {
+      continue;
+    }
     const nodeImages = (nodeOutput as Record<string, unknown>).images;
-    if (!Array.isArray(nodeImages)) continue;
+    if (!Array.isArray(nodeImages)) {
+      continue;
+    }
+
     for (const item of nodeImages) {
-      if (!item || typeof item !== "object") continue;
+      if (!item || typeof item !== "object") {
+        continue;
+      }
       const image = item as Record<string, unknown>;
-      if (typeof image.filename !== "string" || image.filename.trim().length === 0) continue;
+      if (typeof image.filename !== "string" || image.filename.trim().length === 0) {
+        continue;
+      }
+
       images.push({
         filename: image.filename,
         subfolder: typeof image.subfolder === "string" ? image.subfolder : "",
@@ -406,13 +430,14 @@ function collectHistoryImages(historyEntry: unknown): HistoryImage[] {
       });
     }
   }
+
   return images;
 }
 
 async function waitForPromptImage(
   baseUrl: string,
   promptId: string,
-  onPoll?: (elapsedMs: number) => void,
+  onPoll?: (elapsedMs: number, promptId: string) => void,
   isCanceled?: () => boolean
 ) {
   const startedAt = Date.now();
@@ -425,12 +450,16 @@ async function waitForPromptImage(
       history && typeof history === "object"
         ? (history as Record<string, unknown>)[promptId] ?? Object.values(history as Record<string, unknown>)[0]
         : null;
+
     const images = collectHistoryImages(entry);
     if (images.length > 0) {
       return images[0];
     }
 
-    onPoll?.(Date.now() - startedAt);
+    const elapsedMs = Date.now() - startedAt;
+    debugComfyLog(`Polling history for prompt_id=${promptId}`, { elapsedMs });
+    onPoll?.(elapsedMs, promptId);
+
     await new Promise((resolvePromise) => {
       setTimeout(resolvePromise, POLL_INTERVAL_MS);
     });
@@ -455,102 +484,247 @@ async function downloadHistoryImage(baseUrl: string, image: HistoryImage, target
     const body = await response.text().catch(() => "");
     throw new Error(`ComfyUI /view fallo (${response.status}): ${body || response.statusText}`);
   }
+
   const bytes = Buffer.from(await response.arrayBuffer());
   fs.writeFileSync(targetPath, bytes);
 }
 
-export async function generateComfyMultiviewViews(args: GenerateComfyMultiviewArgs): Promise<ComfyMultiviewResult> {
-  const baseUrl = (args.baseUrl || DEFAULT_BASE_URL).replace(/\/+$/, "");
-  const presetConfig = PRESET_CONFIGS[args.preset];
+function resolveOutputDir(explicitOutputDir: string | undefined, inputImagePath: string) {
+  if (explicitOutputDir && explicitOutputDir.trim().length > 0) {
+    return explicitOutputDir;
+  }
+  const baseDir = path.dirname(path.resolve(inputImagePath));
+  return path.join(baseDir, "comfyui-views");
+}
+
+function clampMaxConcurrency(value: number | undefined) {
+  if (!Number.isFinite(value)) {
+    return 1;
+  }
+  const intValue = Math.floor(Number(value));
+  return Math.max(1, Math.min(2, intValue));
+}
+
+function buildViewSeed(baseSeed: number, view: MultiviewViewSpec, index: number, useSeedOffsets: boolean) {
+  if (!useSeedOffsets) {
+    return baseSeed;
+  }
+  const offset = Number.isFinite(view.seedOffset) ? Number(view.seedOffset) : index;
+  return normalizeSeed(baseSeed + offset);
+}
+
+export function resolveComfyMultiviewPresetConfig(preset: ComfyMultiviewPreset): ComfyPresetRuntimeConfig {
+  const config = PRESET_CONFIGS[preset];
+  return {
+    basePrompt: config.basePrompt,
+    negativePrompt: config.negativePrompt,
+    params: {
+      width: config.width,
+      height: config.height,
+      cannyLow: config.cannyLow,
+      cannyHigh: config.cannyHigh,
+      controlStrength: config.controlStrength,
+      steps: config.steps,
+      cfg: config.cfg,
+      sampler: config.sampler,
+      scheduler: config.scheduler,
+      denoise: config.denoise,
+    },
+  };
+}
+
+export function computeDeterministicSeedFromFile(imagePath: string, salt = "") {
+  const buffer = fs.readFileSync(imagePath);
+  const hash = crypto.createHash("sha1").update(buffer).update("|").update(salt).digest("hex");
+  return normalizeSeed(Number.parseInt(hash.slice(0, 8), 16));
+}
+
+export async function runSDXLCannyRefineSingle(args: RunSDXLCannyRefineSingleArgs): Promise<RunSDXLCannyRefineSingleResult> {
+  const baseUrl = normalizeBaseUrl(args.baseUrl);
   const logs: string[] = [];
 
   assertNotCanceled(args.isCanceled);
+  await ensureComfyUiReachable(baseUrl);
+
+  debugComfyLog("Base URL", baseUrl);
+
+  const uploaded = await uploadImage(baseUrl, args.inputImagePath);
+  const inputImageRef = toInputImageReference(uploaded);
+
+  const workflow = buildSDXLCannyWorkflow({
+    inputImage: inputImageRef,
+    prompt: args.prompt,
+    negative: args.negative,
+    outputPrefix: args.outputPrefix,
+    params: {
+      ...args.params,
+      seed: normalizeSeed(args.params.seed),
+    },
+  });
+
+  debugComfyLog("Workflow summary", {
+    outputPrefix: args.outputPrefix,
+    nodeTypes: summarizeWorkflow(workflow),
+  });
+
+  const promptId = await queuePrompt(baseUrl, workflow);
+  logs.push(`[prompt] id=${promptId} outputPrefix=${args.outputPrefix}`);
+  debugComfyLog("Queued prompt", { promptId, outputPrefix: args.outputPrefix });
+
+  const outputImage = await waitForPromptImage(baseUrl, promptId, args.onPoll, args.isCanceled);
+
   fs.mkdirSync(args.outputDir, { recursive: true });
+  const outputPath = path.join(args.outputDir, `${sanitizeBaseName(args.outputPrefix)}.png`);
+  await downloadHistoryImage(baseUrl, outputImage, outputPath);
+  logs.push(`[view] ${outputPath} <- ${outputImage.filename}`);
 
-  args.onProgress?.({ percent: 2, message: "Generando multivistas (1/2): validando ComfyUI..." });
+  return {
+    promptId,
+    outputPath,
+    outputImage,
+    logs,
+  };
+}
 
-  const modelSelection = await resolveModelSelection(baseUrl);
-  logs.push(`[models] checkpoint=${modelSelection.checkpointName}`);
-  logs.push(`[models] controlnet=${modelSelection.controlnetName}`);
+export async function runMultiviewCannyRefine(args: RunMultiviewCannyRefineArgs): Promise<RunMultiviewCannyRefineResult> {
+  const baseUrl = normalizeBaseUrl(args.baseUrl);
+  const views = (args.views && args.views.length > 0 ? args.views : DEFAULT_VIEWS).map((item) => ({ ...item }));
+  const useSeedOffsets = Boolean(args.useSeedOffsets);
+  const outputDir = resolveOutputDir(args.outputDir, args.inputImagePath);
+  const maxConcurrency = clampMaxConcurrency(args.maxConcurrency);
+  const baseName = sanitizeBaseName(path.basename(args.inputImagePath, path.extname(args.inputImagePath)) || "image");
+  const baseSeed = normalizeSeed(args.params.seed);
 
-  const seedBase = toDeterministicSeed(args.imagePath, args.preset);
-  logs.push(`[seed] base=${seedBase}`);
+  await ensureComfyUiReachable(baseUrl);
 
-  args.onProgress?.({ percent: 6, message: "Generando multivistas (1/2): subiendo imagen..." });
-  const uploadedImage = await uploadImage(baseUrl, args.imagePath);
-  logs.push(`[upload] image=${uploadedImage.name}`);
+  const modelSelection =
+    args.params.checkpointName && args.params.controlNetName
+      ? {
+          checkpointName: args.params.checkpointName,
+          controlnetName: args.params.controlNetName,
+        }
+      : await resolveModelSelection(baseUrl);
 
-  const workflowTemplate = loadWorkflowTemplate();
-  const savedPaths: string[] = [];
+  const effectiveParams: Omit<SDXLCannyParams, "seed"> = {
+    ...args.params,
+    checkpointName: args.params.checkpointName || modelSelection.checkpointName,
+    controlNetName: args.params.controlNetName || modelSelection.controlnetName,
+  };
 
-  for (let index = 0; index < VIEW_SPECS.length; index += 1) {
+  const logs: string[] = [
+    `[models] checkpoint=${effectiveParams.checkpointName}`,
+    `[models] controlnet=${effectiveParams.controlNetName}`,
+    `[seed] base=${baseSeed}`,
+  ];
+
+  debugComfyLog("Multiview config", {
+    baseUrl,
+    outputDir,
+    maxConcurrency,
+    useSeedOffsets,
+    views: views.map((view) => view.key),
+  });
+
+  const tasks = views.map((view, index) => ({ view, index }));
+  const results: Array<RunMultiviewViewResult> = [];
+  let completed = 0;
+
+  const runTask = async (task: { view: MultiviewViewSpec; index: number }) => {
     assertNotCanceled(args.isCanceled);
-    const viewSpec = VIEW_SPECS[index];
-    const promptSeed = (seedBase + index) & 0x7fffffff;
-    const filename = `view_${String(index).padStart(2, "0")}_${viewSpec.suffix}.png`;
-    const outputPath = path.join(args.outputDir, filename);
 
-    const progressBase = 10 + Math.floor((index / VIEW_SPECS.length) * 80);
+    const prompt = `${args.basePrompt}, ${task.view.suffixPrompt}, maintain identical materials across views`;
+    const outputPrefix = `${baseName}_${sanitizeBaseName(task.view.outputSuffix)}`;
+    const seed = buildViewSeed(baseSeed, task.view, task.index, useSeedOffsets);
+
+    const progressBase = Math.floor((task.index / Math.max(1, tasks.length)) * 92);
     args.onProgress?.({
-      percent: progressBase,
-      message: `Generando multivistas (1/2): ${index + 1}/${VIEW_SPECS.length} (${viewSpec.key})`,
+      percent: Math.min(96, Math.max(2, progressBase)),
+      message: `Generando multivistas (1/2): ${task.view.key}...`,
     });
 
-    const placeholders: Record<string, string | number> = {
-      "__CHECKPOINT__": modelSelection.checkpointName,
-      "__CONTROLNET_MODEL__": modelSelection.controlnetName,
-      "__INPUT_IMAGE__": uploadedImage.name,
-      "__PROMPT__": `${presetConfig.positivePrompt}, ${viewSpec.prompt}`,
-      "__NEGATIVE_PROMPT__": presetConfig.negativePrompt,
-      "__SEED__": promptSeed,
-      "__STEPS__": presetConfig.steps,
-      "__CFG__": presetConfig.cfg,
-      "__DENOISE__": presetConfig.denoise,
-      "__CONTROLNET_STRENGTH__": presetConfig.controlStrength,
-      "__FILENAME_PREFIX__": `volumia_mv_${viewSpec.key}_${promptSeed}`,
-    };
-
-    const workflow = withPlaceholders(workflowTemplate, placeholders);
-    const queued = (await fetchJson(baseUrl, "/prompt", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt: workflow }),
-    })) as Record<string, unknown>;
-
-    const promptIdRaw = queued.prompt_id;
-    const promptId = String(promptIdRaw ?? "").trim();
-    if (!promptId) {
-      throw new Error("ComfyUI /prompt no devolvio prompt_id.");
-    }
-
-    logs.push(`[prompt] id=${promptId} view=${viewSpec.key} seed=${promptSeed}`);
-
-    const outputImage = await waitForPromptImage(
+    const singleResult = await runSDXLCannyRefineSingle({
       baseUrl,
-      promptId,
-      (elapsedMs) => {
-        const extraPercent = Math.min(12, Math.floor(elapsedMs / 5_000));
+      inputImagePath: args.inputImagePath,
+      prompt,
+      negative: args.negative,
+      outputDir,
+      outputPrefix,
+      params: {
+        ...effectiveParams,
+        seed,
+      },
+      isCanceled: args.isCanceled,
+      onPoll: (elapsedMs, promptId) => {
         args.onProgress?.({
-          percent: Math.min(95, progressBase + extraPercent),
-          message: `Generando multivistas (1/2): esperando ${viewSpec.key}...`,
+          percent: Math.min(97, Math.max(3, progressBase + Math.floor(elapsedMs / 5_000))),
+          message: `Generando multivistas (1/2): esperando ${task.view.key} (prompt ${promptId})...`,
         });
       },
-      args.isCanceled
-    );
+    });
 
-    await downloadHistoryImage(baseUrl, outputImage, outputPath);
-    logs.push(`[view] ${filename} <- ${outputImage.filename}`);
-    savedPaths.push(outputPath);
+    logs.push(`[prompt] id=${singleResult.promptId} view=${task.view.key} seed=${seed}`);
+    logs.push(...singleResult.logs);
+
+    const viewResult: RunMultiviewViewResult = {
+      key: task.view.key,
+      promptId: singleResult.promptId,
+      outputPath: singleResult.outputPath,
+      outputPrefix,
+      seed,
+    };
+
+    completed += 1;
+    args.onProgress?.({
+      percent: Math.min(98, Math.max(5, Math.floor((completed / tasks.length) * 98))),
+      message: `Generando multivistas (1/2): ${completed}/${tasks.length} completadas.`,
+    });
+
+    return viewResult;
+  };
+
+  if (maxConcurrency <= 1) {
+    for (const task of tasks) {
+      const result = await runTask(task);
+      results.push(result);
+    }
+  } else {
+    const queue = [...tasks];
+    const workers: Promise<void>[] = [];
+
+    const worker = async () => {
+      while (queue.length > 0) {
+        assertNotCanceled(args.isCanceled);
+        const task = queue.shift();
+        if (!task) {
+          return;
+        }
+        const result = await runTask(task);
+        results.push(result);
+      }
+    };
+
+    for (let i = 0; i < maxConcurrency; i += 1) {
+      workers.push(worker());
+    }
+
+    await Promise.all(workers);
   }
+
+  const orderedResults = results.sort((a, b) => {
+    const indexA = views.findIndex((view) => view.key === a.key);
+    const indexB = views.findIndex((view) => view.key === b.key);
+    return indexA - indexB;
+  });
 
   args.onProgress?.({ percent: 98, message: "Generando multivistas (1/2): completado." });
 
   return {
-    viewsDir: args.outputDir,
-    viewPaths: savedPaths,
-    seed: seedBase,
-    checkpointName: modelSelection.checkpointName,
-    controlnetName: modelSelection.controlnetName,
+    viewsDir: outputDir,
+    viewPaths: orderedResults.map((item) => item.outputPath),
+    seed: baseSeed,
+    checkpointName: effectiveParams.checkpointName,
+    controlnetName: effectiveParams.controlNetName,
     logs,
+    results: orderedResults,
   };
 }

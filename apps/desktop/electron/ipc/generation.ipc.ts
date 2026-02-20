@@ -21,7 +21,11 @@ import {
   type GenerationSkpQuality,
   type GenerationTestResult,
 } from "../channels";
-import { generateComfyMultiviewViews } from "../generation/comfyui-client";
+import {
+  computeDeterministicSeedFromFile,
+  resolveComfyMultiviewPresetConfig,
+  runMultiviewCannyRefine,
+} from "../generation/comfyui-client";
 
 type WindowGetter = () => BrowserWindow | null;
 type GenerationJobState = {
@@ -1511,11 +1515,21 @@ async function runGenerationJob(
         percent: 8,
         message: "Generando multivistas (1/2): iniciando ComfyUI local...",
       });
-      const multiviewResult = await generateComfyMultiviewViews({
+      const comfyPreset = resolveComfyMultiviewPresetConfig(multiviewPreset);
+      const multiviewResult = await runMultiviewCannyRefine({
         baseUrl: COMFYUI_BASE_URL,
-        imagePath: copiedImages[0],
+        inputImagePath: copiedImages[0],
         outputDir: viewsDir,
-        preset: multiviewPreset,
+        basePrompt: comfyPreset.basePrompt,
+        negative: comfyPreset.negativePrompt,
+        params: {
+          ...comfyPreset.params,
+          seed: computeDeterministicSeedFromFile(copiedImages[0], multiviewPreset),
+          checkpointName: "",
+          controlNetName: "",
+        },
+        maxConcurrency: 1,
+        useSeedOffsets: false,
         isCanceled: () => job.canceled,
         onProgress: (progress) => {
           sendProgress(getWindow, {
