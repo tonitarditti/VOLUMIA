@@ -39,11 +39,57 @@ BROKEN_MIN_VERTS = 500
 BROKEN_MIN_FACES = 800
 ARCH_MIN_GLB_BYTES = 10 * 1024
 ARCH_TARGET_MAX_DIM = 2.0
-AUTO_MIN_GLB_BYTES = 30 * 1024
-AUTO_MIN_FACES = 3000
+AUTO_MIN_GLB_BYTES = 4_000
 AUTO_MAX_BBOX_RATIO = 25.0
-AUTO_MIN_MAX_DIM = 0.1
 AUTO_GROUND_EPSILON = 0.05
+AUTO_PREPROCESS_FILL_RATIO = 0.78
+AUTO_PREPROCESS_CANVAS = {"fast": 640, "balanced": 768, "high": 1024}
+AUTO_PRESET_CLASS_CONFIDENCE = 0.38
+AUTO_PRESET_CURVATURE_THRESHOLD = 8.0
+AUTO_HARD_SURFACE_THRESHOLD = 0.55
+AUTO_LABEL_STRONG_HARD = {"table", "desk", "chair", "sofa"}
+AUTO_LABEL_HARD_SURFACE = {
+    "table",
+    "desk",
+    "chair",
+    "sofa",
+    "bed",
+    "cabinet",
+    "shelf",
+    "tv",
+    "laptop",
+    "bottle",
+    "cup",
+    "book",
+    "keyboard",
+    "monitor",
+}
+AUTO_FURNITURE_LIKE = {
+    "table",
+    "chair",
+    "sofa",
+    "couch",
+    "bed",
+    "cabinet",
+    "desk",
+    "dining table",
+    "bench",
+}
+AUTO_ORGANIC_LIKE = {
+    "person",
+    "bird",
+    "cat",
+    "dog",
+    "horse",
+    "sheep",
+    "cow",
+    "elephant",
+    "bear",
+    "zebra",
+    "giraffe",
+    "potted plant",
+    "plant",
+}
 TRIPOSR_INSTALL_HINT = "TripoSR not installed. Install: pip install git+https://github.com/VAST-AI-Research/TripoSR.git"
 TRIPOSR_PYMCUBES_HINT = "TripoSR unavailable: install PyMCubes (pip install PyMCubes)"
 
@@ -653,8 +699,8 @@ def _build_architectural_scene(rgb_image, subject_mask, top_fit, leg_boxes, qual
     if not scene.geometry or len(scene.geometry) == 0:
         raise RuntimeError("ARCH scene has no geometry")
     total_faces = sum(int(len(geometry.faces)) for geometry in scene.geometry.values() if hasattr(geometry, "faces"))
-    if total_faces < 500:
-        raise RuntimeError(f"ARCH primitive assembly has insufficient faces ({total_faces}).")
+    if total_faces <= 0:
+        raise RuntimeError("ARCH primitive assembly has no geometry.")
 
     combined = trimesh.util.concatenate([mesh.copy() for mesh in scene.geometry.values() if isinstance(mesh, trimesh.Trimesh)])
     if abs(float(combined.bounds[0][1])) > 1e-4:
@@ -691,10 +737,10 @@ def _export_architectural_scene(scene, out_path: str):
         if hasattr(geometry, "faces"):
             faces += int(len(geometry.faces))
 
-    if size_bytes < 10_000:
-        raise RuntimeError(f"Architectural GLB too small ({size_bytes} bytes).")
-    if faces < 500:
-        raise RuntimeError(f"Architectural GLB has insufficient geometry (v={vertices}, f={faces}).")
+    if size_bytes < AUTO_MIN_GLB_BYTES:
+        raise RuntimeError(f"Architectural GLB too small (< {AUTO_MIN_GLB_BYTES} bytes, got {size_bytes}).")
+    if faces <= 0:
+        raise RuntimeError(f"Architectural GLB has no geometry (v={vertices}, f={faces}).")
 
     return size_bytes, vertices, faces
 
@@ -753,6 +799,8 @@ def _resolve_triposr_runner_script() -> str:
 
 
 def _map_quality_to_triposr_preset(quality: str) -> str:
+    if quality in {"hard_surface", "organic", "hard_surface_quick", "organic_quick"}:
+        return quality
     if quality == "fast":
         return "fast"
     if quality == "high":
@@ -766,7 +814,7 @@ def run_triposr(image_path: str, out_glb_path: str, preset: str, device: str) ->
     except Exception as error:
         raise RuntimeError(f"{TRIPOSR_INSTALL_HINT} ({error})") from None
     preset_value = _map_quality_to_triposr_preset(preset)
-    requested_device = "cuda" if device == "cuda" else "auto"
+    requested_device = "cuda" if device == "cuda" else "cpu"
     command = [
         sys.executable,
         script_path,
@@ -1036,6 +1084,7 @@ def _safe_mesh_components(mesh, trimesh_module):
 def quality_gate(glb_path: str) -> Dict[str, Any]:
     metrics: Dict[str, Any] = {
         "file_kb": 0.0,
+        "vertices": 0,
         "faces": 0,
         "components": 0,
         "largest_ratio": 0.0,
@@ -1057,22 +1106,28 @@ def quality_gate(glb_path: str) -> Dict[str, Any]:
     size_bytes = int(os.path.getsize(glb_path))
     metrics["file_kb"] = float(size_bytes) / 1024.0
     if size_bytes < AUTO_MIN_GLB_BYTES:
-        return {"ok": False, "metrics": metrics, "reason": f"file too small ({size_bytes} bytes)"}
+        return {
+            "ok": False,
+            "metrics": metrics,
+            "reason": f"file too small (< {AUTO_MIN_GLB_BYTES} bytes): {size_bytes} bytes",
+        }
 
     try:
         mesh, trimesh = _load_glb_mesh_for_gate(glb_path)
     except Exception as error:
-        return {"ok": False, "metrics": metrics, "reason": f"mesh load failed: {error}"}
+        return {"ok": False, "metrics": metrics, "reason": f"load failed: {error}"}
 
     try:
         mesh = _sanitize_invalid_mesh(mesh, trimesh)
     except Exception:
         pass
 
+    vertices = int(len(mesh.vertices)) if hasattr(mesh, "vertices") else 0
     faces = int(len(mesh.faces)) if hasattr(mesh, "faces") else 0
+    metrics["vertices"] = vertices
     metrics["faces"] = faces
-    if faces < AUTO_MIN_FACES:
-        return {"ok": False, "metrics": metrics, "reason": f"insufficient faces ({faces})"}
+    if vertices <= 0 or faces <= 0:
+        return {"ok": False, "metrics": metrics, "reason": "no geometry"}
 
     components = _safe_mesh_components(mesh, trimesh)
     face_counts = [int(len(component.faces)) for component in components if hasattr(component, "faces")]
@@ -1081,8 +1136,6 @@ def quality_gate(glb_path: str) -> Dict[str, Any]:
     largest_ratio = float(largest_component_faces / max(total_component_faces, 1))
     metrics["components"] = int(len(face_counts))
     metrics["largest_ratio"] = largest_ratio
-    if largest_ratio < 0.70:
-        return {"ok": False, "metrics": metrics, "reason": f"fragmented mesh ratio ({largest_ratio:.3f})"}
 
     try:
         bounds = np.asarray(mesh.bounds, dtype=np.float64)
@@ -1101,17 +1154,10 @@ def quality_gate(glb_path: str) -> Dict[str, Any]:
         "max_dim": max_dim,
         "min_dim": min_dim,
     }
-    if max_dim <= AUTO_MIN_MAX_DIM:
-        return {"ok": False, "metrics": metrics, "reason": f"max dimension too small ({max_dim:.4f})"}
-    if ratio >= AUTO_MAX_BBOX_RATIO:
-        return {"ok": False, "metrics": metrics, "reason": f"bbox ratio too extreme ({ratio:.4f})"}
-
     min_y = float(bounds[0][1])
     grounded = abs(min_y) <= AUTO_GROUND_EPSILON
     metrics["grounded"] = grounded
     metrics["min_y"] = min_y
-    if not grounded:
-        return {"ok": False, "metrics": metrics, "reason": f"not grounded (minY={min_y:.5f})"}
 
     return {"ok": True, "metrics": metrics}
 
@@ -1124,13 +1170,31 @@ def _normalize_exported_glb(glb_path: str, target_size: float = 2.0) -> None:
     normalized.export(glb_path, file_type="glb")
 
 
-def _write_auto_meta(out_path: str, used: str, gate: Dict[str, Any], errors: Sequence[str]) -> str:
+def _write_auto_meta(
+    out_path: str,
+    used: str,
+    gate: Dict[str, Any],
+    errors: Sequence[str],
+    auto_preset: str | None = None,
+    auto_reason: str | None = None,
+    preprocess: Optional[Dict[str, Any]] = None,
+    quick_scores: Optional[Dict[str, Any]] = None,
+    final_score: Optional[Dict[str, Any]] = None,
+    classification: Optional[Dict[str, Any]] = None,
+) -> str:
     meta_path = os.path.join(os.path.dirname(out_path), "auto-meta.json")
+    gate_reason = gate.get("reason")
     payload = {
         "used": used,
+        "preset": auto_preset,
+        "preset_reason": auto_reason,
+        "preprocess": preprocess or {},
+        "quick_scores": quick_scores or {},
+        "final_score": final_score or {},
+        "classification": classification or {},
         "gate": gate.get("metrics", {}),
         "gate_ok": bool(gate.get("ok", False)),
-        "gate_reason": gate.get("reason"),
+        "gate_reason": gate_reason if gate_reason else ("unknown" if not gate.get("ok", False) else None),
         "errors": list(errors),
     }
     with open(meta_path, "w", encoding="utf-8") as handle:
@@ -1179,8 +1243,23 @@ def run_simple_blockout_pipeline(image_path: str, out_path: str, quality: str) -
     normalized_mesh.export(out_path, file_type="glb")
 
 
-def run_auto_pipeline(image_path: str, out_path: str, quality: str, runtime_device: str) -> str:
+def run_auto_pipeline(
+    image_path: str,
+    out_path: str,
+    quality: str,
+    runtime_device: str,
+    auto_profile: str = "auto",
+) -> str:
     errors: List[str] = []
+    preprocess_info: Dict[str, Any] = {}
+    quick_scores: Dict[str, Any] = {}
+    final_score: Dict[str, Any] = {}
+    auto_preset = "hard_surface"
+    auto_preset_reason = "default"
+    profile = str(auto_profile or "auto").strip().lower()
+    if profile not in {"auto", "hard_surface", "organic"}:
+        profile = "auto"
+
     auto_meta_path = os.path.join(os.path.dirname(out_path), "auto-meta.json")
     if os.path.exists(auto_meta_path):
         try:
@@ -1192,9 +1271,173 @@ def run_auto_pipeline(image_path: str, out_path: str, quality: str, runtime_devi
     if not os.path.exists(image_path):
         raise RuntimeError(f"Input image does not exist: {image_path}")
 
-    emit_progress("neural_bootstrap", 12, "Checking InstantMesh optional provider")
-    instantmesh_ok, instantmesh_reason = check_instantmesh_available()
-    if instantmesh_ok:
+    clean_image_path = image_path
+    emit_progress("neural_bootstrap", 34, "Preparing TripoSR input (segmentation + crop)")
+    try:
+        preprocess_info = _prepare_auto_triposr_image(image_path=image_path, out_path=out_path, quality=quality)
+        clean_image_path = str(preprocess_info.get("clean_path", image_path))
+        bbox = preprocess_info.get("bbox", [0, 0, 0, 0])
+        post_crop_size = preprocess_info.get("post_crop_size", [0, 0])
+        log(
+            f"[AUTO][PREPROCESS] source={preprocess_info.get('source', 'unknown')} "
+            f"post_crop={post_crop_size[0]}x{post_crop_size[1]} "
+            f"bbox=({bbox[0]},{bbox[1]},{bbox[2]},{bbox[3]})"
+        )
+    except Exception as preprocess_error:
+        errors.append(f"preprocess warning: {preprocess_error}")
+        log_error(f"[AUTO] preprocess warning: {preprocess_error}")
+        preprocess_info = {
+            "clean_path": image_path,
+            "source": "original",
+            "bbox": [0, 0, 0, 0],
+            "post_crop_size": [0, 0],
+            "class_label": "",
+            "class_confidence": 0.0,
+            "curvature": 0.0,
+            "label_candidates": [],
+            "edge_density": 0.0,
+            "hough_lines": 0,
+            "straight_line_ratio": 0.0,
+            "line_strength": 0.0,
+        }
+        clean_image_path = image_path
+
+    classify = _classify_auto_surface_profile(preprocess_info, profile)
+    hard_surface_score = float(classify.get("hard_surface_score", 0.0))
+    is_hard_surface = bool(classify.get("is_hard_surface", False))
+    has_strong_furniture_label = bool(classify.get("has_strong_furniture_label", False))
+    if has_strong_furniture_label and profile != "organic":
+        is_hard_surface = True
+        hard_surface_score = max(hard_surface_score, 0.92)
+        classify["is_hard_surface"] = True
+        classify["hard_surface_score"] = hard_surface_score
+
+    signals = classify.get("signals", {})
+    log(
+        f"AUTO classify: hardSurfaceScore={hard_surface_score:.3f}, "
+        f"isHardSurface={is_hard_surface}, signals={json.dumps(signals, ensure_ascii=False)}"
+    )
+
+    if profile == "hard_surface":
+        auto_preset = "hard_surface"
+        auto_preset_reason = "manual override: hard_surface"
+    elif profile == "organic":
+        auto_preset = "organic"
+        auto_preset_reason = "manual override: organic"
+    elif is_hard_surface:
+        auto_preset = "hard_surface"
+        auto_preset_reason = f"classifier hard_surface_score={hard_surface_score:.3f}"
+    else:
+        emit_progress("neural_bootstrap", 38, "Selecting AUTO preset (HardSurface/Organic)")
+        try:
+            auto_preset, auto_preset_reason, quick_scores = _select_auto_triposr_preset(
+                clean_image_path=clean_image_path,
+                out_path=out_path,
+                runtime_device=runtime_device,
+                class_label=str(preprocess_info.get("class_label", "")),
+                class_confidence=float(preprocess_info.get("class_confidence", 0.0)),
+                curvature=float(preprocess_info.get("curvature", 0.0)),
+            )
+        except Exception as preset_error:
+            auto_preset = "organic"
+            auto_preset_reason = f"preset selection fallback: {preset_error}"
+            quick_scores = {}
+            errors.append(f"preset selection warning: {preset_error}")
+            log_error(f"[AUTO] preset selection warning: {preset_error}")
+
+    if has_strong_furniture_label and profile != "organic":
+        auto_preset = "hard_surface"
+        auto_preset_reason = f"forced hard_surface by furniture label (score={hard_surface_score:.3f})"
+
+    use_hard_surface_route = profile == "hard_surface" or (profile != "organic" and is_hard_surface)
+    log(f"[AUTO][PRESET] selected={auto_preset} reason={auto_preset_reason}")
+
+    classification_payload = {
+        "hardSurfaceScore": hard_surface_score,
+        "isHardSurface": bool(use_hard_surface_route),
+        "reason": classify.get("reason", ""),
+        "signals": signals,
+        "autoProfile": profile,
+    }
+
+    def write_meta(used: str, gate: Dict[str, Any]) -> None:
+        _write_auto_meta(
+            out_path,
+            used,
+            gate,
+            errors,
+            auto_preset=auto_preset,
+            auto_reason=auto_preset_reason,
+            preprocess=preprocess_info,
+            quick_scores=quick_scores,
+            final_score=final_score,
+            classification=classification_payload,
+        )
+
+    def try_triposr(raise_on_missing_pymcubes: bool) -> bool:
+        nonlocal final_score
+        try:
+            emit_progress("neural_generate", 44, f"Generating with TripoSR ({auto_preset})")
+            run_triposr(image_path=clean_image_path, out_glb_path=out_path, preset=auto_preset, device=runtime_device)
+            try:
+                _normalize_exported_glb(out_path, target_size=2.0)
+            except Exception as normalize_error:
+                errors.append(f"triposr normalize warning: {normalize_error}")
+                log_error(f"[AUTO] triposr normalize warning: {normalize_error}")
+
+            final_score = _score_glb_mesh(out_path)
+            if final_score.get("ok"):
+                log(
+                    f"[AUTO][SCORE] final preset={auto_preset} score={float(final_score.get('score', 0.0)):.4f} "
+                    f"components={final_score.get('components', 0)} degenerate={final_score.get('degenerate_faces', 0)} "
+                    f"bbox_ratio={float(final_score.get('bbox_ratio', float('inf'))):.4f} "
+                    f"base_flat={final_score.get('base_flat', False)}"
+                )
+            else:
+                log_error(f"[AUTO][SCORE] final preset={auto_preset} failed: {final_score.get('reason', 'unknown')}")
+
+            emit_progress("gate1", 56, "Evaluating neural quality gate")
+            gate = quality_gate(out_path)
+            if gate.get("ok"):
+                emit_progress("export", 95, "Exporting GLB")
+                write_meta("triposr", gate)
+                return True
+
+            gate_reason = str(gate.get("reason", "unknown"))
+            errors.append(f"triposr gate failed: {gate_reason}")
+            log_error(f"[AUTO] triposr gate failed: {gate_reason}")
+            return False
+        except Exception as triposr_error:
+            errors.append(f"triposr failed: {triposr_error}")
+            log_error(f"[AUTO] triposr failed: {triposr_error}")
+            triposr_error_text = str(triposr_error).lower()
+            missing_pymcubes = (
+                "missing dependency: pymcubes" in triposr_error_text
+                or "no module named 'mcubes'" in triposr_error_text
+                or "pymcubes is required when torchmcubes is unavailable" in triposr_error_text
+                or "triposr unavailable: install pymcubes" in triposr_error_text
+            )
+            if missing_pymcubes and raise_on_missing_pymcubes:
+                write_meta(
+                    "triposr",
+                    {
+                        "ok": False,
+                        "metrics": {},
+                        "reason": TRIPOSR_PYMCUBES_HINT,
+                    },
+                )
+                raise RuntimeError(TRIPOSR_PYMCUBES_HINT) from triposr_error
+            return False
+
+    def try_instantmesh() -> bool:
+        emit_progress("neural_bootstrap", 12, "Checking InstantMesh optional provider")
+        instantmesh_ok, instantmesh_reason = check_instantmesh_available()
+        if not instantmesh_ok:
+            reason_text = instantmesh_reason or "InstantMesh unavailable"
+            errors.append(reason_text)
+            log_error(f"[AUTO] {reason_text}")
+            return False
+
         try:
             emit_progress("neural_generate", 18, "Generating with InstantMesh (optional)")
             instantmesh_result = run_instantmesh_provider(
@@ -1203,134 +1446,114 @@ def run_auto_pipeline(image_path: str, out_path: str, quality: str, runtime_devi
                 quality=quality,
                 runtime_device=runtime_device,
             )
-            if instantmesh_result.get("ok"):
-                try:
-                    _normalize_exported_glb(out_path, target_size=2.0)
-                except Exception as normalize_error:
-                    errors.append(f"instantmesh normalize warning: {normalize_error}")
-                    log_error(f"[AUTO] instantmesh normalize warning: {normalize_error}")
-
-                emit_progress("gate1", 28, "Evaluating InstantMesh quality gate")
-                gate0 = quality_gate(out_path)
-                if gate0.get("ok"):
-                    emit_progress("export", 95, "Exporting GLB")
-                    _write_auto_meta(out_path, "instantmesh", gate0, errors)
-                    return "instantmesh"
-
-                gate0_reason = str(gate0.get("reason", "unknown"))
-                errors.append(f"instantmesh gate failed: {gate0_reason}")
-                log_error(f"[AUTO] instantmesh gate failed: {gate0_reason}")
-            else:
+            if not instantmesh_result.get("ok"):
                 provider_error = str(instantmesh_result.get("error", "InstantMesh provider failed"))
                 errors.append(provider_error)
                 log_error(f"[AUTO] {provider_error}")
+                return False
+
+            try:
+                _normalize_exported_glb(out_path, target_size=2.0)
+            except Exception as normalize_error:
+                errors.append(f"instantmesh normalize warning: {normalize_error}")
+                log_error(f"[AUTO] instantmesh normalize warning: {normalize_error}")
+
+            emit_progress("gate1", 28, "Evaluating InstantMesh quality gate")
+            gate = quality_gate(out_path)
+            if gate.get("ok"):
+                emit_progress("export", 95, "Exporting GLB")
+                write_meta("instantmesh", gate)
+                return True
+
+            gate_reason = str(gate.get("reason", "unknown"))
+            errors.append(f"instantmesh gate failed: {gate_reason}")
+            log_error(f"[AUTO] instantmesh gate failed: {gate_reason}")
+            return False
         except Exception as instantmesh_error:
             errors.append(f"instantmesh failed: {instantmesh_error}")
             log_error(f"[AUTO] instantmesh failed: {instantmesh_error}")
-    else:
-        reason_text = instantmesh_reason or "InstantMesh unavailable"
-        errors.append(reason_text)
-        log_error(f"[AUTO] {reason_text}")
+            return False
 
-    emit_progress("neural_bootstrap", 34, "Bootstrapping TripoSR runtime")
-    try:
-        emit_progress("neural_generate", 44, "Generating with TripoSR")
-        run_triposr(image_path=image_path, out_glb_path=out_path, preset=quality, device=runtime_device)
+    def try_arch() -> bool:
+        emit_progress("arch_generate", 70, "Generating ARCH fallback")
         try:
-            _normalize_exported_glb(out_path, target_size=2.0)
-        except Exception as normalize_error:
-            errors.append(f"triposr normalize warning: {normalize_error}")
-            log_error(f"[AUTO] triposr normalize warning: {normalize_error}")
+            run_architectural_pipeline(image_path, out_path, quality)
+            try:
+                _normalize_exported_glb(out_path, target_size=2.0)
+            except Exception as normalize_error:
+                errors.append(f"arch normalize warning: {normalize_error}")
+                log_error(f"[AUTO] arch normalize warning: {normalize_error}")
 
-        emit_progress("gate1", 56, "Evaluating neural quality gate")
-        gate1 = quality_gate(out_path)
-        if gate1.get("ok"):
-            emit_progress("export", 95, "Exporting GLB")
-            _write_auto_meta(out_path, "triposr", gate1, errors)
-            return "triposr"
+            emit_progress("gate2", 82, "Evaluating ARCH quality gate")
+            gate = quality_gate(out_path)
+            if gate.get("ok"):
+                emit_progress("export", 95, "Exporting GLB")
+                write_meta("arch", gate)
+                return True
 
-        gate1_reason = str(gate1.get("reason", "unknown"))
-        errors.append(f"triposr gate failed: {gate1_reason}")
-        log_error(f"[AUTO] triposr gate failed: {gate1_reason}")
-    except Exception as triposr_error:
-        errors.append(f"triposr failed: {triposr_error}")
-        log_error(f"[AUTO] triposr failed: {triposr_error}")
-        triposr_error_text = str(triposr_error).lower()
-        if (
-            "missing dependency: pymcubes" in triposr_error_text
-            or "no module named 'mcubes'" in triposr_error_text
-            or "pymcubes is required when torchmcubes is unavailable" in triposr_error_text
-            or "triposr unavailable: install pymcubes" in triposr_error_text
-        ):
-            _write_auto_meta(
-                out_path,
-                "triposr",
+            gate_reason = str(gate.get("reason", "unknown"))
+            errors.append(f"arch gate failed: {gate_reason}")
+            log_error(f"[AUTO] arch gate failed: {gate_reason}")
+            return False
+        except Exception as arch_error:
+            errors.append(f"arch failed: {arch_error}")
+            log_error(f"[AUTO] arch failed: {arch_error}")
+            return False
+
+    def try_blockout() -> bool:
+        emit_progress("blockout", 90, "Generating simple blockout fallback")
+        try:
+            run_simple_blockout_pipeline(image_path, out_path, quality)
+            try:
+                _normalize_exported_glb(out_path, target_size=2.0)
+            except Exception as normalize_error:
+                errors.append(f"blockout normalize warning: {normalize_error}")
+                log_error(f"[AUTO] blockout normalize warning: {normalize_error}")
+
+            gate = quality_gate(out_path)
+            if gate.get("ok"):
+                emit_progress("export", 95, "Exporting GLB")
+                write_meta("blockout", gate)
+                return True
+
+            gate_reason = str(gate.get("reason", "unknown"))
+            errors.append(f"blockout gate failed: {gate_reason}")
+            log_error(f"[AUTO] blockout gate failed: {gate_reason}")
+            write_meta("blockout", gate)
+            return False
+        except Exception as blockout_error:
+            errors.append(f"blockout failed: {blockout_error}")
+            log_error(f"[AUTO] blockout failed: {blockout_error}")
+            write_meta(
+                "blockout",
                 {
                     "ok": False,
                     "metrics": {},
-                    "reason": TRIPOSR_PYMCUBES_HINT,
+                    "reason": str(blockout_error),
                 },
-                errors,
             )
-            raise RuntimeError(TRIPOSR_PYMCUBES_HINT) from triposr_error
+            return False
 
-    emit_progress("arch_generate", 70, "Generating ARCH fallback")
-    try:
-        run_architectural_pipeline(image_path, out_path, quality)
-        try:
-            _normalize_exported_glb(out_path, target_size=2.0)
-        except Exception as normalize_error:
-            errors.append(f"arch normalize warning: {normalize_error}")
-            log_error(f"[AUTO] arch normalize warning: {normalize_error}")
+    if use_hard_surface_route:
+        emit_progress("neural_bootstrap", 40, "AUTO hard-surface route: TripoSR preferred")
+        if try_triposr(raise_on_missing_pymcubes=False):
+            return "triposr"
+        if try_instantmesh():
+            return "instantmesh"
+        if try_blockout():
+            return "blockout"
+        raise RuntimeError("AUTO hard-surface pipeline failed after TripoSR and blockout fallback.")
 
-        emit_progress("gate2", 82, "Evaluating ARCH quality gate")
-        gate2 = quality_gate(out_path)
-        if gate2.get("ok"):
-            emit_progress("export", 95, "Exporting GLB")
-            _write_auto_meta(out_path, "arch", gate2, errors)
-            return "arch"
-
-        gate2_reason = str(gate2.get("reason", "unknown"))
-        errors.append(f"arch gate failed: {gate2_reason}")
-        log_error(f"[AUTO] arch gate failed: {gate2_reason}")
-    except Exception as arch_error:
-        errors.append(f"arch failed: {arch_error}")
-        log_error(f"[AUTO] arch failed: {arch_error}")
-
-    emit_progress("blockout", 90, "Generating simple blockout fallback")
-    try:
-        run_simple_blockout_pipeline(image_path, out_path, quality)
-        try:
-            _normalize_exported_glb(out_path, target_size=2.0)
-        except Exception as normalize_error:
-            errors.append(f"blockout normalize warning: {normalize_error}")
-            log_error(f"[AUTO] blockout normalize warning: {normalize_error}")
-
-        gate3 = quality_gate(out_path)
-        if not gate3.get("ok"):
-            gate3_reason = str(gate3.get("reason", "unknown"))
-            errors.append(f"blockout gate failed: {gate3_reason}")
-            log_error(f"[AUTO] blockout gate failed: {gate3_reason}")
-            _write_auto_meta(out_path, "blockout", gate3, errors)
-            raise RuntimeError(gate3_reason)
-
-        emit_progress("export", 95, "Exporting GLB")
-        _write_auto_meta(out_path, "blockout", gate3, errors)
+    emit_progress("neural_bootstrap", 40, "AUTO organic/default route")
+    if try_instantmesh():
+        return "instantmesh"
+    if try_triposr(raise_on_missing_pymcubes=True):
+        return "triposr"
+    if try_arch():
+        return "arch"
+    if try_blockout():
         return "blockout"
-    except Exception as blockout_error:
-        errors.append(f"blockout failed: {blockout_error}")
-        log_error(f"[AUTO] blockout failed: {blockout_error}")
-        _write_auto_meta(
-            out_path,
-            "blockout",
-            {
-                "ok": False,
-                "metrics": {},
-                "reason": str(blockout_error),
-            },
-            errors,
-        )
-        raise RuntimeError("AUTO pipeline failed after TripoSR, ARCH and blockout fallbacks.")
+    raise RuntimeError("AUTO pipeline failed after TripoSR, ARCH and blockout fallbacks.")
 
 
 def _map_detection_label(label: str) -> str:
@@ -1594,6 +1817,600 @@ def _fallback_contour_segments(rgb, max_objects: int):
         if len(results) >= max_objects:
             break
     return results
+
+
+def _resolve_yolov8_seg_model_path() -> str:
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    candidates = [
+        os.path.abspath(os.path.join(current_dir, "..", "yolov8n-seg.pt")),
+        os.path.abspath(os.path.join(os.getcwd(), "apps", "desktop", "yolov8n-seg.pt")),
+        os.path.abspath(os.path.join(os.getcwd(), "yolov8n-seg.pt")),
+    ]
+    for candidate in candidates:
+        if os.path.exists(candidate):
+            return candidate
+    return "yolov8n-seg.pt"
+
+
+def _normalize_auto_label(label: str) -> str:
+    return label.strip().lower()
+
+
+def _is_organic_label(label: str) -> bool:
+    if label in AUTO_ORGANIC_LIKE:
+        return True
+    return any(token in label for token in ("animal", "person", "plant", "flower", "tree"))
+
+
+def _label_has_token(label: str, tokens: set[str]) -> bool:
+    if label in tokens:
+        return True
+    return any(token in label for token in tokens)
+
+
+def _is_hard_surface_label(label: str) -> bool:
+    return _label_has_token(label, AUTO_LABEL_HARD_SURFACE)
+
+
+def _is_strong_hard_surface_label(label: str) -> bool:
+    return _label_has_token(label, AUTO_LABEL_STRONG_HARD)
+
+
+def _compute_hard_surface_visual_signals(rgb_canvas, mask_canvas) -> Dict[str, float]:
+    mask_u8 = (np.asarray(mask_canvas) > 0).astype(np.uint8)
+    rgb_u8 = np.asarray(rgb_canvas, dtype=np.uint8)
+    if rgb_u8.ndim != 3 or rgb_u8.shape[2] != 3:
+        return {
+            "edge_density": 0.0,
+            "hough_lines": 0.0,
+            "straight_line_ratio": 0.0,
+            "line_strength": 0.0,
+        }
+
+    if int(np.count_nonzero(mask_u8)) == 0:
+        mask_u8 = np.ones((rgb_u8.shape[0], rgb_u8.shape[1]), dtype=np.uint8)
+
+    try:
+        import cv2
+
+        h, w = rgb_u8.shape[:2]
+        scale = 512.0 / max(float(max(h, w)), 1.0)
+        resized_w = max(64, int(round(w * scale)))
+        resized_h = max(64, int(round(h * scale)))
+        rgb_small = cv2.resize(rgb_u8, (resized_w, resized_h), interpolation=cv2.INTER_AREA)
+        mask_small = cv2.resize(mask_u8, (resized_w, resized_h), interpolation=cv2.INTER_NEAREST)
+        mask_small = (mask_small > 0).astype(np.uint8)
+        if int(np.count_nonzero(mask_small)) == 0:
+            mask_small = np.ones_like(mask_small, dtype=np.uint8)
+
+        gray = cv2.cvtColor(rgb_small, cv2.COLOR_RGB2GRAY)
+        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+        edges = cv2.Canny(blurred, 55, 155)
+        edges = cv2.bitwise_and(edges, edges, mask=(mask_small * 255).astype(np.uint8))
+
+        mask_area = max(int(np.count_nonzero(mask_small)), 1)
+        edge_density = float(np.count_nonzero(edges > 0) / float(mask_area))
+
+        min_line = max(18, int(max(resized_w, resized_h) * 0.14))
+        threshold = max(20, int(max(resized_w, resized_h) * 0.08))
+        lines = cv2.HoughLinesP(
+            edges,
+            rho=1,
+            theta=np.pi / 180.0,
+            threshold=threshold,
+            minLineLength=min_line,
+            maxLineGap=8,
+        )
+
+        hough_lines = 0
+        total_line_length = 0.0
+        if lines is not None:
+            for line in lines[:300]:
+                x1, y1, x2, y2 = line[0]
+                line_len = float(np.hypot(float(x2 - x1), float(y2 - y1)))
+                if line_len < float(min_line):
+                    continue
+                hough_lines += 1
+                total_line_length += line_len
+
+        straight_line_ratio = float(
+            np.clip(total_line_length / max(np.sqrt(float(mask_area)) * 22.0, 1.0), 0.0, 1.0)
+        )
+        line_strength = float(np.clip(float(hough_lines) / 18.0, 0.0, 1.0))
+        return {
+            "edge_density": edge_density,
+            "hough_lines": float(hough_lines),
+            "straight_line_ratio": straight_line_ratio,
+            "line_strength": line_strength,
+        }
+    except Exception:
+        gx = np.zeros(mask_u8.shape, dtype=np.float32)
+        gy = np.zeros(mask_u8.shape, dtype=np.float32)
+        gray = (0.299 * rgb_u8[:, :, 0] + 0.587 * rgb_u8[:, :, 1] + 0.114 * rgb_u8[:, :, 2]).astype(np.float32)
+        gx[:, 1:-1] = gray[:, 2:] - gray[:, :-2]
+        gy[1:-1, :] = gray[2:, :] - gray[:-2, :]
+        magnitude = np.sqrt(gx * gx + gy * gy)
+        masked = magnitude[mask_u8 > 0]
+        threshold = float(np.percentile(masked, 75)) if masked.size > 0 else float(np.percentile(magnitude, 75))
+        edges = ((magnitude >= threshold).astype(np.uint8) * mask_u8).astype(np.uint8)
+        mask_area = max(int(np.count_nonzero(mask_u8)), 1)
+        edge_density = float(np.count_nonzero(edges > 0) / float(mask_area))
+        return {
+            "edge_density": edge_density,
+            "hough_lines": 0.0,
+            "straight_line_ratio": 0.0,
+            "line_strength": 0.0,
+        }
+
+
+def _classify_auto_surface_profile(preprocess_info: Dict[str, Any], auto_profile: str) -> Dict[str, Any]:
+    profile = str(auto_profile or "auto").strip().lower()
+    if profile not in {"auto", "hard_surface", "organic"}:
+        profile = "auto"
+
+    label_candidates_raw = preprocess_info.get("label_candidates")
+    label_candidates = label_candidates_raw if isinstance(label_candidates_raw, list) else []
+    normalized_labels: List[Dict[str, float | str]] = []
+    strongest_hard_conf = 0.0
+    strongest_organic_conf = 0.0
+    has_strong_furniture_label = False
+
+    for entry in label_candidates:
+        if not isinstance(entry, dict):
+            continue
+        label = _normalize_auto_label(str(entry.get("label", "")))
+        confidence = float(entry.get("confidence", 0.0))
+        if not label:
+            continue
+        normalized_labels.append({"label": label, "confidence": confidence})
+        if _is_hard_surface_label(label):
+            strongest_hard_conf = max(strongest_hard_conf, confidence)
+        if _is_strong_hard_surface_label(label):
+            has_strong_furniture_label = has_strong_furniture_label or confidence >= 0.20
+        if _is_organic_label(label):
+            strongest_organic_conf = max(strongest_organic_conf, confidence)
+
+    if not normalized_labels:
+        fallback_label = _normalize_auto_label(str(preprocess_info.get("class_label", "")))
+        fallback_conf = float(preprocess_info.get("class_confidence", 0.0))
+        if fallback_label:
+            normalized_labels.append({"label": fallback_label, "confidence": fallback_conf})
+            if _is_hard_surface_label(fallback_label):
+                strongest_hard_conf = max(strongest_hard_conf, fallback_conf)
+            if _is_strong_hard_surface_label(fallback_label):
+                has_strong_furniture_label = has_strong_furniture_label or fallback_conf >= 0.20
+            if _is_organic_label(fallback_label):
+                strongest_organic_conf = max(strongest_organic_conf, fallback_conf)
+
+    edge_density = float(preprocess_info.get("edge_density", 0.0))
+    hough_lines = int(round(float(preprocess_info.get("hough_lines", 0.0))))
+    straight_line_ratio = float(preprocess_info.get("straight_line_ratio", 0.0))
+    line_strength = float(preprocess_info.get("line_strength", 0.0))
+    geometry_score = float(
+        np.clip(0.55 * line_strength + 0.30 * straight_line_ratio + 0.15 * np.clip((edge_density - 0.05) / 0.30, 0.0, 1.0), 0.0, 1.0)
+    )
+
+    if profile == "hard_surface":
+        score = 1.0
+        is_hard_surface = True
+        reason = "manual override: hard_surface"
+    elif profile == "organic":
+        score = 0.0
+        is_hard_surface = False
+        reason = "manual override: organic"
+    else:
+        score = float(np.clip(0.35 + geometry_score * 0.45, 0.0, 1.0))
+        if strongest_hard_conf > 0.0:
+            score = max(score, float(np.clip(0.52 + strongest_hard_conf * 0.45, 0.0, 0.98)))
+        if strongest_organic_conf > 0.0 and strongest_hard_conf < 0.35:
+            score = min(score, float(np.clip(0.50 - strongest_organic_conf * 0.32, 0.0, 1.0)))
+        if has_strong_furniture_label:
+            score = max(score, 0.92)
+        is_hard_surface = bool(score >= AUTO_HARD_SURFACE_THRESHOLD or has_strong_furniture_label)
+        reason = (
+            f"profile=auto geometry={geometry_score:.3f} hard_conf={strongest_hard_conf:.3f} "
+            f"organic_conf={strongest_organic_conf:.3f}"
+        )
+
+    return {
+        "hard_surface_score": float(np.clip(score, 0.0, 1.0)),
+        "is_hard_surface": bool(is_hard_surface),
+        "reason": reason,
+        "signals": {
+            "labels": normalized_labels,
+            "houghLines": int(hough_lines),
+            "edgeDensity": float(edge_density),
+            "straightLineRatio": float(straight_line_ratio),
+            "lineStrength": float(line_strength),
+        },
+        "has_strong_furniture_label": has_strong_furniture_label,
+    }
+
+
+def _run_primary_auto_segmentation(rgb) -> Dict[str, Any] | None:
+    import cv2
+
+    if not _ensure_runtime_package("ultralytics", required=False):
+        return None
+
+    try:
+        from ultralytics import YOLO
+    except Exception as error:
+        log(f"[SEG] warning: ultralytics import failed: {error}")
+        return None
+
+    h, w = rgb.shape[:2]
+    min_area = max(64, int(h * w * 0.005))
+    model_path = _resolve_yolov8_seg_model_path()
+
+    try:
+        model = YOLO(model_path)
+        results = model(rgb, verbose=False)
+        if not results:
+            return None
+
+        result = results[0]
+        if result.masks is None or result.boxes is None:
+            return None
+
+        masks_np = result.masks.data.detach().cpu().numpy()
+        boxes_np = result.boxes.xyxy.detach().cpu().numpy()
+        scores_np = result.boxes.conf.detach().cpu().numpy()
+        classes_np = result.boxes.cls.detach().cpu().numpy() if getattr(result.boxes, "cls", None) is not None else None
+        names = getattr(result, "names", None)
+        if names is None:
+            names = getattr(model, "names", None)
+
+        def class_name_from_index(index: int) -> str:
+            if isinstance(names, dict):
+                return str(names.get(index, index))
+            if isinstance(names, (list, tuple)) and 0 <= index < len(names):
+                return str(names[index])
+            return str(index)
+
+        limit = min(len(masks_np), len(boxes_np), len(scores_np))
+        if classes_np is not None:
+            limit = min(limit, len(classes_np))
+
+        candidates: List[Dict[str, Any]] = []
+        for index in range(limit):
+            mask = (masks_np[index] > 0.5).astype(np.uint8)
+            if mask.shape != (h, w):
+                mask = cv2.resize(mask, (w, h), interpolation=cv2.INTER_NEAREST)
+                mask = (mask > 0).astype(np.uint8)
+            mask = _largest_component(mask)
+
+            area = int(np.count_nonzero(mask))
+            if area < min_area:
+                continue
+
+            bbox = _bbox_from_mask(mask)
+            if bbox is None:
+                x1, y1, x2, y2 = boxes_np[index]
+                bbox = (
+                    int(max(0, min(w - 1, x1))),
+                    int(max(0, min(h - 1, y1))),
+                    int(max(1, min(w, x2))),
+                    int(max(1, min(h, y2))),
+                )
+
+            cls_index = int(classes_np[index]) if classes_np is not None else -1
+            label = class_name_from_index(cls_index)
+            candidates.append(
+                {
+                    "mask": mask,
+                    "bbox": bbox,
+                    "label": label,
+                    "confidence": float(scores_np[index]),
+                    "area": area,
+                }
+            )
+
+        if not candidates:
+            return None
+
+        candidates.sort(key=lambda item: (int(item["area"]), float(item["confidence"])), reverse=True)
+        labels = [
+            {
+                "label": _normalize_auto_label(str(item.get("label", ""))),
+                "confidence": float(item.get("confidence", 0.0)),
+            }
+            for item in candidates[:8]
+            if str(item.get("label", "")).strip()
+        ]
+        selected = dict(candidates[0])
+        selected["labels"] = labels
+        return selected
+    except Exception as error:
+        log(f"[SEG] warning: primary YOLOv8-seg failed: {error}")
+        return None
+
+
+def _silhouette_curvature_index(mask) -> float:
+    mask_u8 = (mask > 0).astype(np.uint8)
+    area = int(np.count_nonzero(mask_u8))
+    if area <= 0:
+        return 0.0
+
+    try:
+        import cv2
+
+        contours, _ = cv2.findContours(mask_u8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+        if not contours:
+            return 0.0
+        contour = max(contours, key=cv2.contourArea)
+        perimeter = float(cv2.arcLength(contour, True))
+        if perimeter <= 0.0:
+            return 0.0
+        epsilon = max(1.0, perimeter * 0.015)
+        approx = cv2.approxPolyDP(contour, epsilon, True)
+        approx_points = max(len(approx), 1)
+        raw_points = max(len(contour), 1)
+        return float(raw_points / float(approx_points))
+    except Exception:
+        transitions_h = int(np.count_nonzero(mask_u8[:, 1:] != mask_u8[:, :-1]))
+        transitions_v = int(np.count_nonzero(mask_u8[1:, :] != mask_u8[:-1, :]))
+        perimeter_est = float(transitions_h + transitions_v)
+        return float(perimeter_est / max(np.sqrt(float(area)), 1e-6))
+
+
+def _prepare_auto_triposr_image(image_path: str, out_path: str, quality: str) -> Dict[str, Any]:
+    from PIL import Image
+
+    source_rgba = Image.open(image_path).convert("RGBA")
+    rgba_np = np.asarray(source_rgba, dtype=np.uint8)
+    rgb_np = rgba_np[:, :, :3].copy()
+    image_h, image_w = rgb_np.shape[:2]
+
+    primary_seg = _run_primary_auto_segmentation(rgb_np)
+    if primary_seg:
+        source = "yolov8-seg"
+        raw_mask = np.asarray(primary_seg["mask"], dtype=np.uint8)
+        class_label = str(primary_seg.get("label", ""))
+        class_confidence = float(primary_seg.get("confidence", 0.0))
+        label_candidates_raw = primary_seg.get("labels")
+        label_candidates = label_candidates_raw if isinstance(label_candidates_raw, list) else []
+    else:
+        source = "subject-mask-fallback"
+        raw_mask = _extract_subject_mask(rgb_np, rgba_np).astype(np.uint8)
+        class_label = ""
+        class_confidence = 0.0
+        label_candidates = []
+
+    mask = _largest_component(raw_mask)
+    if int(np.count_nonzero(mask)) == 0:
+        mask = np.ones((image_h, image_w), dtype=np.uint8)
+
+    bbox = _bbox_from_mask(mask)
+    if bbox is None:
+        bbox = (0, 0, image_w, image_h)
+    x1, y1, x2, y2 = bbox
+    box_w = max(1, x2 - x1)
+    box_h = max(1, y2 - y1)
+    pad_x = max(2, int(round(box_w * 0.12)))
+    pad_y = max(2, int(round(box_h * 0.12)))
+    crop_box = (
+        max(0, x1 - pad_x),
+        max(0, y1 - pad_y),
+        min(image_w, x2 + pad_x),
+        min(image_h, y2 + pad_y),
+    )
+
+    cx1, cy1, cx2, cy2 = crop_box
+    mask_crop = mask[cy1:cy2, cx1:cx2]
+    if mask_crop.size == 0 or int(np.count_nonzero(mask_crop)) == 0:
+        mask_crop = np.ones((max(1, cy2 - cy1), max(1, cx2 - cx1)), dtype=np.uint8)
+    else:
+        mask_crop = _largest_component(mask_crop)
+
+    crop_rgba = source_rgba.crop(crop_box)
+    mask_image = Image.fromarray((mask_crop > 0).astype(np.uint8) * 255, mode="L")
+    crop_rgba.putalpha(mask_image)
+
+    target_size = int(AUTO_PREPROCESS_CANVAS.get(quality, AUTO_PREPROCESS_CANVAS["balanced"]))
+    target_size = max(256, target_size)
+    crop_w, crop_h = crop_rgba.size
+    scale = min(
+        (target_size * AUTO_PREPROCESS_FILL_RATIO) / max(float(crop_w), 1.0),
+        (target_size * AUTO_PREPROCESS_FILL_RATIO) / max(float(crop_h), 1.0),
+    )
+    resized_w = max(1, int(round(crop_w * scale)))
+    resized_h = max(1, int(round(crop_h * scale)))
+    resample = Image.Resampling.LANCZOS if hasattr(Image, "Resampling") else Image.LANCZOS
+    resized_rgba = crop_rgba.resize((resized_w, resized_h), resample=resample)
+    resized_mask = mask_image.resize((resized_w, resized_h), resample=Image.Resampling.NEAREST if hasattr(Image, "Resampling") else Image.NEAREST)
+
+    clean_image = Image.new("RGB", (target_size, target_size), (236, 236, 232))
+    paste_x = (target_size - resized_w) // 2
+    paste_y = (target_size - resized_h) // 2
+    clean_image.paste(resized_rgba.convert("RGB"), (paste_x, paste_y), resized_rgba)
+
+    clean_mask = Image.new("L", (target_size, target_size), 0)
+    clean_mask.paste(resized_mask, (paste_x, paste_y))
+    clean_mask_np = (np.asarray(clean_mask, dtype=np.uint8) > 0).astype(np.uint8)
+    clean_rgb_np = np.asarray(clean_image, dtype=np.uint8)
+    visual_signals = _compute_hard_surface_visual_signals(clean_rgb_np, clean_mask_np)
+
+    clean_path = os.path.join(os.path.dirname(out_path), "preprocessed-auto-clean.png")
+    clean_image.save(clean_path, format="PNG")
+
+    curvature = _silhouette_curvature_index(mask)
+    return {
+        "clean_path": clean_path,
+        "source": source,
+        "class_label": class_label,
+        "class_confidence": class_confidence,
+        "bbox": [int(x1), int(y1), int(x2), int(y2)],
+        "crop_bbox": [int(cx1), int(cy1), int(cx2), int(cy2)],
+        "post_crop_size": [int(resized_w), int(resized_h)],
+        "canvas_size": [int(target_size), int(target_size)],
+        "curvature": float(curvature),
+        "label_candidates": label_candidates,
+        "edge_density": float(visual_signals.get("edge_density", 0.0)),
+        "hough_lines": int(round(float(visual_signals.get("hough_lines", 0.0)))),
+        "straight_line_ratio": float(visual_signals.get("straight_line_ratio", 0.0)),
+        "line_strength": float(visual_signals.get("line_strength", 0.0)),
+    }
+
+
+def _degenerate_face_count(mesh) -> int:
+    if not hasattr(mesh, "faces"):
+        return 0
+    face_count = int(len(mesh.faces))
+    if face_count <= 0:
+        return 0
+    try:
+        try:
+            valid_mask = mesh.nondegenerate_faces()
+        except TypeError:
+            valid_mask = mesh.nondegenerate_faces
+        if valid_mask is None:
+            return 0
+        valid = np.asarray(valid_mask).astype(bool).reshape(-1)
+        if valid.size != face_count:
+            return 0
+        return int(max(0, face_count - int(np.count_nonzero(valid))))
+    except Exception:
+        return 0
+
+
+def _score_glb_mesh(glb_path: str) -> Dict[str, Any]:
+    try:
+        mesh, trimesh = _load_glb_mesh_for_gate(glb_path)
+    except Exception as error:
+        return {"ok": False, "reason": f"load failed: {error}", "score": -999.0}
+
+    try:
+        mesh = _sanitize_invalid_mesh(mesh, trimesh)
+    except Exception:
+        pass
+
+    faces = int(len(mesh.faces)) if hasattr(mesh, "faces") else 0
+    vertices = int(len(mesh.vertices)) if hasattr(mesh, "vertices") else 0
+    if faces <= 0 or vertices <= 0:
+        return {"ok": False, "reason": "no geometry", "score": -999.0}
+
+    components = _safe_mesh_components(mesh, trimesh)
+    component_count = max(1, int(len(components)))
+    degenerate_faces = _degenerate_face_count(mesh)
+
+    bounds = np.asarray(mesh.bounds, dtype=np.float64)
+    size = bounds[1] - bounds[0]
+    max_dim = float(np.max(size))
+    min_dim = float(np.min(np.maximum(size, 1e-8)))
+    bbox_ratio = float(max_dim / max(min_dim, 1e-8))
+
+    verts = np.asarray(mesh.vertices, dtype=np.float64)
+    min_y = float(np.min(verts[:, 1])) if verts.size > 0 else 0.0
+    base_epsilon = max(1e-4, max_dim * 0.01)
+    base_vertices = int(np.count_nonzero(np.abs(verts[:, 1] - min_y) <= base_epsilon))
+    base_ratio = float(base_vertices / max(vertices, 1))
+    base_flat = bool(base_ratio >= 0.02)
+
+    ratio_penalty = 0.0
+    if bbox_ratio > 12.0:
+        ratio_penalty = min(4.0, (bbox_ratio - 12.0) * 0.2)
+    elif bbox_ratio < 0.2:
+        ratio_penalty = 2.0
+
+    score = 10.0
+    score -= max(0, component_count - 1) * 1.6
+    score -= min(3.0, (float(degenerate_faces) / max(faces, 1)) * 50.0)
+    score -= ratio_penalty
+    score += 1.5 if base_flat else -1.0
+    score += min(1.5, np.log10(float(max(faces, 1))) * 0.4)
+
+    return {
+        "ok": True,
+        "score": float(score),
+        "components": component_count,
+        "degenerate_faces": int(degenerate_faces),
+        "bbox_ratio": float(bbox_ratio),
+        "base_flat": base_flat,
+        "base_ratio": float(base_ratio),
+        "faces": faces,
+        "vertices": vertices,
+    }
+
+
+def _resolve_auto_preset_hint(class_label: str, confidence: float, curvature: float) -> Tuple[str | None, str]:
+    normalized_label = _normalize_auto_label(class_label)
+    if normalized_label in AUTO_FURNITURE_LIKE and confidence >= AUTO_PRESET_CLASS_CONFIDENCE:
+        return "hard_surface", f"class={normalized_label} confidence={confidence:.3f}"
+    if _is_organic_label(normalized_label) and confidence >= AUTO_PRESET_CLASS_CONFIDENCE:
+        return "organic", f"class={normalized_label} confidence={confidence:.3f}"
+    if curvature >= AUTO_PRESET_CURVATURE_THRESHOLD:
+        return "organic", f"curvature={curvature:.3f}"
+    return None, f"class={normalized_label or 'n/a'} confidence={confidence:.3f} curvature={curvature:.3f}"
+
+
+def _select_auto_triposr_preset(
+    clean_image_path: str,
+    out_path: str,
+    runtime_device: str,
+    class_label: str,
+    class_confidence: float,
+    curvature: float,
+) -> Tuple[str, str, Dict[str, Any]]:
+    hinted_preset, hinted_reason = _resolve_auto_preset_hint(class_label, class_confidence, curvature)
+    if hinted_preset in {"hard_surface", "organic"}:
+        return hinted_preset, hinted_reason, {}
+
+    quick_dir = os.path.join(os.path.dirname(out_path), "auto-quick")
+    os.makedirs(quick_dir, exist_ok=True)
+    quick_presets = (
+        ("hard_surface", "hard_surface_quick"),
+        ("organic", "organic_quick"),
+    )
+
+    best_preset = "hard_surface"
+    best_score = float("-inf")
+    quick_scores: Dict[str, Any] = {}
+
+    for canonical_preset, quick_preset in quick_presets:
+        quick_out = os.path.join(quick_dir, f"{canonical_preset}-quick.glb")
+        try:
+            run_triposr(
+                image_path=clean_image_path,
+                out_glb_path=quick_out,
+                preset=quick_preset,
+                device=runtime_device,
+            )
+            score_info = _score_glb_mesh(quick_out)
+            gate_info = quality_gate(quick_out)
+            gate_bonus = 1.0 if gate_info.get("ok") else -2.5
+            total_score = float(score_info.get("score", -999.0)) + gate_bonus
+            score_info["total_score"] = total_score
+            score_info["gate_ok"] = bool(gate_info.get("ok"))
+            score_info["gate_reason"] = gate_info.get("reason")
+            quick_scores[canonical_preset] = score_info
+
+            log(
+                f"[AUTO][SCORE] preset={canonical_preset} score={total_score:.4f} "
+                f"components={score_info.get('components', 0)} degenerate={score_info.get('degenerate_faces', 0)} "
+                f"bbox_ratio={score_info.get('bbox_ratio', float('inf')):.4f} base_flat={score_info.get('base_flat', False)}"
+            )
+
+            if total_score > best_score:
+                best_score = total_score
+                best_preset = canonical_preset
+        except Exception as error:
+            quick_scores[canonical_preset] = {
+                "ok": False,
+                "score": -999.0,
+                "total_score": -999.0,
+                "reason": str(error),
+            }
+            log_error(f"[AUTO] quick-pass failed ({canonical_preset}): {error}")
+
+    if not np.isfinite(best_score):
+        reason = f"quick-pass unavailable, fallback={best_preset} ({hinted_reason})"
+    else:
+        reason = (
+            f"quick-pass selected={best_preset} score={best_score:.4f} "
+            f"(fallback reason: {hinted_reason})"
+        )
+    return best_preset, reason, quick_scores
 
 
 def build_object_candidates(image, rgb, detections: Sequence[FurnitureDetection], max_objects: int = MAX_OBJECTS) -> List[ObjectCandidate]:
@@ -2805,6 +3622,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--out", dest="out_path", required=True, help="Output GLB path")
     parser.add_argument("--quality", choices=["fast", "balanced", "high"], default="balanced")
     parser.add_argument("--mode", choices=["auto", "neural", "architectural"], default="auto")
+    parser.add_argument("--auto-profile", choices=["auto", "hard_surface", "organic"], default="auto")
     parser.add_argument("--models-dir", default="", help="Optional cache directory for model weights")
     return parser.parse_args()
 
@@ -2883,6 +3701,7 @@ def main() -> int:
     log(f"out: {out_path}")
     log(f"quality: {args.quality}")
     log(f"mode: {args.mode}")
+    log(f"auto_profile: {args.auto_profile}")
     log(f"cache_root: {cache_root}")
     log(f"models_dir: {models_dir}")
     log_cuda_check()
@@ -2900,7 +3719,16 @@ def main() -> int:
                 out_path=out_path,
                 quality=args.quality,
                 runtime_device=runtime_device,
+                auto_profile=args.auto_profile,
             )
+            if not os.path.exists(out_path):
+                raise RuntimeError(f"AUTO output missing: {out_path}")
+            final_size = int(os.path.getsize(out_path))
+            if final_size < AUTO_MIN_GLB_BYTES:
+                raise RuntimeError(
+                    f"AUTO output too small ({final_size} bytes). "
+                    f"Minimum required: {AUTO_MIN_GLB_BYTES} bytes."
+                )
             emit_progress("done", 100, f"Modelo 3D listo (auto: {used_engine})")
             return 0
 

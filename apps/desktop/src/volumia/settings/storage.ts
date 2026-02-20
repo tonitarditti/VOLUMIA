@@ -6,6 +6,7 @@ import type {
   AppSettings,
   Language,
   LanguageMode,
+  AutoGenerationProfile,
   PerformancePreset,
   Theme,
   ThemeMode,
@@ -27,6 +28,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   fpsLimit: 60,
   antialias: true,
   reduceMotion: false,
+  autoGenerationProfile: "auto",
 };
 
 export type SettingsExportEnvelope = {
@@ -47,6 +49,7 @@ const THEME_MODE_SET = new Set<ThemeMode>(["system", "time", "manual"]);
 const THEME_SET = new Set<Theme>(["light", "dark"]);
 const WINDOW_MODE_SET = new Set<WindowMode>(["windowed", "maximized", "fullscreen"]);
 const PRESET_SET = new Set<PerformancePreset>(["quality", "balanced", "performance"]);
+const AUTO_PROFILE_SET = new Set<AutoGenerationProfile>(["auto", "hard_surface", "organic"]);
 const FPS_SET = new Set<AppSettings["fpsLimit"]>([30, 60, 120]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -99,6 +102,10 @@ function isPerformancePreset(value: unknown): value is PerformancePreset {
 
 function isFpsLimit(value: unknown): value is AppSettings["fpsLimit"] {
   return typeof value === "number" && FPS_SET.has(value as AppSettings["fpsLimit"]);
+}
+
+function isAutoGenerationProfile(value: unknown): value is AutoGenerationProfile {
+  return typeof value === "string" && AUTO_PROFILE_SET.has(value as AutoGenerationProfile);
 }
 
 function hasOwnKey(record: Record<string, unknown>, key: string) {
@@ -159,6 +166,9 @@ export function sanitizeAppSettings(value: unknown, fallback: AppSettings = DEFA
     antialias: typeof value.antialias === "boolean" ? value.antialias : fallback.antialias,
     reduceMotion: typeof value.reduceMotion === "boolean" ? value.reduceMotion : fallback.reduceMotion,
     pythonPath: normalizeOptionalString(value.pythonPath) ?? fallback.pythonPath,
+    autoGenerationProfile: isAutoGenerationProfile(value.autoGenerationProfile)
+      ? value.autoGenerationProfile
+      : fallback.autoGenerationProfile,
   };
 }
 

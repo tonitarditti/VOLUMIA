@@ -4,6 +4,7 @@ export type ThemeMode = "system" | "time" | "manual";
 export type Theme = "light" | "dark";
 export type WindowMode = "windowed" | "maximized" | "fullscreen";
 export type PerformancePreset = "quality" | "balanced" | "performance";
+export type AutoGenerationProfile = "auto" | "hard_surface" | "organic";
 
 export interface TimeTheme {
   lightFrom: string;
@@ -24,4 +25,5 @@ export interface AppSettings {
   antialias: boolean;
   reduceMotion: boolean;
   pythonPath?: string;
+  autoGenerationProfile: AutoGenerationProfile;
 }

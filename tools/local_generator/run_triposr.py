@@ -18,16 +18,13 @@ def emit(stage: str, percent: int, message: str) -> None:
 
 def cleanup_degenerate(mesh):
     """Compatibility cleanup for trimesh versions without remove_degenerate_faces()."""
-    # Remove degenerate faces
-    if hasattr(mesh, "remove_degenerate_faces"):
-        mesh.remove_degenerate_faces()
-    else:
-        try:
-            mask = mesh.nondegenerate_faces()
-            if mask is not None:
-                mesh.update_faces(mask)
-        except Exception:
-            pass  # optional cleanup
+    # Always use nondegenerate_faces() for trimesh 4.x compatibility.
+    try:
+        mask = mesh.nondegenerate_faces()
+        if mask is not None:
+            mesh.update_faces(mask)
+    except Exception:
+        pass  # optional cleanup
 
     # Remove unreferenced vertices (this exists on trimesh 4.x)
     try:
@@ -103,6 +100,7 @@ PRESET_CONFIG: Dict[str, Dict[str, int]] = {
         "chunk_size": 16384,
         "smooth_iterations": 5,
         "refine_passes": 1,
+        "simplify_target": 180000,
     },
     "balanced": {
         "steps": 40,
@@ -111,6 +109,7 @@ PRESET_CONFIG: Dict[str, Dict[str, int]] = {
         "chunk_size": 8192,
         "smooth_iterations": 10,
         "refine_passes": 2,
+        "simplify_target": 200000,
     },
     "quality": {
         "steps": 60,
@@ -119,6 +118,43 @@ PRESET_CONFIG: Dict[str, Dict[str, int]] = {
         "chunk_size": 4096,
         "smooth_iterations": 20,
         "refine_passes": 3,
+        "simplify_target": 220000,
+    },
+    "hard_surface_quick": {
+        "steps": 18,
+        "resolution": 224,
+        "input_size": 512,
+        "chunk_size": 16384,
+        "smooth_iterations": 1,
+        "refine_passes": 1,
+        "simplify_target": 160000,
+    },
+    "organic_quick": {
+        "steps": 20,
+        "resolution": 224,
+        "input_size": 512,
+        "chunk_size": 16384,
+        "smooth_iterations": 6,
+        "refine_passes": 2,
+        "simplify_target": 220000,
+    },
+    "hard_surface": {
+        "steps": 58,
+        "resolution": 512,
+        "input_size": 1024,
+        "chunk_size": 4096,
+        "smooth_iterations": 3,
+        "refine_passes": 1,
+        "simplify_target": 160000,
+    },
+    "organic": {
+        "steps": 64,
+        "resolution": 512,
+        "input_size": 1024,
+        "chunk_size": 4096,
+        "smooth_iterations": 18,
+        "refine_passes": 4,
+        "simplify_target": 260000,
     },
 }
 
@@ -187,13 +223,13 @@ def mesh_from_output(mesh_or_scene: Any, trimesh: Any) -> Any:
     raise RuntimeError(f"Unsupported mesh output type: {type(mesh_or_scene)!r}")
 
 
-def maybe_simplify(mesh: Any) -> Any:
-    if len(mesh.faces) <= 200_000:
+def maybe_simplify(mesh: Any, target_faces: int) -> Any:
+    if len(mesh.faces) <= int(target_faces):
         return mesh
     if not hasattr(mesh, "simplify_quadratic_decimation"):
         return mesh
     try:
-        simplified = mesh.simplify_quadratic_decimation(200_000)
+        simplified = mesh.simplify_quadratic_decimation(int(target_faces))
         if simplified is not None and len(simplified.faces) > 0:
             return simplified
     except Exception:
@@ -272,8 +308,8 @@ def validate_glb(out_glb: str, trimesh: Any) -> None:
         raise RuntimeError("GLB was not created.")
 
     size = os.path.getsize(out_glb)
-    if size < 10_000:
-        raise RuntimeError(f"Generated GLB is too small: {size} bytes")
+    if size < 4_000:
+        raise RuntimeError(f"Generated GLB is too small (< 4000 bytes): {size} bytes")
 
     try:
         loaded = trimesh.load(out_glb, file_type="glb", force="scene")
@@ -473,6 +509,7 @@ def run_triposr(image_path: str, out_glb: str, preset: str, requested_device: st
 
     mesh = mesh_from_output(meshes[0], trimesh)
 
+    is_hard_surface_profile = preset.startswith("hard_surface")
     emit("mesh_cleanup", 80, "Cleaning and smoothing mesh")
     cleanup_degenerate(mesh)
     mesh.rezero()
@@ -481,13 +518,23 @@ def run_triposr(image_path: str, out_glb: str, preset: str, requested_device: st
     if isinstance(processed, trimesh.Trimesh):
         mesh = processed
 
-    smoothing.filter_laplacian(mesh, lamb=0.5, iterations=preset_config["smooth_iterations"])
-    for _ in range(max(0, preset_config["refine_passes"] - 1)):
+    if is_hard_surface_profile:
+        # Hard-surface profile: keep cleanup + normals, avoid rounding edges with aggressive smoothing.
+        hard_iterations = min(1, int(preset_config["smooth_iterations"]))
+        if hard_iterations > 0:
+            smoothing.filter_laplacian(mesh, lamb=0.2, iterations=hard_iterations)
         cleanup_degenerate(mesh)
         mesh.fix_normals()
         mesh.process(validate=True)
+        emit("mesh_cleanup", 83, "postprocess: hard-surface profile applied")
+    else:
+        smoothing.filter_laplacian(mesh, lamb=0.5, iterations=preset_config["smooth_iterations"])
+        for _ in range(max(0, preset_config["refine_passes"] - 1)):
+            cleanup_degenerate(mesh)
+            mesh.fix_normals()
+            mesh.process(validate=True)
 
-    mesh = maybe_simplify(mesh)
+    mesh = maybe_simplify(mesh, preset_config["simplify_target"])
 
     emit("base_close", 88, "Checking mesh boundaries")
     mesh, base_message = close_base_if_needed(mesh, trimesh)
@@ -509,7 +556,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Local VOLUMIA TripoSR runner")
     parser.add_argument("--out_glb", required=True)
     parser.add_argument("--image", required=True)
-    parser.add_argument("--preset", choices=["fast", "balanced", "quality"], default="balanced")
+    parser.add_argument(
+        "--preset",
+        choices=["fast", "balanced", "quality", "hard_surface", "organic", "hard_surface_quick", "organic_quick"],
+        default="balanced",
+    )
     parser.add_argument("--device", choices=["cuda", "cpu"], default="cuda")
     return parser
 

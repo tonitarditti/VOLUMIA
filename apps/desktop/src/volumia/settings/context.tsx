@@ -22,6 +22,7 @@ import type {
   Language,
   LanguageMode,
   PerformancePreset,
+  AutoGenerationProfile,
   Theme,
   ThemeMode,
   TimeTheme,
@@ -47,6 +48,7 @@ type SettingsContextValue = {
   setAntialias: (antialias: boolean) => void;
   setReduceMotion: (reduceMotion: boolean) => void;
   setPythonPath: (pythonPath: string | undefined) => void;
+  setAutoGenerationProfile: (autoGenerationProfile: AutoGenerationProfile) => void;
   resetToRecommended: () => void;
   applyImportedSettings: (settings: AppSettings) => void;
   resetSettings: () => void;
@@ -256,6 +258,7 @@ export function SettingsProvider({ children }: PropsWithChildren) {
       },
       setReduceMotion: (reduceMotion) => updateSettings({ reduceMotion }),
       setPythonPath: (pythonPath) => updateSettings({ pythonPath }),
+      setAutoGenerationProfile: (autoGenerationProfile) => updateSettings({ autoGenerationProfile }),
       resetToRecommended: () => {
         updateSettings({ languageMode: "system", themeMode: "system" });
       },

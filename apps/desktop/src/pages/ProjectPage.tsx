@@ -17,6 +17,8 @@ type GenerationDevice = {
   name: string;
 };
 type AutoEngine = "instantmesh" | "triposr" | "arch" | "blockout";
+type AutoPreset = "hard_surface" | "organic";
+type AutoProfile = "auto" | "hard_surface" | "organic";
 
 function formatMessageTime(value: string, locale: string) {
   return new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit" }).format(new Date(value));
@@ -71,6 +73,23 @@ function formatAutoEngineLabel(engine: AutoEngine) {
   return "BLOCKOUT";
 }
 
+function formatAutoPresetLabel(preset: AutoPreset) {
+  if (preset === "hard_surface") {
+    return "HardSurface";
+  }
+  return "Organic";
+}
+
+function formatAutoProfileLabel(profile: AutoProfile) {
+  if (profile === "hard_surface") {
+    return "HARD-SURFACE";
+  }
+  if (profile === "organic") {
+    return "ORGÁNICO";
+  }
+  return "AUTO";
+}
+
 function getProjectModel(model: ProjectModel | undefined): ProjectModel {
   return {
     sourceImages: model?.sourceImages ? [...model.sourceImages] : [],
@@ -83,7 +102,7 @@ function getProjectModel(model: ProjectModel | undefined): ProjectModel {
 
 export function ProjectPage() {
   const { t, language } = useT();
-  const { settings } = useSettings();
+  const { settings, setAutoGenerationProfile } = useSettings();
   const { projectId = "" } = useParams();
   const { state, hydrated, renameProject, updateNotes, appendChatMessage, updateModelMetadata, updateProjectModel } = useProjects();
 
@@ -97,6 +116,7 @@ export function ProjectPage() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationDevice, setGenerationDevice] = useState<GenerationDevice | null>(null);
   const [autoUsedEngine, setAutoUsedEngine] = useState<AutoEngine | null>(null);
+  const [autoUsedPreset, setAutoUsedPreset] = useState<AutoPreset | null>(null);
   const [generationLogPath, setGenerationLogPath] = useState("");
   const [imagePreviews, setImagePreviews] = useState<Record<string, string>>({});
   const [isAssistantOpen, setIsAssistantOpen] = useState(false);
@@ -123,6 +143,7 @@ export function ProjectPage() {
     setIsGenerating(false);
     setGenerationDevice(null);
     setAutoUsedEngine(null);
+    setAutoUsedPreset(null);
     setGenerationLogPath("");
     setImagePreviews({});
   }, [project?.id]);
@@ -191,6 +212,7 @@ export function ProjectPage() {
       }
       if (payload.stage !== "done") {
         setAutoUsedEngine(null);
+        setAutoUsedPreset(null);
       }
       if (payload.device) {
         setGenerationDevice({
@@ -215,6 +237,7 @@ export function ProjectPage() {
         setGenerationPercent(100);
         setGenerationMessage(payload.skpPath ? `SKP generado: ${payload.skpPath}` : "SKP generado correctamente.");
         setAutoUsedEngine(null);
+        setAutoUsedPreset(null);
         setGenerationLogPath("");
         return;
       }
@@ -234,12 +257,15 @@ export function ProjectPage() {
       setGenerationStage("done");
       setGenerationPercent(100);
       setGenerationMessage(
-        payload.autoUsed
-          ? `Modelo 3D generado correctamente. AUTO used: ${formatAutoEngineLabel(payload.autoUsed)}`
-          : "Modelo 3D generado correctamente."
+        payload.autoUsed === "blockout" && payload.autoPreset === "hard_surface"
+          ? "Modelo 3D generado correctamente. AUTO used: BLOCKOUT (hard-surface fallback)"
+          : payload.autoUsed
+            ? `Modelo 3D generado correctamente. AUTO used: ${formatAutoEngineLabel(payload.autoUsed)}${payload.autoPreset ? ` / ${formatAutoPresetLabel(payload.autoPreset)}` : ""}`
+            : "Modelo 3D generado correctamente."
       );
       setGenerationDevice(payload.device ?? null);
       setAutoUsedEngine(payload.autoUsed ?? null);
+      setAutoUsedPreset(payload.autoPreset ?? null);
       setGenerationLogPath("");
     });
 
@@ -252,6 +278,7 @@ export function ProjectPage() {
       setGenerationStage("error");
       setGenerationMessage(payload.logPath ? `${payload.message} Ver log: ${payload.logPath}` : payload.message);
       setAutoUsedEngine(null);
+      setAutoUsedPreset(null);
       setGenerationLogPath(payload.logPath ?? "");
     });
 
@@ -328,6 +355,7 @@ export function ProjectPage() {
       imagePaths: selectedImages,
       preset,
       mode: "auto",
+      autoProfile: settings.autoGenerationProfile,
       pythonPath: settings.pythonPath,
       pipeline: "depth_glb",
     });
@@ -492,6 +520,17 @@ export function ProjectPage() {
                 <option value="balanced">Balanced</option>
                 <option value="quality">Quality</option>
               </select>
+              <select
+                value={settings.autoGenerationProfile}
+                onChange={(event) => setAutoGenerationProfile(event.target.value as AutoProfile)}
+                className={`h-9 min-w-48 appearance-none rounded-lg border px-3 text-sm outline-none transition duration-150 ease-out focus:ring-2 focus:ring-[#8c7e6d]/50 ${selectClass}`}
+                disabled={isGenerating}
+                aria-label="AUTO mode selector"
+              >
+                <option value="auto">AUTO (recomendado)</option>
+                <option value="hard_surface">HARD-SURFACE</option>
+                <option value="organic">ORGÁNICO</option>
+              </select>
               <Button variant="primary" onClick={() => void handleRunGeneration()} disabled={selectedImages.length === 0 || isGenerating}>
                 Generar 3D
               </Button>
@@ -506,11 +545,16 @@ export function ProjectPage() {
                 Cancelar
               </Button>
               <span className="rounded-md border border-[var(--border)] bg-[var(--surface-2)] px-2.5 py-1.5 text-xs text-[var(--text-muted)]">
-                MODE: AUTO
+                MODE: {formatAutoProfileLabel(settings.autoGenerationProfile)}
               </span>
               {autoUsedEngine ? (
                 <span className="rounded-md border border-[var(--border)] bg-[var(--surface-2)] px-2.5 py-1.5 text-xs text-[var(--text-muted)]">
                   AUTO used: {formatAutoEngineLabel(autoUsedEngine)}
+                </span>
+              ) : null}
+              {autoUsedPreset ? (
+                <span className="rounded-md border border-[var(--border)] bg-[var(--surface-2)] px-2.5 py-1.5 text-xs text-[var(--text-muted)]">
+                  AUTO preset: {formatAutoPresetLabel(autoUsedPreset)}
                 </span>
               ) : null}
               {generationDevice ? (

@@ -56,6 +56,7 @@ export interface AppSettingsSnapshot {
   antialias: boolean;
   reduceMotion: boolean;
   pythonPath?: string;
+  autoGenerationProfile?: GenerationAutoProfile;
 }
 
 export type PythonCandidateSource = "conda" | "where" | "py-launcher" | "custom";
@@ -134,6 +135,8 @@ export type GenerationMode = "auto" | "neural" | "architectural";
 export type GenerationPipeline = "depth_glb" | "gen_skp";
 export type GenerationSkpQuality = "fast" | "high";
 export type GenerationAutoEngine = "instantmesh" | "triposr" | "arch" | "blockout";
+export type GenerationAutoPreset = "hard_surface" | "organic";
+export type GenerationAutoProfile = "auto" | "hard_surface" | "organic";
 
 export type ProjectModel = {
   sourceImages: string[];
@@ -222,6 +225,7 @@ export type GenerationRunPayload = {
   imagePaths: string[];
   preset: GenerationPreset;
   mode?: GenerationMode;
+  autoProfile?: GenerationAutoProfile;
   pythonPath?: string;
   pipeline?: GenerationPipeline;
   inputs?: string[];
@@ -267,6 +271,7 @@ export type GenerationDonePayload = {
   preset?: GenerationPreset;
   mode?: GenerationMode;
   autoUsed?: GenerationAutoEngine;
+  autoPreset?: GenerationAutoPreset;
   device?: GenerationDevice;
 };
 

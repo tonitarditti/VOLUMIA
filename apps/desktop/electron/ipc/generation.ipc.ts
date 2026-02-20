@@ -7,6 +7,8 @@ import {
   IPC_CHANNELS,
   type GenerationCheckResult,
   type GenerationAutoEngine,
+  type GenerationAutoProfile,
+  type GenerationAutoPreset,
   type GenerationDevice,
   type GenerationDonePayload,
   type GenerationErrorPayload,
@@ -32,6 +34,7 @@ type LocalGenerationResult = {
   outGlbPath?: string;
   device?: GenerationDevice;
   autoUsed?: GenerationAutoEngine;
+  autoPreset?: GenerationAutoPreset;
   stdout?: string;
   stderr?: string;
   logPath?: string;
@@ -415,7 +418,7 @@ function ensureAssetsDir() {
 async function ensureGlbOk(outPath: string) {
   if (!fs.existsSync(outPath)) throw new Error(`GLB not created: ${outPath}`);
   const size = fs.statSync(outPath).size;
-  if (size < 2000) throw new Error(`GLB too small (${size} bytes): ${outPath}`);
+  if (size < 4000) throw new Error(`GLB too small (< 4000 bytes, got ${size}): ${outPath}`);
   return size;
 }
 
@@ -438,6 +441,17 @@ function isGenerationSkpQuality(value: unknown): value is GenerationSkpQuality {
 
 function isGenerationMode(value: unknown): value is GenerationMode {
   return value === "auto" || value === "neural" || value === "architectural";
+}
+
+function isGenerationAutoProfile(value: unknown): value is GenerationAutoProfile {
+  return value === "auto" || value === "hard_surface" || value === "organic";
+}
+
+function resolveGenerationAutoProfile(value: GenerationAutoProfile | undefined): GenerationAutoProfile {
+  if (value === "hard_surface" || value === "organic" || value === "auto") {
+    return value;
+  }
+  return "auto";
 }
 
 function isPathLikePython(value: string) {
@@ -616,6 +630,7 @@ function validateRunPayload(payload: unknown): payload is GenerationRunPayload {
     candidate.imagePaths.every((item) => typeof item === "string") &&
     isPreset(candidate.preset) &&
     (typeof candidate.mode === "undefined" || isGenerationMode(candidate.mode)) &&
+    (typeof candidate.autoProfile === "undefined" || isGenerationAutoProfile(candidate.autoProfile)) &&
     (typeof candidate.pythonPath === "undefined" || typeof candidate.pythonPath === "string")
   );
 }
@@ -709,17 +724,27 @@ function parseAutoEngine(value: unknown): GenerationAutoEngine | undefined {
   return undefined;
 }
 
-function readAutoMetaUsed(outGlbPath: string): GenerationAutoEngine | undefined {
+function parseAutoPreset(value: unknown): GenerationAutoPreset | undefined {
+  if (value === "hard_surface" || value === "organic") {
+    return value;
+  }
+  return undefined;
+}
+
+function readAutoMeta(outGlbPath: string): { used?: GenerationAutoEngine; preset?: GenerationAutoPreset } {
   const metaPath = path.join(path.dirname(outGlbPath), "auto-meta.json");
   if (!fs.existsSync(metaPath)) {
-    return undefined;
+    return {};
   }
 
   try {
     const parsed = JSON.parse(fs.readFileSync(metaPath, "utf8")) as Record<string, unknown>;
-    return parseAutoEngine(parsed.used);
+    return {
+      used: parseAutoEngine(parsed.used),
+      preset: parseAutoPreset(parsed.preset),
+    };
   } catch {
-    return undefined;
+    return {};
   }
 }
 
@@ -902,6 +927,8 @@ async function runLocalPythonGeneration(
     preflightOutput = preflight.output;
     logInfo("[VOLUMIA] OpenMP duplicate workaround enabled");
     const generationMode = resolveGenerationMode(payload.mode);
+    const autoProfile = resolveGenerationAutoProfile(payload.autoProfile);
+    logInfo("[gen] autoProfile:", autoProfile);
 
     const { stdout, stderr, code } = await runPython(
       pythonCommand.cmd,
@@ -915,6 +942,8 @@ async function runLocalPythonGeneration(
         mapPresetToQuality(payload.preset),
         "--mode",
         generationMode,
+        "--auto-profile",
+        autoProfile,
         "--models-dir",
         modelsDir,
       ],
@@ -987,21 +1016,23 @@ async function runLocalPythonGeneration(
     }
 
     await ensureGlbOk(outGlb);
-    const autoUsed = readAutoMetaUsed(outGlb);
+    const autoMeta = readAutoMeta(outGlb);
 
     return {
       ok: true,
       logs,
       outGlbPath: outGlb,
       device,
-      autoUsed,
+      autoUsed: autoMeta.used,
+      autoPreset: autoMeta.preset,
       logPath,
     };
   } catch (error) {
     const pyError = error as PythonRunError;
     const stdoutText = typeof pyError.stdout === "string" ? pyError.stdout : "";
     const stderrText = typeof pyError.stderr === "string" ? pyError.stderr : "";
-    const logPath = writePythonRunLog(path.dirname(outGlb || ensureAssetsDir()), stdoutText, stderrText, preflightOutput);
+    const logDir = outGlb ? path.dirname(outGlb) : ensureAssetsDir();
+    const logPath = writePythonRunLog(logDir, stdoutText, stderrText, preflightOutput);
     if (preflightOutput.trim()) {
       logs.push(...preflightOutput.split(/\r?\n/).filter(Boolean).map((line) => `[preflight] ${line}`));
     }
@@ -1360,6 +1391,7 @@ async function runGenerationJob(
     preset: depthPayload.preset,
     mode,
     autoUsed: localResult.autoUsed,
+    autoPreset: localResult.autoPreset,
     device: localResult.device,
   });
 
