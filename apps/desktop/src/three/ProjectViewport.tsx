@@ -572,29 +572,16 @@ export function ProjectViewport({
   const themeConfig = getViewportThemeConfig(viewportTheme);
   const bgClass = themeConfig.isDark ? "bg-[#0c0a09]" : "bg-[#f4f1ee]";
   const shadowMapSize = settings.fpsLimit >= 120 ? 1024 : 2048;
-  const headerClass = settings.glassStyle
-    ? "shrink-0 border-b border-white/10 bg-white/[0.03] px-3 py-2 backdrop-blur-md"
-    : "shrink-0 border-b border-[var(--border)] bg-[var(--surface-1)] px-3 py-2";
-  const chipClass = settings.glassStyle
-    ? "rounded-md border border-white/10 bg-white/[0.03] px-2 py-1"
-    : "rounded-md border border-[var(--border)] bg-[var(--surface-1)] px-2 py-1";
-  const hintChipClass = settings.glassStyle
-    ? "rounded-md border border-white/10 bg-white/[0.03] px-2 py-1"
-    : "rounded-md border border-[var(--border)] bg-[var(--surface-2)] px-2 py-1";
-  const utilityButtonBaseClass = settings.glassStyle
-    ? "rounded-md border border-white/10 bg-white/[0.03] px-2 py-1 text-[10px] uppercase tracking-[0.08em] text-[var(--text-muted)] transition-colors hover:bg-white/[0.06] hover:text-[var(--text)]"
-    : "rounded-md border border-[var(--border)] bg-[var(--surface-1)] px-2 py-1 text-[10px] uppercase tracking-[0.08em] text-[var(--text-muted)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text)]";
-  const utilityWireframeClass = settings.glassStyle
-    ? `rounded-md border border-[var(--border)] px-2 py-1 text-[10px] uppercase tracking-[0.08em] transition-colors ${
-        wireframe
-          ? "border-white/15 bg-white/[0.1] text-[var(--text)]"
-          : "border-white/10 bg-white/[0.03] text-[var(--text-muted)] hover:bg-white/[0.06] hover:text-[var(--text)]"
-      }`
-    : `rounded-md border border-[var(--border)] px-2 py-1 text-[10px] uppercase tracking-[0.08em] transition-colors ${
-        wireframe
-          ? "bg-[var(--surface-3)] text-[var(--text)]"
-          : "bg-[var(--surface-1)] text-[var(--text-muted)] hover:bg-[var(--surface-2)] hover:text-[var(--text)]"
-      }`;
+  const headerClass = "shrink-0 border-b border-[var(--border)] bg-[var(--surface-1)] px-3 py-2";
+  const chipClass = "rounded-md border border-[var(--border)] bg-[var(--surface-1)] px-2 py-1";
+  const hintChipClass = "rounded-md border border-[var(--border)] bg-[var(--surface-2)] px-2 py-1";
+  const utilityButtonBaseClass =
+    "rounded-md border border-[var(--border)] bg-[var(--surface-1)] px-2 py-1 text-[10px] uppercase tracking-[0.08em] text-[var(--text-muted)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text)]";
+  const utilityWireframeClass = `rounded-md border border-[var(--border)] px-2 py-1 text-[10px] uppercase tracking-[0.08em] transition-colors ${
+    wireframe
+      ? "bg-[var(--surface-3)] text-[var(--text)]"
+      : "bg-[var(--surface-1)] text-[var(--text-muted)] hover:bg-[var(--surface-2)] hover:text-[var(--text)]"
+  }`;
 
   useEffect(() => {
     if (glbPath) {

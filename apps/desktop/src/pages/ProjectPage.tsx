@@ -446,14 +446,19 @@ export function ProjectPage() {
     await desktopApi.openGenerationLogPath(generationLogPath);
   };
 
-  const panelClass = `${getSurfaceClass(settings.glassStyle, "panel")} text-[var(--text)]`;
-  const panelSoftClass = getSurfaceClass(settings.glassStyle, "soft");
+  const floatingPanelClass = settings.glassStyle
+    ? "glass text-[var(--text)]"
+    : `${getSurfaceClass(false, "panel")} text-[var(--text)]`;
+  const panelSoftClass = getSurfaceClass(false, "soft");
+  const viewportShellClass = settings.glassStyle
+    ? "border border-[var(--glass-border)] bg-transparent text-[var(--text)]"
+    : `${getSurfaceClass(false, "panel")} text-[var(--text)]`;
   const selectClass = "border-[var(--border)] bg-[var(--surface-3)] text-[var(--text)] hover:border-[var(--accent)] focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--focus-ring)]";
 
   return (
     <div className="h-full min-h-0 w-full min-w-0 overflow-hidden p-4">
       <div className={`grid h-full min-h-0 w-full min-w-0 gap-4 ${isAssistantOpen ? "grid-cols-[320px_minmax(0,1fr)_340px]" : "grid-cols-[320px_minmax(0,1fr)]"}`}>
-        <aside className={`flex min-h-0 flex-col rounded-2xl p-4 ${panelClass}`}>
+        <aside className={`flex min-h-0 flex-col rounded-2xl p-4 ${floatingPanelClass}`}>
           <TextField
             value={project.name}
             onChange={(event) => renameProject(project.id, event.target.value)}
@@ -508,7 +513,7 @@ export function ProjectPage() {
         </aside>
 
         <section className="flex min-h-0 min-w-0 flex-col gap-3">
-          <div className={`shrink-0 rounded-2xl p-3 ${panelClass}`}>
+          <div className={`shrink-0 rounded-2xl p-3 ${floatingPanelClass}`}>
             <div className="flex flex-wrap items-center gap-2">
               <select
                 value={preset}
@@ -572,11 +577,11 @@ export function ProjectPage() {
             </div>
           </div>
 
-          <div className={`flex-1 min-h-0 min-w-0 overflow-hidden rounded-2xl ${panelClass}`}>
+          <div className={`flex-1 min-h-0 min-w-0 overflow-hidden rounded-2xl ${viewportShellClass}`}>
             <ProjectViewport glbPath={project.model?.glbPath} glbVersion={project.model?.generatedAt} showUtilityButtons />
           </div>
 
-          <div className={`shrink-0 overflow-hidden rounded-2xl ${panelClass}`}>
+          <div className={`shrink-0 overflow-hidden rounded-2xl ${floatingPanelClass}`}>
             <button
               type="button"
               className="flex h-10 w-full items-center justify-between px-4 text-left text-xs font-medium uppercase tracking-[0.16em] text-[var(--text-muted)] transition-all duration-200 ease-out hover:bg-[var(--surface-2)]/80"
@@ -601,7 +606,7 @@ export function ProjectPage() {
         </section>
 
         {isAssistantOpen ? (
-          <aside className={`flex min-h-0 flex-col rounded-2xl p-4 ${panelClass}`}>
+          <aside className={`flex min-h-0 flex-col rounded-2xl p-4 ${floatingPanelClass}`}>
             <h2 className="mb-3 text-[11px] font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">{t("project.assistant")}</h2>
 
             <div className={`min-h-0 flex-1 space-y-3 overflow-y-auto rounded-xl p-3.5 ${panelSoftClass}`}>

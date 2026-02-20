@@ -16,8 +16,10 @@ export function AppFrame({ notice, onDismissNotice, children }: AppFrameProps) {
   const { settings } = useSettings();
   const location = useLocation();
   const isProjectView = location.pathname.startsWith("/project/");
-  const panelClass = settings.glassStyle ? "glass" : "border border-[var(--border)] bg-[var(--surface-1)]";
-  const panelStrongClass = settings.glassStyle ? "glass glass-strong" : "border border-[var(--border)] bg-[var(--surface-2)]";
+  const panelClass = settings.glassStyle && isProjectView
+    ? "border border-[var(--glass-border)] bg-transparent"
+    : "border border-[var(--border)] bg-[var(--surface-1)]";
+  const panelStrongClass = "border border-[var(--border)] bg-[var(--surface-2)]";
 
   return (
     <div className="app-scene flex h-screen w-screen flex-col overflow-hidden text-[var(--text)]">
