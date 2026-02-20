@@ -1,10 +1,13 @@
 node_modules/
+**/node_modules/
 .pnpm-store/
 pnpm-lock.yaml
 package-lock.json
 yarn.lock
 
 .venv/
+venv*/
+env/
 __pycache__/
 *.pyc
 
@@ -22,10 +25,14 @@ Thumbs.db
 *.log
 *.err.log
 dist/
+**/dist/
 dist-electron/
 electron-dist/
+**/electron-dist/
 build/
 out/
+logs/
+**/logs/
 .vite/
 .cache/
 coverage/

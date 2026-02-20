@@ -19,6 +19,7 @@ type GenerationDevice = {
 type AutoEngine = "instantmesh" | "triposr" | "arch" | "blockout";
 type AutoPreset = "hard_surface" | "organic";
 type AutoProfile = "auto" | "hard_surface" | "organic";
+type MultiviewPreset = "hard_surface" | "balanced" | "organic";
 
 function formatMessageTime(value: string, locale: string) {
   return new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit" }).format(new Date(value));
@@ -85,9 +86,19 @@ function formatAutoProfileLabel(profile: AutoProfile) {
     return "HARD-SURFACE";
   }
   if (profile === "organic") {
-    return "ORGÁNICO";
+    return "ORGANICO";
   }
   return "AUTO";
+}
+
+function resolveDefaultMultiviewPreset(profile: AutoProfile | undefined): MultiviewPreset {
+  if (profile === "hard_surface") {
+    return "hard_surface";
+  }
+  if (profile === "organic") {
+    return "organic";
+  }
+  return "balanced";
 }
 
 function getProjectModel(model: ProjectModel | undefined): ProjectModel {
@@ -135,6 +146,8 @@ export function ProjectPage() {
   const [autoUsedEngine, setAutoUsedEngine] = useState<AutoEngine | null>(null);
   const [autoUsedPreset, setAutoUsedPreset] = useState<AutoPreset | null>(null);
   const [generationLogPath, setGenerationLogPath] = useState("");
+  const [multiviewEnabled, setMultiviewEnabled] = useState(true);
+  const [multiviewPreset, setMultiviewPreset] = useState<MultiviewPreset>(resolveDefaultMultiviewPreset(settings.autoGenerationProfile));
   const [imagePreviews, setImagePreviews] = useState<Record<string, string>>({});
   const [isAssistantOpen, setIsAssistantOpen] = useState(false);
   const [isNotesOpen, setIsNotesOpen] = useState(false);
@@ -162,6 +175,8 @@ export function ProjectPage() {
     setAutoUsedEngine(null);
     setAutoUsedPreset(null);
     setGenerationLogPath("");
+    setMultiviewEnabled(true);
+    setMultiviewPreset("balanced");
     setImagePreviews({});
   }, [project?.id]);
 
@@ -273,13 +288,17 @@ export function ProjectPage() {
       setIsGenerating(false);
       setGenerationStage("done");
       setGenerationPercent(100);
-      setGenerationMessage(
+      const baseMessage =
         payload.autoUsed === "blockout" && payload.autoPreset === "hard_surface"
           ? "Modelo 3D generado correctamente. AUTO used: BLOCKOUT (hard-surface fallback)"
           : payload.autoUsed
             ? `Modelo 3D generado correctamente. AUTO used: ${formatAutoEngineLabel(payload.autoUsed)}${payload.autoPreset ? ` / ${formatAutoPresetLabel(payload.autoPreset)}` : ""}`
-            : "Modelo 3D generado correctamente."
-      );
+            : "Modelo 3D generado correctamente.";
+      const warningSuffix =
+        Array.isArray(payload.warnings) && payload.warnings.length > 0
+          ? ` Aviso: ${payload.warnings.join(" | ")}`
+          : "";
+      setGenerationMessage(`${baseMessage}${warningSuffix}`);
       setGenerationDevice(payload.device ?? null);
       setAutoUsedEngine(payload.autoUsed ?? null);
       setAutoUsedPreset(payload.autoPreset ?? null);
@@ -373,6 +392,8 @@ export function ProjectPage() {
       preset,
       mode: "auto",
       autoProfile: settings.autoGenerationProfile,
+      multiviewEnabled,
+      multiviewPreset,
       pythonPath: settings.pythonPath,
       pipeline: "depth_glb",
     });
@@ -550,7 +571,27 @@ export function ProjectPage() {
               >
                 <option value="auto">AUTO (recomendado)</option>
                 <option value="hard_surface">HARD-SURFACE</option>
-                <option value="organic">ORGÁNICO</option>
+                <option value="organic">ORGANICO</option>
+              </select>
+              <label className="inline-flex h-9 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface-2)] px-3 text-xs text-[var(--text)]">
+                <input
+                  type="checkbox"
+                  checked={multiviewEnabled}
+                  onChange={(event) => setMultiviewEnabled(event.target.checked)}
+                  disabled={isGenerating}
+                />
+                Multiview (Local)
+              </label>
+              <select
+                value={multiviewPreset}
+                onChange={(event) => setMultiviewPreset(event.target.value as MultiviewPreset)}
+                className={`h-9 min-w-44 appearance-none rounded-lg border px-3 text-sm outline-none transition duration-150 ease-out focus:ring-2 focus:ring-[#8c7e6d]/50 ${selectClass}`}
+                disabled={isGenerating || !multiviewEnabled}
+                aria-label="Multiview preset selector"
+              >
+                <option value="hard_surface">HardSurface</option>
+                <option value="balanced">Balanced</option>
+                <option value="organic">Organic</option>
               </select>
               <Button variant="primary" onClick={() => void handleRunGeneration()} disabled={selectedImages.length === 0 || isGenerating}>
                 Generar 3D
@@ -673,3 +714,4 @@ export function ProjectPage() {
     </div>
   );
 }
+

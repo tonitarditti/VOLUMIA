@@ -1,5 +1,7 @@
 const net = require("net");
+const path = require("path");
 const { spawn } = require("child_process");
+const packageRoot = path.resolve(__dirname, "..");
 
 function parsePort(value, fallback) {
   const parsed = Number.parseInt(String(value ?? ""), 10);
@@ -32,10 +34,11 @@ async function findAvailablePort(startPort, limit = 50) {
 }
 
 function spawnNpm(args, options) {
+  const spawnOptions = { ...options, cwd: packageRoot };
   if (process.platform === "win32") {
-    return spawn("cmd.exe", ["/d", "/s", "/c", `npm ${args.join(" ")}`], options);
+    return spawn("cmd.exe", ["/d", "/s", "/c", `npm ${args.join(" ")}`], spawnOptions);
   }
-  return spawn("npm", args, options);
+  return spawn("npm", args, spawnOptions);
 }
 
 function killProcessTree(pid) {

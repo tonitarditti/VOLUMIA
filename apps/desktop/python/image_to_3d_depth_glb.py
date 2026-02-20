@@ -826,7 +826,7 @@ def _map_quality_to_triposr_preset(quality: str) -> str:
     return "balanced"
 
 
-def run_triposr(image_path: str, out_glb_path: str, preset: str, device: str) -> None:
+def run_triposr(image_path: str, out_glb_path: str, preset: str, device: str, views_dir: str = "") -> None:
     try:
         script_path = _resolve_triposr_runner_script()
     except Exception as error:
@@ -845,6 +845,12 @@ def run_triposr(image_path: str, out_glb_path: str, preset: str, device: str) ->
         "--device",
         requested_device,
     ]
+    views_dir_abs = os.path.abspath(str(views_dir or "").strip()) if views_dir else ""
+    if views_dir_abs:
+        if os.path.isdir(views_dir_abs):
+            command.extend(["--views_dir", views_dir_abs, "--combine_mode", "best_of_views"])
+        else:
+            log(f"[TRIPOSR] multiview dir missing, fallback single-view: {views_dir_abs}")
 
     process = subprocess.Popen(
         command,
@@ -1277,6 +1283,7 @@ def run_auto_pipeline(
     quality: str,
     runtime_device: str,
     auto_profile: str = "auto",
+    multiview_dir: str = "",
 ) -> str:
     errors: List[str] = []
     preprocess_info: Dict[str, Any] = {}
@@ -1287,6 +1294,15 @@ def run_auto_pipeline(
     profile = str(auto_profile or "auto").strip().lower()
     if profile not in {"auto", "hard_surface", "organic"}:
         profile = "auto"
+    resolved_multiview_dir = ""
+    if str(multiview_dir or "").strip():
+        candidate = os.path.abspath(str(multiview_dir).strip())
+        if os.path.isdir(candidate):
+            resolved_multiview_dir = candidate
+            log(f"[AUTO][MULTIVIEW] enabled dir={resolved_multiview_dir}")
+        else:
+            errors.append(f"multiview dir missing: {candidate}")
+            log_error(f"[AUTO][MULTIVIEW] dir missing: {candidate}")
 
     auto_meta_path = os.path.join(os.path.dirname(out_path), "auto-meta.json")
     if os.path.exists(auto_meta_path):
@@ -1414,7 +1430,13 @@ def run_auto_pipeline(
         nonlocal final_score
         try:
             emit_progress("neural_generate", 44, f"Generating with TripoSR ({auto_preset})")
-            run_triposr(image_path=clean_image_path, out_glb_path=out_path, preset=auto_preset, device=runtime_device)
+            run_triposr(
+                image_path=clean_image_path,
+                out_glb_path=out_path,
+                preset=auto_preset,
+                device=runtime_device,
+                views_dir=resolved_multiview_dir,
+            )
             try:
                 _normalize_exported_glb(out_path, target_size=2.0)
             except Exception as normalize_error:
@@ -3692,6 +3714,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--quality", choices=["fast", "balanced", "high"], default="balanced")
     parser.add_argument("--mode", choices=["auto", "neural", "architectural"], default="auto")
     parser.add_argument("--auto-profile", choices=["auto", "hard_surface", "organic"], default="auto")
+    parser.add_argument("--multiview-dir", default="", help="Optional ComfyUI multiview directory (3-6 PNGs)")
     parser.add_argument("--models-dir", default="", help="Optional cache directory for model weights")
     return parser.parse_args()
 
@@ -3771,6 +3794,7 @@ def main() -> int:
     log(f"quality: {args.quality}")
     log(f"mode: {args.mode}")
     log(f"auto_profile: {args.auto_profile}")
+    log(f"multiview_dir: {args.multiview_dir or '(disabled)'}")
     log(f"cache_root: {cache_root}")
     log(f"models_dir: {models_dir}")
     log_cuda_check()
@@ -3789,6 +3813,7 @@ def main() -> int:
                 quality=args.quality,
                 runtime_device=runtime_device,
                 auto_profile=args.auto_profile,
+                multiview_dir=args.multiview_dir,
             )
             if not os.path.exists(out_path):
                 raise RuntimeError(f"AUTO output missing: {out_path}")

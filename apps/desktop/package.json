@@ -7,7 +7,7 @@
     "dev": "node scripts/dev.cjs",
     "react": "vite --host 127.0.0.1",
     "electron:build": "tsc -p tsconfig.electron.json",
-    "electron:dev": "npm run electron:build && node scripts/run-electron-dev.cjs",
+    "electron:dev": "node scripts/run-electron-dev.cjs",
     "build": "vite build && npm run electron:build",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.electron.json --noEmit",
     "lint": "eslint src electron vite.config.ts tailwind.config.ts vitest.config.ts --ext .ts,.tsx",

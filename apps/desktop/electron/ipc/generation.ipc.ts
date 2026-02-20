@@ -13,6 +13,7 @@ import {
   type GenerationDonePayload,
   type GenerationErrorPayload,
   type GenerationMode,
+  type GenerationMultiviewPreset,
   type GenerationPipeline,
   type GenerationProgressPayload,
   type GenerationPreset,
@@ -20,6 +21,7 @@ import {
   type GenerationSkpQuality,
   type GenerationTestResult,
 } from "../channels";
+import { generateComfyMultiviewViews } from "../generation/comfyui-client";
 
 type WindowGetter = () => BrowserWindow | null;
 type GenerationJobState = {
@@ -94,6 +96,14 @@ type GenSkpPythonResult = {
   logPath?: string;
 };
 
+type LocalGenerationContext = {
+  multiviewEnabled: boolean;
+  multiviewPreset: GenerationMultiviewPreset;
+  multiviewViewsDir?: string;
+  multiviewLogs: string[];
+  multiviewFallbackReason?: string;
+};
+
 const IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".webp"]);
 const activeJobs = new Map<string, GenerationJobState>();
 const latestOutputByProject = new Map<string, string>();
@@ -103,6 +113,7 @@ const TRUNCATION_SUFFIX = "\n...truncated";
 const STDOUT_TAIL_LINES = 8;
 const STDERR_PREVIEW_CHARS = 2_000;
 const DEFAULT_CONDA_PYTHON = "F:\\MINICONDA\\envs\\volumia\\python.exe";
+const COMFYUI_BASE_URL = "http://127.0.0.1:8188";
 let generationLogFilePath: string | null = null;
 
 function formatLogArg(value: unknown) {
@@ -253,6 +264,45 @@ function writePythonRunLog(logDir: string, stdout: string, stderr: string, prefl
       // No-op by design.
     }
     return fallbackPath;
+  }
+}
+
+function buildCombinedRunLog(
+  stdout: string,
+  stderr: string,
+  preflight: string | undefined,
+  contextSections: Array<{ title: string; content: string }>
+) {
+  const sectionTexts: string[] = [];
+  for (const section of contextSections) {
+    const cleanContent = section.content.trim();
+    if (!cleanContent) {
+      continue;
+    }
+    sectionTexts.push(`[${section.title}]\n${cleanContent}`);
+  }
+  sectionTexts.push(buildPythonRunLog(stdout, stderr, preflight).trimEnd());
+  return `${sectionTexts.join("\n\n")}\n`;
+}
+
+function writeSharedRunLogs(projectId: string, content: string) {
+  try {
+    const assetsDir = ensureAssetsDir();
+    const lastRunPath = path.join(assetsDir, "python-last-run.log");
+    const projectLogPath = path.join(assetsDir, `${sanitizeProjectId(projectId)}.log`);
+    fs.writeFileSync(lastRunPath, content, "utf8");
+    fs.writeFileSync(projectLogPath, content, "utf8");
+    return {
+      lastRunPath,
+      projectLogPath,
+    };
+  } catch {
+    const fallbackPath = getGenerationLogFilePath();
+    fs.appendFileSync(fallbackPath, `\n${content}`, "utf8");
+    return {
+      lastRunPath: fallbackPath,
+      projectLogPath: fallbackPath,
+    };
   }
 }
 
@@ -486,11 +536,31 @@ function isGenerationAutoProfile(value: unknown): value is GenerationAutoProfile
   return value === "auto" || value === "hard_surface" || value === "organic";
 }
 
+function isGenerationMultiviewPreset(value: unknown): value is GenerationMultiviewPreset {
+  return value === "hard_surface" || value === "balanced" || value === "organic";
+}
+
 function resolveGenerationAutoProfile(value: GenerationAutoProfile | undefined): GenerationAutoProfile {
   if (value === "hard_surface" || value === "organic" || value === "auto") {
     return value;
   }
   return "auto";
+}
+
+function resolveGenerationMultiviewPreset(
+  value: GenerationMultiviewPreset | undefined,
+  autoProfile: GenerationAutoProfile
+): GenerationMultiviewPreset {
+  if (value === "hard_surface" || value === "balanced" || value === "organic") {
+    return value;
+  }
+  if (autoProfile === "hard_surface") {
+    return "hard_surface";
+  }
+  if (autoProfile === "organic") {
+    return "organic";
+  }
+  return "balanced";
 }
 
 function isPathLikePython(value: string) {
@@ -670,6 +740,8 @@ function validateRunPayload(payload: unknown): payload is GenerationRunPayload {
     isPreset(candidate.preset) &&
     (typeof candidate.mode === "undefined" || isGenerationMode(candidate.mode)) &&
     (typeof candidate.autoProfile === "undefined" || isGenerationAutoProfile(candidate.autoProfile)) &&
+    (typeof candidate.multiviewEnabled === "undefined" || typeof candidate.multiviewEnabled === "boolean") &&
+    (typeof candidate.multiviewPreset === "undefined" || isGenerationMultiviewPreset(candidate.multiviewPreset)) &&
     (typeof candidate.pythonPath === "undefined" || typeof candidate.pythonPath === "string")
   );
 }
@@ -933,7 +1005,8 @@ async function runLocalPythonGeneration(
   getWindow: WindowGetter,
   scriptPath: string,
   pythonCommand: ResolvedPythonCommand,
-  projectAssetsDir: string
+  projectAssetsDir: string,
+  context?: LocalGenerationContext
 ): Promise<LocalGenerationResult> {
   const logs: string[] = [];
   let device: GenerationDevice | undefined;
@@ -970,23 +1043,28 @@ async function runLocalPythonGeneration(
     const autoProfile = resolveGenerationAutoProfile(payload.autoProfile);
     logInfo("[gen] autoProfile:", autoProfile);
 
+    const pythonArgs = [
+      "--in",
+      imagePath,
+      "--out",
+      outGlb,
+      "--quality",
+      mapPresetToQuality(payload.preset),
+      "--mode",
+      generationMode,
+      "--auto-profile",
+      autoProfile,
+      "--models-dir",
+      modelsDir,
+    ];
+    if (context?.multiviewViewsDir) {
+      pythonArgs.push("--multiview-dir", context.multiviewViewsDir);
+    }
+
     const { stdout, stderr, code } = await runPython(
       pythonCommand.cmd,
       scriptPath,
-      [
-        "--in",
-        imagePath,
-        "--out",
-        outGlb,
-        "--quality",
-        mapPresetToQuality(payload.preset),
-        "--mode",
-        generationMode,
-        "--auto-profile",
-        autoProfile,
-        "--models-dir",
-        modelsDir,
-      ],
+      pythonArgs,
       spawnEnv,
       (process) => {
         job.process = process;
@@ -999,7 +1077,7 @@ async function runLocalPythonGeneration(
     logInfo("[PY] exit:", code);
     logInfo("[PY] stdout:", stdout);
     logErr("[PY] stderr:", stderr);
-    const logPath = writePythonRunLog(logsDir, stdout, stderr, preflightOutput);
+    const projectLogPath = writePythonRunLog(logsDir, stdout, stderr, preflightOutput);
 
     logs.push(`[py] exit: ${code}`);
     logs.push(...preflightOutput.split(/\r?\n/).filter(Boolean).map((line) => `[preflight] ${line}`));
@@ -1009,6 +1087,28 @@ async function runLocalPythonGeneration(
     if (stderr.trim()) {
       logs.push(...stderr.split(/\r?\n/).filter(Boolean).map((line) => `[stderr] ${line}`));
     }
+
+    const contextSections: Array<{ title: string; content: string }> = [];
+    if (context?.multiviewEnabled) {
+      const multiviewDetails = [
+        `preset=${context.multiviewPreset}`,
+        context.multiviewViewsDir ? `views_dir=${context.multiviewViewsDir}` : "",
+        context.multiviewFallbackReason ? `fallback_reason=${context.multiviewFallbackReason}` : "",
+        context.multiviewLogs.join("\n"),
+      ]
+        .filter(Boolean)
+        .join("\n");
+      contextSections.push({
+        title: "MULTIVIEW",
+        content: multiviewDetails,
+      });
+    }
+    contextSections.push({
+      title: "PROJECT_LOG",
+      content: `project_log=${projectLogPath}`,
+    });
+    const combinedLog = buildCombinedRunLog(stdout, stderr, preflightOutput, contextSections);
+    const sharedLogs = writeSharedRunLogs(payload.projectId, combinedLog);
 
     for (const line of stdout.split(/\r?\n/)) {
       const parsedDevice = parseDeviceLine(line);
@@ -1065,14 +1165,14 @@ async function runLocalPythonGeneration(
       device,
       autoUsed: autoMeta.used,
       autoPreset: autoMeta.preset,
-      logPath,
+      logPath: sharedLogs.projectLogPath,
     };
   } catch (error) {
     const pyError = error as PythonRunError;
     const stdoutText = typeof pyError.stdout === "string" ? pyError.stdout : "";
     const stderrText = typeof pyError.stderr === "string" ? pyError.stderr : "";
     const fallbackLogsDir = ensureProjectLogsDir(projectAssetsDir);
-    const logPath = writePythonRunLog(fallbackLogsDir, stdoutText, stderrText, preflightOutput);
+    const projectLogPath = writePythonRunLog(fallbackLogsDir, stdoutText, stderrText, preflightOutput);
     if (preflightOutput.trim()) {
       logs.push(...preflightOutput.split(/\r?\n/).filter(Boolean).map((line) => `[preflight] ${line}`));
     }
@@ -1083,13 +1183,35 @@ async function runLocalPythonGeneration(
       logs.push(...pyError.stderr.split(/\r?\n/).filter(Boolean).map((line) => `[stderr] ${line}`));
     }
 
+    const contextSections: Array<{ title: string; content: string }> = [];
+    if (context?.multiviewEnabled) {
+      const multiviewDetails = [
+        `preset=${context.multiviewPreset}`,
+        context.multiviewViewsDir ? `views_dir=${context.multiviewViewsDir}` : "",
+        context.multiviewFallbackReason ? `fallback_reason=${context.multiviewFallbackReason}` : "",
+        context.multiviewLogs.join("\n"),
+      ]
+        .filter(Boolean)
+        .join("\n");
+      contextSections.push({
+        title: "MULTIVIEW",
+        content: multiviewDetails,
+      });
+    }
+    contextSections.push({
+      title: "PROJECT_LOG",
+      content: `project_log=${projectLogPath}`,
+    });
+    const combinedLog = buildCombinedRunLog(stdoutText, stderrText, preflightOutput, contextSections);
+    const sharedLogs = writeSharedRunLogs(payload.projectId, combinedLog);
+
     return {
       ok: false,
       logs,
       error: pyError.structuredMessage || "Fallo el generador local.",
       stdout: stdoutText,
       stderr: stderrText,
-      logPath,
+      logPath: sharedLogs.projectLogPath,
     };
   }
 }
@@ -1357,6 +1479,9 @@ async function runGenerationJob(
   }
 
   const mode = resolveGenerationMode(depthPayload.mode);
+  const autoProfile = resolveGenerationAutoProfile(depthPayload.autoProfile);
+  const multiviewPreset = resolveGenerationMultiviewPreset(depthPayload.multiviewPreset, autoProfile);
+  const multiviewEnabled = Boolean(depthPayload.multiviewEnabled);
   const scriptPath = resolveGeneratorScriptPath();
   if (!scriptPath) {
     throw new Error("No se encontro apps/desktop/python/image_to_3d_depth_glb.py");
@@ -1371,16 +1496,67 @@ async function runGenerationJob(
     throw new Error(message);
   }
 
+  const localContext: LocalGenerationContext = {
+    multiviewEnabled,
+    multiviewPreset,
+    multiviewLogs: [],
+  };
+  const shouldAttemptMultiview = multiviewEnabled && (mode === "auto" || multiviewPreset === "hard_surface");
+  if (shouldAttemptMultiview) {
+    const viewsDir = path.join(baseDir, "views");
+    try {
+      sendProgress(getWindow, {
+        projectId,
+        stage: "multiview",
+        percent: 8,
+        message: "Generando multivistas (1/2): iniciando ComfyUI local...",
+      });
+      const multiviewResult = await generateComfyMultiviewViews({
+        baseUrl: COMFYUI_BASE_URL,
+        imagePath: copiedImages[0],
+        outputDir: viewsDir,
+        preset: multiviewPreset,
+        isCanceled: () => job.canceled,
+        onProgress: (progress) => {
+          sendProgress(getWindow, {
+            projectId,
+            stage: "multiview",
+            percent: Math.max(8, Math.min(52, progress.percent)),
+            message: progress.message,
+          });
+        },
+      });
+      localContext.multiviewViewsDir = multiviewResult.viewsDir;
+      localContext.multiviewLogs.push(...multiviewResult.logs);
+      sendProgress(getWindow, {
+        projectId,
+        stage: "multiview",
+        percent: 52,
+        message: "Generando multivistas (1/2): completado.",
+      });
+    } catch (error) {
+      const reason = asErrorMessage(error);
+      if (job.canceled || reason.toLowerCase().includes("cancelada")) {
+        sendError(getWindow, { projectId, message: "Generacion cancelada." });
+        throw new Error("Generacion cancelada.");
+      }
+      localContext.multiviewFallbackReason = reason;
+      localContext.multiviewLogs.push(`[error] ${reason}`);
+      sendProgress(getWindow, {
+        projectId,
+        stage: "multiview",
+        percent: 52,
+        message: `Multiview (Local) fallo, continuando sin multiview: ${reason}`,
+      });
+      logErr("[gen][multiview] fallback to single-view:", reason);
+    }
+  }
+
   sendProgress(getWindow, {
     projectId,
     stage: "infer",
     percent: 55,
-    message:
-      mode === "architectural"
-        ? "Ejecutando modo arquitectonico (primitivas + blockout)..."
-        : mode === "neural"
-          ? "Ejecutando generador neural local..."
-          : "Ejecutando modo AUTO (TripoSR con fallbacks locales)...",
+    message: "Reconstruyendo 3D (2/2)...",
   });
 
   const localResult = await runLocalPythonGeneration(
@@ -1390,7 +1566,8 @@ async function runGenerationJob(
     getWindow,
     scriptPath,
     resolvedPython,
-    baseDir
+    baseDir,
+    localContext
   );
 
   if (!localResult.ok || !localResult.outGlbPath) {
@@ -1432,6 +1609,7 @@ async function runGenerationJob(
     autoUsed: localResult.autoUsed,
     autoPreset: localResult.autoPreset,
     device: localResult.device,
+    warnings: localContext.multiviewFallbackReason ? [localContext.multiviewFallbackReason] : undefined,
   });
 
   return {
