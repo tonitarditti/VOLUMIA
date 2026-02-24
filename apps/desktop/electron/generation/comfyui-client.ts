@@ -7,7 +7,7 @@ export type ComfyMultiviewPreset = "hard_surface" | "balanced" | "organic";
 export type ComfyHardSurfaceQuality = "fast" | "balanced" | "pro";
 export type { SDXLCannyParams } from "./comfyui-workflows/sdxlCanny";
 
-export type MultiviewViewKey = "front" | "v45" | "side" | "rear";
+export type MultiviewViewKey = "front" | "right" | "rear" | "left";
 
 export type MultiviewViewSpec = {
   key: MultiviewViewKey;
@@ -84,6 +84,7 @@ export type RunSDXLCannyRefineSingleResult = {
 export type RunMultiviewCannyRefineArgs = {
   baseUrl?: string;
   inputImagePath: string;
+  viewInputImagePaths?: Partial<Record<MultiviewViewKey, string>>;
   projectId?: string;
   remoteInputName?: string;
   outputDir?: string;
@@ -133,21 +134,21 @@ const DEFAULT_VIEWS: MultiviewViewSpec[] = [
     seedOffset: 0,
   },
   {
-    key: "v45",
-    suffixPrompt: "three-quarter view, 45 degree angle, eye level, 35mm lens",
-    outputSuffix: "45",
+    key: "right",
+    suffixPrompt: "right side view, 90 degree turn, eye level, technical framing",
+    outputSuffix: "right",
     seedOffset: 1,
-  },
-  {
-    key: "side",
-    suffixPrompt: "side elevation view, minimal distortion, technical framing",
-    outputSuffix: "side",
-    seedOffset: 2,
   },
   {
     key: "rear",
     suffixPrompt: "rear view, consistent lighting direction, documentation framing",
     outputSuffix: "rear",
+    seedOffset: 2,
+  },
+  {
+    key: "left",
+    suffixPrompt: "left side view, 270 degree turn, eye level, technical framing",
+    outputSuffix: "left",
     seedOffset: 3,
   },
 ];
@@ -685,7 +686,19 @@ function buildViewSeed(baseSeed: number, view: MultiviewViewSpec, index: number,
     return baseSeed;
   }
   const offset = Number.isFinite(view.seedOffset) ? Number(view.seedOffset) : index;
-  return normalizeSeed(baseSeed + offset);
+  return normalizeSeed(baseSeed + offset * 1000);
+}
+
+function resolvePerViewInputFilename(viewKey: MultiviewViewKey) {
+  return `volumia_${viewKey}.png`;
+}
+
+function resolvePerViewInputImagePath(args: RunMultiviewCannyRefineArgs, viewKey: MultiviewViewKey) {
+  const candidate = args.viewInputImagePaths?.[viewKey];
+  if (candidate && fs.existsSync(candidate)) {
+    return candidate;
+  }
+  return args.inputImagePath;
 }
 
 function isComfyHardSurfaceQuality(value: unknown): value is ComfyHardSurfaceQuality {
@@ -824,7 +837,6 @@ export async function runSDXLCannyRefineSingle(args: RunSDXLCannyRefineSingleArg
 export async function runMultiviewCannyRefine(args: RunMultiviewCannyRefineArgs): Promise<RunMultiviewCannyRefineResult> {
   const multiviewStartTimeMs = Date.now();
   const baseUrl = normalizeBaseUrl(args.baseUrl);
-  const remoteInputFilename = resolveComfyInputFilename(args.projectId, args.remoteInputName);
   const views = (args.views && args.views.length > 0 ? args.views : DEFAULT_VIEWS).map((item) => ({ ...item }));
   const useSeedOffsets = Boolean(args.useSeedOffsets);
   const outputDir = resolveOutputDir(args.outputDir, args.inputImagePath);
@@ -856,9 +868,6 @@ export async function runMultiviewCannyRefine(args: RunMultiviewCannyRefineArgs)
     `[models] controlnet=${effectiveParams.controlNetName}`,
     `[seed] base=${baseSeed}`,
   ];
-  if (DEBUG_COMFYUI) {
-    logs.push(`[debug] comfy_input_filename=${remoteInputFilename}`);
-  }
 
   debugComfyLog("Multiview config", {
     baseUrl,
@@ -911,6 +920,8 @@ export async function runMultiviewCannyRefine(args: RunMultiviewCannyRefineArgs)
     const prompt = `${args.basePrompt}, ${task.view.suffixPrompt}, maintain identical materials across views`;
     const outputPrefix = `${baseName}_${sanitizeBaseName(task.view.outputSuffix)}`;
     const seed = buildViewSeed(baseSeed, task.view, task.index, useSeedOffsets);
+    const inputImagePath = resolvePerViewInputImagePath(args, task.view.key);
+    const remoteInputName = resolvePerViewInputFilename(task.view.key);
 
     const progressBase = Math.floor((task.index / Math.max(1, tasks.length)) * 92);
     args.onProgress?.({
@@ -920,9 +931,9 @@ export async function runMultiviewCannyRefine(args: RunMultiviewCannyRefineArgs)
 
     const singleResult = await runSDXLCannyRefineSingle({
       baseUrl,
-      inputImagePath: args.inputImagePath,
+      inputImagePath,
       projectId: args.projectId,
-      remoteInputName: remoteInputFilename,
+      remoteInputName,
       prompt,
       negative: args.negative,
       outputDir,
@@ -940,6 +951,12 @@ export async function runMultiviewCannyRefine(args: RunMultiviewCannyRefineArgs)
       },
     });
 
+    if (DEBUG_COMFYUI) {
+      logs.push(`[debug] view_seed view=${task.view.key} seed=${seed}`);
+      logs.push(
+        `[debug] view_input view=${task.view.key} local_path=${inputImagePath} remote_name=${remoteInputName}`
+      );
+    }
     logs.push(`[prompt] id=${singleResult.promptId} view=${task.view.key} seed=${seed}`);
     logs.push(...singleResult.logs);
     if (DEBUG_COMFYUI) {

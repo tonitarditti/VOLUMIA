@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type PropsWithChildren } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type PropsWithChildren } from "react";
 import { Navigate, useParams } from "react-router-dom";
 import { createChatMessage } from "@/projects/factory";
 import { useProjects } from "@/projects/context";
@@ -236,6 +236,26 @@ export function ProjectPage() {
   const [isNotesOpen, setIsNotesOpen] = useState(false);
   const historyBottomRef = useRef<HTMLDivElement | null>(null);
   const projectModel = getProjectModel(project?.model);
+  const projectRef = useRef(project);
+  const selectedImagesRef = useRef(selectedImages);
+  const presetRef = useRef(preset);
+  const updateProjectModelRef = useRef(updateProjectModel);
+
+  useEffect(() => {
+    projectRef.current = project;
+  }, [project]);
+
+  useEffect(() => {
+    selectedImagesRef.current = selectedImages;
+  }, [selectedImages]);
+
+  useEffect(() => {
+    presetRef.current = preset;
+  }, [preset]);
+
+  useEffect(() => {
+    updateProjectModelRef.current = updateProjectModel;
+  }, [updateProjectModel]);
 
   useEffect(() => {
     if (historyBottomRef.current) {
@@ -310,97 +330,148 @@ export function ProjectPage() {
     };
   }, [selectedImages]);
 
+  const handleGenerationProgress = useCallback((payload: {
+    projectId: string;
+    stage: string;
+    percent: number;
+    message: string;
+    device?: "cuda" | "cpu";
+  }) => {
+    const currentProject = projectRef.current;
+    if (!currentProject || payload.projectId !== currentProject.id) {
+      return;
+    }
+
+    setIsGenerating(true);
+    setGenerationStage(payload.stage);
+    setGenerationPercent(Math.max(0, Math.min(100, payload.percent)));
+    setGenerationMessage(payload.message);
+    if (payload.stage !== "error") {
+      setGenerationLogPath("");
+    }
+    if (payload.stage !== "done") {
+      setAutoUsedEngine(null);
+      setAutoUsedPreset(null);
+    }
+    if (payload.device) {
+      setGenerationDevice({
+        device: payload.device,
+        name: payload.device === "cuda" ? "CUDA" : "CPU",
+      });
+    }
+    const progressDevice = parseDeviceLine(payload.message);
+    if (progressDevice) {
+      setGenerationDevice(progressDevice);
+    }
+  }, []);
+
+  const handleGenerationDone = useCallback((payload: {
+    projectId: string;
+    pipeline?: "depth_glb" | "gen_skp";
+    glbPath?: string;
+    skpPath?: string;
+    sourceImages?: string[];
+    preset?: GenerationPreset;
+    mode?: "auto" | "neural" | "architectural";
+    autoUsed?: AutoEngine;
+    autoPreset?: AutoPreset;
+    device?: { device: "cuda" | "cpu"; name: string } | null;
+    warnings?: string[];
+  }) => {
+    const currentProject = projectRef.current;
+    if (!currentProject || payload.projectId !== currentProject.id) {
+      return;
+    }
+
+    if (payload.pipeline === "gen_skp") {
+      setIsGenerating(false);
+      setGenerationStage("done");
+      setGenerationPercent(100);
+      setGenerationMessage(payload.skpPath ? `SKP generado: ${payload.skpPath}` : "SKP generado correctamente.");
+      setAutoUsedEngine(null);
+      setAutoUsedPreset(null);
+      setGenerationLogPath("");
+      return;
+    }
+
+    const nextModel: ProjectModel = {
+      ...getProjectModel(currentProject.model),
+      sourceImages: payload.sourceImages ?? selectedImagesRef.current,
+      glbPath: payload.glbPath ?? currentProject.model?.glbPath,
+      generatedAt: Date.now(),
+      preset: payload.preset ?? presetRef.current,
+      mode: payload.mode ?? "auto",
+    };
+
+    updateProjectModelRef.current(currentProject.id, nextModel);
+    setSelectedImages(nextModel.sourceImages);
+    setIsGenerating(false);
+    setGenerationStage("done");
+    setGenerationPercent(100);
+    const baseMessage =
+      payload.autoUsed === "blockout" && payload.autoPreset === "hard_surface"
+        ? "Modelo 3D generado correctamente. AUTO used: BLOCKOUT (hard-surface fallback)"
+        : payload.autoUsed
+          ? `Modelo 3D generado correctamente. AUTO used: ${formatAutoEngineLabel(payload.autoUsed)}${payload.autoPreset ? ` / ${formatAutoPresetLabel(payload.autoPreset)}` : ""}`
+          : "Modelo 3D generado correctamente.";
+    const warningSuffix =
+      Array.isArray(payload.warnings) && payload.warnings.length > 0
+        ? ` Aviso: ${payload.warnings.join(" | ")}`
+        : "";
+    setGenerationMessage(`${baseMessage}${warningSuffix}`);
+    setGenerationDevice(payload.device ?? null);
+    setAutoUsedEngine(payload.autoUsed ?? null);
+    setAutoUsedPreset(payload.autoPreset ?? null);
+    setGenerationLogPath("");
+  }, []);
+
+  const handleGenerationError = useCallback((payload: {
+    projectId: string;
+    message: string;
+    logPath?: string;
+  }) => {
+    const currentProject = projectRef.current;
+    if (!currentProject || payload.projectId !== currentProject.id) {
+      return;
+    }
+
+    setIsGenerating(false);
+    setGenerationStage("error");
+    setGenerationMessage(payload.logPath ? `${payload.message} Ver log: ${payload.logPath}` : payload.message);
+    setAutoUsedEngine(null);
+    setAutoUsedPreset(null);
+    setGenerationLogPath(payload.logPath ?? "");
+  }, []);
+
+  const handleGenerationProgressRef = useRef(handleGenerationProgress);
+  const handleGenerationDoneRef = useRef(handleGenerationDone);
+  const handleGenerationErrorRef = useRef(handleGenerationError);
+
   useEffect(() => {
-    if (!hasDesktopBridge() || !project) {
+    handleGenerationProgressRef.current = handleGenerationProgress;
+  }, [handleGenerationProgress]);
+
+  useEffect(() => {
+    handleGenerationDoneRef.current = handleGenerationDone;
+  }, [handleGenerationDone]);
+
+  useEffect(() => {
+    handleGenerationErrorRef.current = handleGenerationError;
+  }, [handleGenerationError]);
+
+  useEffect(() => {
+    if (!hasDesktopBridge()) {
       return;
     }
 
     const cleanupProgress = desktopApi.onGenerationProgress((payload) => {
-      if (payload.projectId !== project.id) {
-        return;
-      }
-
-      setIsGenerating(true);
-      setGenerationStage(payload.stage);
-      setGenerationPercent(Math.max(0, Math.min(100, payload.percent)));
-      setGenerationMessage(payload.message);
-      if (payload.stage !== "error") {
-        setGenerationLogPath("");
-      }
-      if (payload.stage !== "done") {
-        setAutoUsedEngine(null);
-        setAutoUsedPreset(null);
-      }
-      if (payload.device) {
-        setGenerationDevice({
-          device: payload.device,
-          name: payload.device === "cuda" ? "CUDA" : "CPU",
-        });
-      }
-      const progressDevice = parseDeviceLine(payload.message);
-      if (progressDevice) {
-        setGenerationDevice(progressDevice);
-      }
+      handleGenerationProgressRef.current(payload);
     });
-
     const cleanupDone = desktopApi.onGenerationDone((payload) => {
-      if (payload.projectId !== project.id) {
-        return;
-      }
-
-      if (payload.pipeline === "gen_skp") {
-        setIsGenerating(false);
-        setGenerationStage("done");
-        setGenerationPercent(100);
-        setGenerationMessage(payload.skpPath ? `SKP generado: ${payload.skpPath}` : "SKP generado correctamente.");
-        setAutoUsedEngine(null);
-        setAutoUsedPreset(null);
-        setGenerationLogPath("");
-        return;
-      }
-
-      const nextModel: ProjectModel = {
-        ...getProjectModel(project.model),
-        sourceImages: payload.sourceImages ?? selectedImages,
-        glbPath: payload.glbPath ?? project.model?.glbPath,
-        generatedAt: Date.now(),
-        preset: payload.preset ?? preset,
-        mode: payload.mode ?? "auto",
-      };
-
-      updateProjectModel(project.id, nextModel);
-      setSelectedImages(nextModel.sourceImages);
-      setIsGenerating(false);
-      setGenerationStage("done");
-      setGenerationPercent(100);
-      const baseMessage =
-        payload.autoUsed === "blockout" && payload.autoPreset === "hard_surface"
-          ? "Modelo 3D generado correctamente. AUTO used: BLOCKOUT (hard-surface fallback)"
-          : payload.autoUsed
-            ? `Modelo 3D generado correctamente. AUTO used: ${formatAutoEngineLabel(payload.autoUsed)}${payload.autoPreset ? ` / ${formatAutoPresetLabel(payload.autoPreset)}` : ""}`
-            : "Modelo 3D generado correctamente.";
-      const warningSuffix =
-        Array.isArray(payload.warnings) && payload.warnings.length > 0
-          ? ` Aviso: ${payload.warnings.join(" | ")}`
-          : "";
-      setGenerationMessage(`${baseMessage}${warningSuffix}`);
-      setGenerationDevice(payload.device ?? null);
-      setAutoUsedEngine(payload.autoUsed ?? null);
-      setAutoUsedPreset(payload.autoPreset ?? null);
-      setGenerationLogPath("");
+      handleGenerationDoneRef.current(payload);
     });
-
     const cleanupError = desktopApi.onGenerationError((payload) => {
-      if (payload.projectId !== project.id) {
-        return;
-      }
-
-      setIsGenerating(false);
-      setGenerationStage("error");
-      setGenerationMessage(payload.logPath ? `${payload.message} Ver log: ${payload.logPath}` : payload.message);
-      setAutoUsedEngine(null);
-      setAutoUsedPreset(null);
-      setGenerationLogPath(payload.logPath ?? "");
+      handleGenerationErrorRef.current(payload);
     });
 
     return () => {
@@ -408,7 +479,7 @@ export function ProjectPage() {
       cleanupDone();
       cleanupError();
     };
-  }, [preset, project, selectedImages, updateProjectModel]);
+  }, []);
 
   if (!hydrated) {
     return null;
@@ -576,13 +647,13 @@ export function ProjectPage() {
     ? "glass text-[var(--text)]"
     : `${getSurfaceClass(false, "panel")} text-[var(--text)]`;
   const panelSoftClass = getSurfaceClass(false, "soft");
-  const selectClass = "border-[var(--border)] bg-[var(--surface-3)] text-[var(--text)] hover:border-[var(--accent)] focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--focus-ring)]";
+  const selectClass = "pointer-events-auto border-[var(--border)] bg-[var(--surface-3)] text-[var(--text)] hover:border-[var(--accent)] focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--focus-ring)]";
 
   return (
     <div className="relative h-full min-h-0 w-full min-w-0 overflow-hidden p-4">
       <ViewportBackground glbPath={project.model?.glbPath} glbVersion={project.model?.generatedAt} />
       <UILayer>
-        <div className={`pointer-events-none grid h-full min-h-0 w-full min-w-0 gap-4 ${isAssistantOpen ? "grid-cols-[320px_minmax(0,1fr)_340px]" : "grid-cols-[320px_minmax(0,1fr)]"}`}>
+        <div className={`grid h-full min-h-0 w-full min-w-0 gap-4 ${isAssistantOpen ? "grid-cols-[320px_minmax(0,1fr)_340px]" : "grid-cols-[320px_minmax(0,1fr)]"}`}>
           <aside className={`pointer-events-auto flex min-h-0 flex-col rounded-2xl p-4 ${floatingPanelClass}`}>
           <TextField
             value={project.name}
@@ -638,7 +709,7 @@ export function ProjectPage() {
         </aside>
 
         <section className="pointer-events-none flex min-h-0 min-w-0 flex-col gap-3">
-          <div className={`pointer-events-auto shrink-0 rounded-2xl p-3 ${floatingPanelClass}`}>
+          <div className={`pointer-events-none shrink-0 rounded-2xl p-3 ${floatingPanelClass}`}>
             <div className="flex flex-wrap items-center gap-2">
               <select
                 value={preset}
@@ -682,7 +753,7 @@ export function ProjectPage() {
                 <option value="preview">Preview (rapido)</option>
                 <option value="final">Final (HQ)</option>
               </select>
-              <label className="inline-flex h-9 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface-2)] px-3 text-xs text-[var(--text)]">
+              <label className="pointer-events-auto inline-flex h-9 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface-2)] px-3 text-xs text-[var(--text)]">
                 <input
                   type="checkbox"
                   checked={multiviewEnabled}
@@ -732,17 +803,18 @@ export function ProjectPage() {
                   <option value="pro">Pro</option>
                 </select>
               ) : null}
-              <Button variant="primary" onClick={() => void handleRunGeneration()} disabled={selectedImages.length === 0 || isGenerating}>
+              <Button className="pointer-events-auto" variant="primary" onClick={() => void handleRunGeneration()} disabled={selectedImages.length === 0 || isGenerating}>
                 Generar 3D
               </Button>
               <Button
+                className="pointer-events-auto"
                 variant="primary"
                 onClick={() => void handleRunGenerationSkp()}
                 disabled={selectedImages.length < 1 || selectedImages.length > 4 || isGenerating}
               >
                 Generar SKP
               </Button>
-              <Button variant="ghost" onClick={() => void handleCancelGeneration()} disabled={!isGenerating}>
+              <Button className="pointer-events-auto" variant="ghost" onClick={() => void handleCancelGeneration()} disabled={!isGenerating}>
                 Cancelar
               </Button>
               <span className="rounded-md border border-[var(--border)] bg-[var(--surface-2)] px-2.5 py-1.5 text-xs text-[var(--text-muted)]">
@@ -767,7 +839,7 @@ export function ProjectPage() {
                     : "Detectando..."}
                 </span>
               ) : null}
-              <Button variant="secondary" className="ml-auto" onClick={() => setIsAssistantOpen((current) => !current)}>
+              <Button variant="secondary" className="pointer-events-auto ml-auto" onClick={() => setIsAssistantOpen((current) => !current)}>
                 {isAssistantOpen ? "Ocultar asistente" : "Asistente"}
               </Button>
             </div>

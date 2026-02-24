@@ -62,6 +62,8 @@ type CameraSnapshot = {
 
 type ModelNormalizationDebug = {
   appliedRotation: boolean;
+  rotationAxis: "x" | "z" | null;
+  rotationRadians: number;
   bboxSize: {
     x: number;
     y: number;
@@ -87,6 +89,7 @@ type ViewportThemeConfig = {
 
 const VIEW_TARGET = new THREE.Vector3(0, 0.4, 0);
 const VIEWER_DEBUG = import.meta.env.DEV;
+const VIEWPORT_EVENT_DEBUG = import.meta.env.DEV && import.meta.env.VITE_VOLUMIA_DEBUG_VIEWPORT === "1";
 const SHADOW_CAMERA_BOUNDS = 12;
 const SHADOW_CAMERA_NEAR = 0.5;
 const SHADOW_CAMERA_FAR = 40;
@@ -170,6 +173,20 @@ function applyModelVisualSettings(object: THREE.Object3D, envMapIntensity: numbe
   });
 }
 
+function shouldApplyZUpCorrection(model: THREE.Object3D): boolean {
+  const box = new THREE.Box3().setFromObject(model);
+  if (box.isEmpty()) {
+    return false;
+  }
+  const size = box.getSize(new THREE.Vector3());
+  if (!Number.isFinite(size.x) || !Number.isFinite(size.y) || !Number.isFinite(size.z)) {
+    return false;
+  }
+
+  const zDominant = size.z > size.y * 1.35 && size.z > size.x * 1.35;
+  return zDominant;
+}
+
 function LoadedModel({
   glbPath,
   glbVersion,
@@ -228,9 +245,7 @@ function LoadedModel({
               onLoadError("GLB loaded but no scene was found.");
               return;
             }
-            model.rotation.set(0, 0, 0);
-            model.rotation.x = -Math.PI / 2;
-            model.userData.volumiaOrientationNormalized = true;
+            model.userData.volumiaNormalized = false;
             const container = modelRef.current;
             if (!container) {
               onLoadError("Model container unavailable.");
@@ -274,26 +289,41 @@ function LoadedModel({
     if (!loadedModel || !(camera instanceof THREE.PerspectiveCamera)) {
       return;
     }
-
-    loadedModel.updateMatrixWorld(true);
-    const box = new THREE.Box3().setFromObject(loadedModel);
-    if (box.isEmpty()) {
+    if (loadedModel.userData.volumiaNormalized) {
       return;
     }
-    const center = box.getCenter(new THREE.Vector3());
+
+    loadedModel.rotation.set(Math.PI / 2, Math.PI / 2, 0);
+    loadedModel.updateMatrixWorld(true);
+
+    const centeredBox = new THREE.Box3().setFromObject(loadedModel);
+    if (centeredBox.isEmpty()) {
+      return;
+    }
+    const center = centeredBox.getCenter(new THREE.Vector3());
     loadedModel.position.x -= center.x;
     loadedModel.position.z -= center.z;
     loadedModel.updateMatrixWorld(true);
 
-    const groundedBox = new THREE.Box3().setFromObject(loadedModel);
-    if (groundedBox.isEmpty()) {
+    let supportBox = new THREE.Box3().setFromObject(loadedModel);
+    if (supportBox.isEmpty()) {
       return;
     }
-    let minYTranslation = 0;
-    if (Number.isFinite(groundedBox.min.y)) {
-      minYTranslation = groundedBox.min.y;
-      loadedModel.position.y -= groundedBox.min.y;
+    loadedModel.position.y -= supportBox.min.y;
+    loadedModel.updateMatrixWorld(true);
+
+    const upVector = new THREE.Vector3(0, 1, 0).applyQuaternion(loadedModel.quaternion);
+    let appliedFlipZ = false;
+    if (upVector.y < 0) {
+      loadedModel.rotation.z += Math.PI;
       loadedModel.updateMatrixWorld(true);
+      supportBox = new THREE.Box3().setFromObject(loadedModel);
+      if (supportBox.isEmpty()) {
+        return;
+      }
+      loadedModel.position.y -= supportBox.min.y;
+      loadedModel.updateMatrixWorld(true);
+      appliedFlipZ = true;
     }
 
     const finalBox = new THREE.Box3().setFromObject(loadedModel);
@@ -304,12 +334,14 @@ function LoadedModel({
     const size = finalBox.getSize(new THREE.Vector3());
     const normalizationDebug: ModelNormalizationDebug = {
       appliedRotation: true,
+      rotationAxis: appliedFlipZ ? "z" : "x",
+      rotationRadians: appliedFlipZ ? Math.PI : Math.PI / 2,
       bboxSize: {
         x: size.x,
         y: size.y,
         z: size.z,
       },
-      minYTranslation,
+      minYTranslation: finalBox.min.y,
     };
     onModelNormalizationDebug(normalizationDebug);
     if (VIEWER_DEBUG) {
@@ -325,8 +357,8 @@ function LoadedModel({
     const cameraZ = (maxDim / (2 * Math.tan(fovRad / 2))) * 1.4;
     const near = Math.max(0.01, cameraZ / 100);
     const far = Math.max(50, cameraZ * 20);
-    const nextTarget = new THREE.Vector3(0, finalCenter.y, 0);
-    const nextPosition = new THREE.Vector3(0, finalCenter.y + maxDim * 0.35, cameraZ);
+    const nextTarget = new THREE.Vector3(0, 0, 0);
+    const nextPosition = new THREE.Vector3(0, maxDim * 0.35, cameraZ);
     const snapshot: CameraSnapshot = {
       position: nextPosition,
       target: nextTarget,
@@ -336,12 +368,15 @@ function LoadedModel({
 
     const controlsFromThree = asOrbitControls(controls);
     applyCameraSnapshot(camera, controlsRef, snapshot, controlsFromThree);
+    controlsRef.current?.target.set(0, 0, 0);
+    controlsRef.current?.update();
     onCameraFit({
       position: snapshot.position.clone(),
       target: snapshot.target.clone(),
       near: snapshot.near,
       far: snapshot.far,
     });
+    loadedModel.userData.volumiaNormalized = true;
     invalidate();
   }, [camera, controls, controlsRef, invalidate, loadedModel, onCameraFit, onModelNormalizationDebug]);
 
@@ -684,27 +719,18 @@ export function ProjectViewport({
     if (!(event.target instanceof Element) || !event.target.closest("canvas")) {
       return;
     }
-    const element = event.currentTarget;
-    if (!element.hasPointerCapture(event.pointerId)) {
-      element.setPointerCapture(event.pointerId);
+    if (VIEWPORT_EVENT_DEBUG) {
+      console.debug("[ProjectViewport][events] pointerdown on canvas");
     }
     isOrbitingRef.current = true;
     document.body.classList.add("is-orbiting");
   }, []);
 
-  const handleViewportPointerUp = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    const element = event.currentTarget;
-    if (element.hasPointerCapture(event.pointerId)) {
-      element.releasePointerCapture(event.pointerId);
-    }
+  const handleViewportPointerUp = useCallback(() => {
     stopOrbiting();
   }, [stopOrbiting]);
 
-  const handleViewportPointerCancel = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    const element = event.currentTarget;
-    if (element.hasPointerCapture(event.pointerId)) {
-      element.releasePointerCapture(event.pointerId);
-    }
+  const handleViewportPointerCancel = useCallback(() => {
     stopOrbiting();
   }, [stopOrbiting]);
 
@@ -781,7 +807,9 @@ export function ProjectViewport({
               <Canvas
                 key={`viewport-fps-${settings.fpsLimit}`}
                 className="block h-full w-full"
-                style={{ display: "block", width: "100%", height: "100%" }}
+                style={{ display: "block", width: "100%", height: "100%", pointerEvents: "auto" }}
+                eventSource={hostRef.current ?? undefined}
+                eventPrefix="client"
                 camera={{ position: [8, 6, 8], fov: 48, near: 0.1, far: 200 }}
                 dpr={[1, 2]}
                 frameloop="demand"
@@ -879,7 +907,7 @@ export function ProjectViewport({
                 />
                 <OrbitControls
                   ref={controlsRef}
-                  enabled
+                  enabled={true}
                   makeDefault
                   target={[0, 0.4, 0]}
                   enableDamping
@@ -889,6 +917,16 @@ export function ProjectViewport({
                   minPolarAngle={0}
                   maxPolarAngle={Math.PI * 0.49}
                   screenSpacePanning={false}
+                  onStart={() => {
+                    if (VIEWPORT_EVENT_DEBUG) {
+                      console.debug("[ProjectViewport][controls] start");
+                    }
+                  }}
+                  onEnd={() => {
+                    if (VIEWPORT_EVENT_DEBUG) {
+                      console.debug("[ProjectViewport][controls] end");
+                    }
+                  }}
                 />
                 <OrbitTargetClamp controlsRef={controlsRef} radius={4} minY={0} maxY={2.5} />
               </Canvas>

@@ -1,4 +1,4 @@
-import { app, dialog, ipcMain, shell, type BrowserWindow } from "electron";
+import { app, dialog, ipcMain, nativeImage, shell, type BrowserWindow } from "electron";
 import { spawn, spawnSync, type ChildProcess } from "child_process";
 import fs from "fs";
 import path from "path";
@@ -25,6 +25,7 @@ import {
 } from "../channels";
 import {
   computeDeterministicSeedFromFile,
+  type MultiviewViewKey,
   resolveComfyMultiviewPresetConfig,
   runMultiviewCannyRefine,
 } from "../generation/comfyui-client";
@@ -124,7 +125,25 @@ const DEFAULT_CONDA_PYTHON = "F:\\MINICONDA\\envs\\volumia\\python.exe";
 const COMFYUI_BASE_URL = "http://127.0.0.1:8188";
 const DEBUG_GENERATION = process.env.VOLUMIA_DEBUG_GENERATION === "1";
 const DEBUG_COMFYUI = process.env.VOLUMIA_DEBUG_COMFYUI === "1";
+const DEBUG_MULTIVIEW = process.env.VOLUMIA_DEBUG_MULTIVIEW === "1";
 let generationLogFilePath: string | null = null;
+
+const MULTIVIEW_CAPTURE_SEQUENCE: Array<{
+  key: MultiviewViewKey;
+  yawDegrees: number;
+  quarterTurns: 0 | 1 | 2 | 3;
+}> = [
+  { key: "front", yawDegrees: 0, quarterTurns: 0 },
+  { key: "right", yawDegrees: 90, quarterTurns: 1 },
+  { key: "rear", yawDegrees: 180, quarterTurns: 2 },
+  { key: "left", yawDegrees: 270, quarterTurns: 3 },
+];
+
+type RawBitmap = {
+  width: number;
+  height: number;
+  data: Buffer;
+};
 
 function formatLogArg(value: unknown) {
   if (value instanceof Error) {
@@ -178,6 +197,173 @@ function logErr(...args: unknown[]) {
   } catch {
     // No-op by design.
   }
+}
+
+function pushMultiviewDebug(logs: string[], message: string) {
+  if (!DEBUG_MULTIVIEW) {
+    return;
+  }
+  logs.push(`[debug] ${message}`);
+  logInfo("[gen][multiview][capture]", message);
+}
+
+function rotateBitmapQuarterTurns(source: RawBitmap, quarterTurns: 0 | 1 | 2 | 3): RawBitmap {
+  const turns = quarterTurns % 4;
+  if (turns === 0) {
+    return {
+      width: source.width,
+      height: source.height,
+      data: Buffer.from(source.data),
+    };
+  }
+
+  if (turns === 2) {
+    const out = Buffer.alloc(source.data.length);
+    for (let y = 0; y < source.height; y += 1) {
+      for (let x = 0; x < source.width; x += 1) {
+        const srcIndex = (y * source.width + x) * 4;
+        const dstX = source.width - 1 - x;
+        const dstY = source.height - 1 - y;
+        const dstIndex = (dstY * source.width + dstX) * 4;
+        out[dstIndex] = source.data[srcIndex];
+        out[dstIndex + 1] = source.data[srcIndex + 1];
+        out[dstIndex + 2] = source.data[srcIndex + 2];
+        out[dstIndex + 3] = source.data[srcIndex + 3];
+      }
+    }
+    return {
+      width: source.width,
+      height: source.height,
+      data: out,
+    };
+  }
+
+  const outWidth = source.height;
+  const outHeight = source.width;
+  const out = Buffer.alloc(outWidth * outHeight * 4);
+
+  for (let y = 0; y < source.height; y += 1) {
+    for (let x = 0; x < source.width; x += 1) {
+      const srcIndex = (y * source.width + x) * 4;
+      const dstX = turns === 1 ? source.height - 1 - y : y;
+      const dstY = turns === 1 ? x : source.width - 1 - x;
+      const dstIndex = (dstY * outWidth + dstX) * 4;
+      out[dstIndex] = source.data[srcIndex];
+      out[dstIndex + 1] = source.data[srcIndex + 1];
+      out[dstIndex + 2] = source.data[srcIndex + 2];
+      out[dstIndex + 3] = source.data[srcIndex + 3];
+    }
+  }
+
+  return {
+    width: outWidth,
+    height: outHeight,
+    data: out,
+  };
+}
+
+function buildOrbitCameraPosition(yawDegrees: number, sourceWidth: number, sourceHeight: number) {
+  const normalizedWidth = sourceWidth / Math.max(1, Math.max(sourceWidth, sourceHeight));
+  const normalizedHeight = sourceHeight / Math.max(1, Math.max(sourceWidth, sourceHeight));
+  const size = {
+    x: Math.max(0.2, normalizedWidth),
+    y: Math.max(0.2, normalizedHeight),
+    z: 1,
+  };
+  const radius = Math.max(size.x, size.y, size.z) * 0.5;
+  const distance = Math.max(1.0, radius * 2.2);
+  const yawRadians = (yawDegrees * Math.PI) / 180;
+  return {
+    x: distance * Math.sin(yawRadians),
+    y: distance * 0.35,
+    z: distance * Math.cos(yawRadians),
+  };
+}
+
+function buildGeneratedMultiviewInputs(copiedImages: string[], viewsDir: string, logs: string[]) {
+  fs.mkdirSync(viewsDir, { recursive: true });
+  const resolvedCopiedImages = copiedImages.map((item) => path.resolve(item));
+  const uniqueInputCount = new Set(resolvedCopiedImages).size;
+  const primaryInputPath = resolvedCopiedImages[0];
+
+  if (!primaryInputPath || !fs.existsSync(primaryInputPath)) {
+    throw new Error("No valid source image available for multiview input generation.");
+  }
+
+  const sourceImage = nativeImage.createFromPath(primaryInputPath);
+  if (sourceImage.isEmpty()) {
+    throw new Error(`Failed to decode source image for multiview: ${primaryInputPath}`);
+  }
+  const sourceSize = sourceImage.getSize();
+  const sourceWidth = Math.max(1, sourceSize.width);
+  const sourceHeight = Math.max(1, sourceSize.height);
+
+  const viewInputs: Record<MultiviewViewKey, string> = {
+    front: "",
+    right: "",
+    rear: "",
+    left: "",
+  };
+
+  if (uniqueInputCount >= 4 && resolvedCopiedImages.length >= 4) {
+    for (let index = 0; index < MULTIVIEW_CAPTURE_SEQUENCE.length; index += 1) {
+      const spec = MULTIVIEW_CAPTURE_SEQUENCE[index];
+      const sourcePath = resolvedCopiedImages[index];
+      const outputPath = path.join(viewsDir, `volumia_${spec.key}.png`);
+      fs.copyFileSync(sourcePath, outputPath);
+      const fileSizeBytes = fs.statSync(outputPath).size;
+      const cameraPosition = buildOrbitCameraPosition(spec.yawDegrees, sourceWidth, sourceHeight);
+      pushMultiviewDebug(
+        logs,
+        [
+          "capture_view",
+          `view=${spec.key}`,
+          `yaw_deg=${spec.yawDegrees}`,
+          `camera=(${cameraPosition.x.toFixed(3)},${cameraPosition.y.toFixed(3)},${cameraPosition.z.toFixed(3)})`,
+          `output=${outputPath}`,
+          `bytes=${fileSizeBytes}`,
+          `source=${sourcePath}`,
+        ].join(" ")
+      );
+      viewInputs[spec.key] = outputPath;
+    }
+    return viewInputs;
+  }
+
+  const baseBitmap = sourceImage.toBitmap({ scaleFactor: 1 });
+  const sourceBitmap: RawBitmap = {
+    width: sourceWidth,
+    height: sourceHeight,
+    data: Buffer.from(baseBitmap),
+  };
+
+  for (const spec of MULTIVIEW_CAPTURE_SEQUENCE) {
+    const outputPath = path.join(viewsDir, `volumia_${spec.key}.png`);
+    const rotatedBitmap = rotateBitmapQuarterTurns(sourceBitmap, spec.quarterTurns);
+    const image = nativeImage.createFromBitmap(rotatedBitmap.data, {
+      width: rotatedBitmap.width,
+      height: rotatedBitmap.height,
+      scaleFactor: 1,
+    });
+    fs.writeFileSync(outputPath, image.toPNG());
+    const fileSizeBytes = fs.statSync(outputPath).size;
+    const cameraPosition = buildOrbitCameraPosition(spec.yawDegrees, sourceWidth, sourceHeight);
+    pushMultiviewDebug(
+      logs,
+      [
+        "capture_view",
+        `view=${spec.key}`,
+        `yaw_deg=${spec.yawDegrees}`,
+        `camera=(${cameraPosition.x.toFixed(3)},${cameraPosition.y.toFixed(3)},${cameraPosition.z.toFixed(3)})`,
+        `output=${outputPath}`,
+        `bytes=${fileSizeBytes}`,
+        `source=${primaryInputPath}`,
+      ].join(" ")
+    );
+    viewInputs[spec.key] = outputPath;
+  }
+
+  return viewInputs;
 }
 
 function capOutput(current: string, nextChunk: string, maxChars: number) {
@@ -1793,9 +1979,22 @@ async function runGenerationJob(
         logInfo("[gen][multiview][debug] effective params:", effectiveParamsLog);
       }
       const multiviewStartedAtMs = Date.now();
+      const viewInputImagePaths = buildGeneratedMultiviewInputs(copiedImages, viewsDir, localContext.multiviewLogs);
+      if (DEBUG_COMFYUI || DEBUG_MULTIVIEW) {
+        localContext.multiviewLogs.push(
+          [
+            "[debug] view_inputs",
+            `front=${viewInputImagePaths.front}`,
+            `right=${viewInputImagePaths.right}`,
+            `rear=${viewInputImagePaths.rear}`,
+            `left=${viewInputImagePaths.left}`,
+          ].join(" ")
+        );
+      }
       const multiviewResult = await runMultiviewCannyRefine({
         baseUrl: COMFYUI_BASE_URL,
         inputImagePath: copiedImages[0],
+        viewInputImagePaths,
         outputDir: viewsDir,
         basePrompt: comfyPreset.basePrompt,
         negative: comfyPreset.negativePrompt,
@@ -1807,7 +2006,7 @@ async function runGenerationJob(
         },
         tier: reconstructionTier,
         maxConcurrency: 1,
-        useSeedOffsets: false,
+        useSeedOffsets: true,
         isCanceled: () => job.canceled,
         onProgress: (progress) => {
           sendProgress(getWindow, {

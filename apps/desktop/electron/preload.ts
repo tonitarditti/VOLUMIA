@@ -103,6 +103,11 @@ const bridge = {
     openOutputFolder: (glbPath: string) =>
       ipcRenderer.invoke("gen:open-output-folder", { glbPath }) as Promise<{ ok: boolean; path: string; error?: string }>,
     onProgress: (callback: (payload: GenerationProgressPayload) => void) => {
+      const existing = generationProgressListeners.get(callback);
+      if (existing) {
+        ipcRenderer.off(IPC_CHANNELS.generationProgress, existing);
+        generationProgressListeners.delete(callback);
+      }
       const wrapped = (_event: Electron.IpcRendererEvent, payload: GenerationProgressPayload) => {
         callback(payload);
       };
@@ -117,6 +122,11 @@ const bridge = {
       generationProgressListeners.delete(callback);
     },
     onDone: (callback: (payload: GenerationDonePayload) => void) => {
+      const existing = generationDoneListeners.get(callback);
+      if (existing) {
+        ipcRenderer.off(IPC_CHANNELS.generationDone, existing);
+        generationDoneListeners.delete(callback);
+      }
       const wrapped = (_event: Electron.IpcRendererEvent, payload: GenerationDonePayload) => {
         callback(payload);
       };
@@ -131,6 +141,11 @@ const bridge = {
       generationDoneListeners.delete(callback);
     },
     onError: (callback: (payload: GenerationErrorPayload) => void) => {
+      const existing = generationErrorListeners.get(callback);
+      if (existing) {
+        ipcRenderer.off(IPC_CHANNELS.generationError, existing);
+        generationErrorListeners.delete(callback);
+      }
       const wrapped = (_event: Electron.IpcRendererEvent, payload: GenerationErrorPayload) => {
         callback(payload);
       };

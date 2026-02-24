@@ -13,6 +13,7 @@ export default defineConfig({
     strictPort: false,
   },
   resolve: {
+    dedupe: ["three", "react", "react-dom"],
     alias: {
       "@": path.resolve(__dirname, "./src"),
     },
