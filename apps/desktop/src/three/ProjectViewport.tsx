@@ -40,6 +40,23 @@ type ProjectViewportProps = {
   onToggleWireframe?: () => void;
 };
 
+type ViewportMultiviewCaptureArgs = {
+  outputDir: string;
+  baseName: string;
+  width: number;
+  height: number;
+};
+
+type ViewportGenerationBridge = {
+  readGlb?: (path: string) => Promise<ArrayBuffer | Uint8Array>;
+  writePngBase64?: (payload: { outputPath: string; base64: string }) => Promise<string>;
+  captureViewportMultiview?: (payload: ViewportMultiviewCaptureArgs) => Promise<string[]>;
+  setViewportMultiviewCaptureHandler?: (
+    handler: (payload: ViewportMultiviewCaptureArgs) => Promise<string[]>
+  ) => void;
+  clearViewportMultiviewCaptureHandler?: () => void;
+};
+
 type LoadedModelProps = {
   glbPath?: string;
   glbVersion?: number;
@@ -49,6 +66,7 @@ type LoadedModelProps = {
   onLoadError: (message: string | null) => void;
   onCameraFit: (snapshot: CameraSnapshot) => void;
   onModelNormalizationDebug: (info: ModelNormalizationDebug | null) => void;
+  onModelReady: (model: THREE.Object3D | null) => void;
 };
 
 type ViewportTheme = "light" | "dark";
@@ -90,6 +108,7 @@ type ViewportThemeConfig = {
 const VIEW_TARGET = new THREE.Vector3(0, 0.4, 0);
 const VIEWER_DEBUG = import.meta.env.DEV;
 const VIEWPORT_EVENT_DEBUG = import.meta.env.DEV && import.meta.env.VITE_VOLUMIA_DEBUG_VIEWPORT === "1";
+const VIEWPORT_CAPTURE_DEBUG = import.meta.env.VITE_VOLUMIA_DEBUG_VIEWPORT === "1";
 const SHADOW_CAMERA_BOUNDS = 12;
 const SHADOW_CAMERA_NEAR = 0.5;
 const SHADOW_CAMERA_FAR = 40;
@@ -196,6 +215,7 @@ function LoadedModel({
   onLoadError,
   onCameraFit,
   onModelNormalizationDebug,
+  onModelReady,
 }: LoadedModelProps) {
   const { camera, controls, invalidate } = useThree();
   const modelRef = useRef<THREE.Group>(null);
@@ -208,21 +228,24 @@ function LoadedModel({
       container.remove(loadedSceneRef.current);
       loadedSceneRef.current = null;
       setLoadedModel(null);
+      onModelReady(null);
       invalidate();
     }
 
     if (!glbPath) {
       onLoadError(null);
       onModelNormalizationDebug(null);
+      onModelReady(null);
       return;
     }
 
     const loader = new GLTFLoader();
     let active = true;
-    const readGlb = (window as { volumia?: { generation?: { readGlb?: (path: string) => Promise<ArrayBuffer | Uint8Array> } } }).volumia?.generation?.readGlb;
+    const readGlb = (window as { volumia?: { generation?: ViewportGenerationBridge } }).volumia?.generation?.readGlb;
 
     if (!readGlb) {
       onLoadError("GLB reader unavailable in this environment.");
+      onModelReady(null);
       return;
     }
 
@@ -243,18 +266,21 @@ function LoadedModel({
             const model = gltf.scene ?? gltf.scenes[0];
             if (!model) {
               onLoadError("GLB loaded but no scene was found.");
+              onModelReady(null);
               return;
             }
             model.userData.volumiaNormalized = false;
             const container = modelRef.current;
             if (!container) {
               onLoadError("Model container unavailable.");
+              onModelReady(null);
               return;
             }
             container.add(model);
             applyModelVisualSettings(model, envMapIntensity, wireframe);
             loadedSceneRef.current = model;
             setLoadedModel(model);
+            onModelReady(model);
             onLoadError(null);
             invalidate();
           },
@@ -262,6 +288,7 @@ function LoadedModel({
             if (!active) return;
             onLoadError(`GLB parse error: ${extractErrorMessage(error)}`);
             onModelNormalizationDebug(null);
+            onModelReady(null);
             invalidate();
           }
         );
@@ -269,6 +296,7 @@ function LoadedModel({
         if (!active) return;
         onLoadError(`GLB load error: ${extractErrorMessage(error)}`);
         onModelNormalizationDebug(null);
+        onModelReady(null);
         invalidate();
       }
     })();
@@ -280,10 +308,11 @@ function LoadedModel({
         container.remove(loadedSceneRef.current);
         loadedSceneRef.current = null;
         setLoadedModel(null);
+        onModelReady(null);
         invalidate();
       }
     };
-  }, [envMapIntensity, glbPath, glbVersion, invalidate, onLoadError, onModelNormalizationDebug, wireframe]);
+  }, [envMapIntensity, glbPath, glbVersion, invalidate, onLoadError, onModelNormalizationDebug, onModelReady, wireframe]);
 
   useEffect(() => {
     if (!loadedModel || !(camera instanceof THREE.PerspectiveCamera)) {
@@ -576,6 +605,9 @@ export function ProjectViewport({
   const controlsRef = useRef<OrbitControlsImpl | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
+  const sceneRef = useRef<THREE.Scene | null>(null);
+  const invalidateRef = useRef<(() => void) | null>(null);
+  const loadedModelRef = useRef<THREE.Object3D | null>(null);
   const cameraSnapshotRef = useRef<CameraSnapshot>({
     position: DEFAULT_CAMERA_SNAPSHOT.position.clone(),
     target: DEFAULT_CAMERA_SNAPSHOT.target.clone(),
@@ -659,6 +691,7 @@ export function ProjectViewport({
       return;
     }
 
+    loadedModelRef.current = null;
     cameraSnapshotRef.current = {
       position: DEFAULT_CAMERA_SNAPSHOT.position.clone(),
       target: DEFAULT_CAMERA_SNAPSHOT.target.clone(),
@@ -693,11 +726,153 @@ export function ProjectViewport({
     }
   }, []);
 
+  const captureMultiviewSnapshots = useCallback(async (args: ViewportMultiviewCaptureArgs) => {
+    const renderer = rendererRef.current;
+    const camera = cameraRef.current;
+    const scene = sceneRef.current;
+    const model = loadedModelRef.current;
+    const invalidate = invalidateRef.current;
+    const generation = (window as { volumia?: { generation?: ViewportGenerationBridge } }).volumia?.generation;
+
+    if (!renderer || !camera || !scene || !model) {
+      throw new Error("Viewport capture unavailable: renderer, camera, scene, or model is missing.");
+    }
+    if (!generation?.writePngBase64) {
+      throw new Error("Viewport capture unavailable: PNG writer bridge is missing.");
+    }
+    if (!Number.isFinite(args.width) || !Number.isFinite(args.height) || args.width < 32 || args.height < 32) {
+      throw new Error("Viewport capture received invalid dimensions.");
+    }
+    if (!args.outputDir.trim() || !args.baseName.trim()) {
+      throw new Error("Viewport capture requires outputDir and baseName.");
+    }
+
+    const bbox = new THREE.Box3().setFromObject(model);
+    if (bbox.isEmpty()) {
+      throw new Error("Viewport capture failed: model bounding box is empty.");
+    }
+    const bboxSize = bbox.getSize(new THREE.Vector3());
+    const target = bbox.getCenter(new THREE.Vector3());
+    const maxDim = Math.max(bboxSize.x, bboxSize.y, bboxSize.z);
+    if (!Number.isFinite(maxDim) || maxDim <= 0) {
+      throw new Error("Viewport capture failed: invalid model dimensions.");
+    }
+
+    const radius = maxDim * 1.6;
+    const elevation = target.y + maxDim * 0.35;
+    const controls = controlsRef.current;
+    const previousTarget = controls ? controls.target.clone() : target.clone();
+    const previousSnapshot: CameraSnapshot = {
+      position: camera.position.clone(),
+      target: previousTarget,
+      near: camera.near,
+      far: camera.far,
+    };
+    cameraSnapshotRef.current = {
+      position: previousSnapshot.position.clone(),
+      target: previousSnapshot.target.clone(),
+      near: previousSnapshot.near,
+      far: previousSnapshot.far,
+    };
+
+    const previousSize = renderer.getSize(new THREE.Vector2());
+    const previousPixelRatio = renderer.getPixelRatio();
+    const previousViewport = renderer.getViewport(new THREE.Vector4());
+    const previousScissor = renderer.getScissor(new THREE.Vector4());
+    const previousScissorTest = renderer.getScissorTest();
+    const previousAutoClear = renderer.autoClear;
+    const outputPaths: string[] = [];
+    const views: Array<{ name: "front" | "right" | "rear" | "left"; yawDeg: number }> = [
+      { name: "front", yawDeg: 0 },
+      { name: "right", yawDeg: 90 },
+      { name: "rear", yawDeg: 180 },
+      { name: "left", yawDeg: 270 },
+    ];
+
+    if (VIEWPORT_CAPTURE_DEBUG) {
+      console.debug("[ProjectViewport][capture] bbox", {
+        center: { x: target.x, y: target.y, z: target.z },
+        size: { x: bboxSize.x, y: bboxSize.y, z: bboxSize.z },
+        radius,
+        width: args.width,
+        height: args.height,
+      });
+    }
+
+    try {
+      renderer.setPixelRatio(1);
+      renderer.setSize(args.width, args.height, false);
+      renderer.setViewport(0, 0, args.width, args.height);
+      renderer.setScissorTest(false);
+      renderer.autoClear = true;
+      camera.aspect = args.width / args.height;
+      camera.updateProjectionMatrix();
+
+      for (const view of views) {
+        const yaw = THREE.MathUtils.degToRad(view.yawDeg);
+        const x = target.x + Math.sin(yaw) * radius;
+        const z = target.z + Math.cos(yaw) * radius;
+        camera.position.set(x, elevation, z);
+        camera.lookAt(target);
+        camera.updateProjectionMatrix();
+
+        if (controls) {
+          controls.target.copy(target);
+          controls.update();
+        }
+
+        if (VIEWPORT_CAPTURE_DEBUG) {
+          console.debug("[ProjectViewport][capture] view", {
+            name: view.name,
+            yawDeg: view.yawDeg,
+            camera: { x, y: elevation, z },
+          });
+        }
+
+        invalidate?.();
+        renderer.render(scene, camera);
+
+        const dataUrl = renderer.domElement.toDataURL("image/png");
+        const base64 = dataUrl.replace(/^data:image\/png;base64,/, "");
+        const outputPath = `${args.outputDir}/${args.baseName}_${view.name}.png`;
+        const savedPath = await generation.writePngBase64({
+          outputPath,
+          base64,
+        });
+        outputPaths.push(savedPath);
+      }
+
+      return outputPaths;
+    } finally {
+      renderer.setPixelRatio(previousPixelRatio);
+      renderer.setSize(previousSize.x, previousSize.y, false);
+      renderer.setViewport(previousViewport.x, previousViewport.y, previousViewport.z, previousViewport.w);
+      renderer.setScissor(previousScissor.x, previousScissor.y, previousScissor.z, previousScissor.w);
+      renderer.setScissorTest(previousScissorTest);
+      renderer.autoClear = previousAutoClear;
+      camera.aspect = previousSize.y > 0 ? previousSize.x / previousSize.y : camera.aspect;
+      applyCameraSnapshot(camera, controlsRef, cameraSnapshotRef.current);
+      invalidate?.();
+      renderer.render(scene, camera);
+    }
+  }, []);
+
   useEffect(() => {
     if (typeof resetSignal === "number") {
       handleResetView();
     }
   }, [handleResetView, resetSignal]);
+
+  useEffect(() => {
+    const generation = (window as { volumia?: { generation?: ViewportGenerationBridge } }).volumia?.generation;
+    if (!generation?.setViewportMultiviewCaptureHandler) {
+      return;
+    }
+    generation.setViewportMultiviewCaptureHandler(captureMultiviewSnapshots);
+    return () => {
+      generation.clearViewportMultiviewCaptureHandler?.();
+    };
+  }, [captureMultiviewSnapshots]);
 
   const handleToggleWireframe = useCallback(() => {
     if (onToggleWireframe) {
@@ -742,15 +917,16 @@ export function ProjectViewport({
 
   return (
     <div
-      className="relative flex h-full min-h-0 w-full min-w-0 overflow-hidden"
+      className="relative flex h-full min-h-0 w-full min-w-0 select-none overflow-hidden"
       onPointerDown={handleViewportPointerDown}
       onPointerUp={handleViewportPointerUp}
       onPointerCancel={handleViewportPointerCancel}
       onMouseLeave={stopOrbiting}
+      onContextMenu={(event) => event.preventDefault()}
     >
       <div
         ref={hostRef}
-        className={`relative flex h-full w-full min-h-0 min-w-0 flex-col overflow-hidden ${bgClass}`}
+        className={`relative flex h-full w-full min-h-0 min-w-0 select-none flex-col overflow-hidden ${bgClass}`}
       >
         {showChrome ? (
           <div className={headerClass}>
@@ -803,11 +979,11 @@ export function ProjectViewport({
             </div>
           ) : null}
           {canRenderCanvas ? (
-            <div className="relative h-full w-full min-h-0 overflow-hidden">
+            <div className="relative h-full w-full min-h-0 select-none touch-none overflow-hidden">
               <Canvas
                 key={`viewport-fps-${settings.fpsLimit}`}
                 className="block h-full w-full"
-                style={{ display: "block", width: "100%", height: "100%", pointerEvents: "auto" }}
+                style={{ display: "block", width: "100%", height: "100%", pointerEvents: "auto", touchAction: "none" }}
                 eventSource={hostRef.current ?? undefined}
                 eventPrefix="client"
                 camera={{ position: [8, 6, 8], fov: 48, near: 0.1, far: 200 }}
@@ -815,8 +991,10 @@ export function ProjectViewport({
                 frameloop="demand"
                 shadows
                 gl={{ antialias: true, alpha: false, preserveDrawingBuffer: true }}
-                onCreated={({ gl, camera }) => {
+                onCreated={({ gl, camera, scene, invalidate }) => {
                   rendererRef.current = gl;
+                  sceneRef.current = scene;
+                  invalidateRef.current = invalidate;
                   if ("outputColorSpace" in gl) {
                     gl.outputColorSpace = THREE.SRGBColorSpace;
                   } else {
@@ -900,6 +1078,9 @@ export function ProjectViewport({
                   envMapIntensity={themeConfig.envMapIntensity}
                   wireframe={wireframe}
                   onLoadError={setLoadError}
+                  onModelReady={(model) => {
+                    loadedModelRef.current = model;
+                  }}
                   onCameraFit={(snapshot) => {
                     cameraSnapshotRef.current = snapshot;
                   }}
@@ -908,10 +1089,18 @@ export function ProjectViewport({
                 <OrbitControls
                   ref={controlsRef}
                   enabled={true}
+                  enableRotate={true}
+                  enableZoom={true}
+                  enablePan={true}
                   makeDefault
                   target={[0, 0.4, 0]}
                   enableDamping
                   dampingFactor={0.08}
+                  mouseButtons={{
+                    LEFT: THREE.MOUSE.ROTATE,
+                    MIDDLE: THREE.MOUSE.DOLLY,
+                    RIGHT: THREE.MOUSE.PAN,
+                  }}
                   minDistance={0.3}
                   maxDistance={20}
                   minPolarAngle={0}

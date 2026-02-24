@@ -11,9 +11,15 @@ export type MultiviewViewKey = "front" | "right" | "rear" | "left";
 
 export type MultiviewViewSpec = {
   key: MultiviewViewKey;
-  suffixPrompt: string;
+  promptSuffix?: string;
+  // Backward-compatible alias for legacy callers.
+  suffixPrompt?: string;
   outputSuffix: string;
   seedOffset?: number;
+  controlStrength?: number;
+  denoiseDelta?: number;
+  cfgDelta?: number;
+  stepsDelta?: number;
 };
 
 type MultiviewTier = "preview" | "final";
@@ -129,27 +135,43 @@ const MAX_REPO_ROOT_ASCENT = 10;
 const DEFAULT_VIEWS: MultiviewViewSpec[] = [
   {
     key: "front",
-    suffixPrompt: "front elevation view, straight-on camera, centered, no tilt, 35mm lens",
+    promptSuffix: "front view, straight-on camera, centered framing",
     outputSuffix: "front",
     seedOffset: 0,
+    controlStrength: 0.9,
+    denoiseDelta: -0.04,
+    cfgDelta: -0.1,
+    stepsDelta: -2,
   },
   {
     key: "right",
-    suffixPrompt: "right side view, 90 degree turn, eye level, technical framing",
+    promptSuffix: "right side view",
     outputSuffix: "right",
-    seedOffset: 1,
+    seedOffset: 1000,
+    controlStrength: 0.7,
+    denoiseDelta: 0.02,
+    cfgDelta: 0.05,
+    stepsDelta: 0,
   },
   {
     key: "rear",
-    suffixPrompt: "rear view, consistent lighting direction, documentation framing",
+    promptSuffix: "rear view (back side)",
     outputSuffix: "rear",
-    seedOffset: 2,
+    seedOffset: 2000,
+    controlStrength: 0.65,
+    denoiseDelta: 0.06,
+    cfgDelta: 0.15,
+    stepsDelta: 2,
   },
   {
     key: "left",
-    suffixPrompt: "left side view, 270 degree turn, eye level, technical framing",
+    promptSuffix: "left side view",
     outputSuffix: "left",
-    seedOffset: 3,
+    seedOffset: 3000,
+    controlStrength: 0.7,
+    denoiseDelta: 0.02,
+    cfgDelta: 0.05,
+    stepsDelta: 0,
   },
 ];
 
@@ -685,8 +707,41 @@ function buildViewSeed(baseSeed: number, view: MultiviewViewSpec, index: number,
   if (!useSeedOffsets) {
     return baseSeed;
   }
-  const offset = Number.isFinite(view.seedOffset) ? Number(view.seedOffset) : index;
-  return normalizeSeed(baseSeed + offset * 1000);
+  const fallbackOffset = index * 1000;
+  const offset = Number.isFinite(view.seedOffset) ? Number(view.seedOffset) : fallbackOffset;
+  return normalizeSeed(baseSeed + offset);
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function resolveViewPromptSuffix(view: MultiviewViewSpec) {
+  const explicit = (view.promptSuffix || view.suffixPrompt || "").trim();
+  if (explicit.length > 0) {
+    return explicit;
+  }
+  if (view.key === "front") return "front view";
+  if (view.key === "right") return "right side view";
+  if (view.key === "rear") return "rear view (back side)";
+  return "left side view";
+}
+
+function resolvePerViewParams(baseParams: Omit<SDXLCannyParams, "seed">, view: MultiviewViewSpec): Omit<SDXLCannyParams, "seed"> {
+  const stepsDelta = Number.isFinite(view.stepsDelta) ? Number(view.stepsDelta) : 0;
+  const cfgDelta = Number.isFinite(view.cfgDelta) ? Number(view.cfgDelta) : 0;
+  const denoiseDelta = Number.isFinite(view.denoiseDelta) ? Number(view.denoiseDelta) : 0;
+  const controlStrength = Number.isFinite(view.controlStrength)
+    ? clamp(Number(view.controlStrength), 0, 1.2)
+    : baseParams.controlStrength;
+
+  return {
+    ...baseParams,
+    controlStrength,
+    denoise: clamp(baseParams.denoise + denoiseDelta, 0.01, 0.99),
+    cfg: clamp(baseParams.cfg + cfgDelta, 1, 30),
+    steps: Math.max(1, Math.round(baseParams.steps + stepsDelta)),
+  };
 }
 
 function resolvePerViewInputFilename(viewKey: MultiviewViewKey) {
@@ -875,7 +930,15 @@ export async function runMultiviewCannyRefine(args: RunMultiviewCannyRefineArgs)
     tier: args.tier ?? "unknown",
     maxConcurrency,
     useSeedOffsets,
-    views: views.map((view) => view.key),
+    views: views.map((view) => ({
+      key: view.key,
+      seedOffset: view.seedOffset,
+      controlStrength: view.controlStrength,
+      denoiseDelta: view.denoiseDelta,
+      cfgDelta: view.cfgDelta,
+      stepsDelta: view.stepsDelta,
+      promptSuffix: resolveViewPromptSuffix(view),
+    })),
     params: {
       width: effectiveParams.width,
       height: effectiveParams.height,
@@ -917,9 +980,11 @@ export async function runMultiviewCannyRefine(args: RunMultiviewCannyRefineArgs)
       debugComfyLog("View start", { view: task.view.key, at: viewStartIso });
     }
 
-    const prompt = `${args.basePrompt}, ${task.view.suffixPrompt}, maintain identical materials across views`;
+    const promptSuffix = resolveViewPromptSuffix(task.view);
+    const prompt = `${args.basePrompt}, ${promptSuffix}, maintain identical materials across views`;
     const outputPrefix = `${baseName}_${sanitizeBaseName(task.view.outputSuffix)}`;
     const seed = buildViewSeed(baseSeed, task.view, task.index, useSeedOffsets);
+    const viewParams = resolvePerViewParams(effectiveParams, task.view);
     const inputImagePath = resolvePerViewInputImagePath(args, task.view.key);
     const remoteInputName = resolvePerViewInputFilename(task.view.key);
 
@@ -939,7 +1004,7 @@ export async function runMultiviewCannyRefine(args: RunMultiviewCannyRefineArgs)
       outputDir,
       outputPrefix,
       params: {
-        ...effectiveParams,
+        ...viewParams,
         seed,
       },
       isCanceled: args.isCanceled,
@@ -955,6 +1020,17 @@ export async function runMultiviewCannyRefine(args: RunMultiviewCannyRefineArgs)
       logs.push(`[debug] view_seed view=${task.view.key} seed=${seed}`);
       logs.push(
         `[debug] view_input view=${task.view.key} local_path=${inputImagePath} remote_name=${remoteInputName}`
+      );
+      logs.push(
+        [
+          `[debug] view_config view=${task.view.key}`,
+          `seed=${seed}`,
+          `promptSuffix="${promptSuffix}"`,
+          `controlStrength=${viewParams.controlStrength}`,
+          `denoise=${viewParams.denoise}`,
+          `cfg=${viewParams.cfg}`,
+          `steps=${viewParams.steps}`,
+        ].join(" ")
       );
     }
     logs.push(`[prompt] id=${singleResult.promptId} view=${task.view.key} seed=${seed}`);

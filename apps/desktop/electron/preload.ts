@@ -8,9 +8,11 @@ import {
   type GenerationDonePayload,
   type GenerationErrorPayload,
   type GenerationCheckResult,
+  type GenerationCaptureViewportMultiviewPayload,
   type GenerationProgressPayload,
   type GenerationRunPayload,
   type GenerationRunResult,
+  type GenerationWritePngBase64Payload,
   type GenerationTestResult,
   type ImportProjectsResult,
   type PythonDetectResult,
@@ -44,6 +46,9 @@ const pythonInstallLogListeners = new Map<
   (line: string) => void,
   (_event: Electron.IpcRendererEvent, payload: PythonInstallLogPayload) => void
 >();
+let viewportMultiviewCaptureHandler:
+  | ((payload: GenerationCaptureViewportMultiviewPayload) => Promise<string[]> | string[])
+  | null = null;
 
 const bridge = {
   exportJson: (payload: ProjectsExportEnvelope) =>
@@ -97,6 +102,26 @@ const bridge = {
     check: () => ipcRenderer.invoke(IPC_CHANNELS.generationCheck) as Promise<GenerationCheckResult>,
     test: () => ipcRenderer.invoke(IPC_CHANNELS.generationTest) as Promise<GenerationTestResult>,
     readGlb: (glbPath: string) => ipcRenderer.invoke("gen:read-glb", glbPath),
+    writePngBase64: (payload: GenerationWritePngBase64Payload) =>
+      ipcRenderer.invoke("gen:write-png-base64", payload) as Promise<string>,
+    captureViewportMultiview: async (payload: GenerationCaptureViewportMultiviewPayload) => {
+      if (!viewportMultiviewCaptureHandler) {
+        throw new Error("Viewport multiview capture handler unavailable.");
+      }
+      const paths = await viewportMultiviewCaptureHandler(payload);
+      if (!Array.isArray(paths) || paths.some((item) => typeof item !== "string")) {
+        throw new Error("Viewport multiview capture returned invalid paths.");
+      }
+      return paths;
+    },
+    setViewportMultiviewCaptureHandler: (
+      handler: (payload: GenerationCaptureViewportMultiviewPayload) => Promise<string[]> | string[]
+    ) => {
+      viewportMultiviewCaptureHandler = handler;
+    },
+    clearViewportMultiviewCaptureHandler: () => {
+      viewportMultiviewCaptureHandler = null;
+    },
     readImageAsDataUrl: (imagePath: string) => ipcRenderer.invoke("gen:read-image-data-url", imagePath) as Promise<string>,
     openLogPath: (logPath: string) =>
       ipcRenderer.invoke("gen:open-log-path", { logPath }) as Promise<{ ok: boolean; path: string; error?: string }>,

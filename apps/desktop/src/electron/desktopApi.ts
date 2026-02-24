@@ -12,7 +12,9 @@ import {
   type GenerationProgressPayload,
   type GenerationRunPayload,
   type GenerationRunResult,
+  type GenerationCaptureViewportMultiviewPayload,
   type GenerationTestResult,
+  type GenerationWritePngBase64Payload,
   type Theme,
   type ClearCacheResult,
   type PythonDetectResult,
@@ -55,6 +57,12 @@ export type VolumiaGenerationBridge = {
   cancel: (projectId: string) => Promise<void>;
   check: () => Promise<GenerationCheckResult>;
   test: () => Promise<GenerationTestResult>;
+  captureViewportMultiview: (payload: GenerationCaptureViewportMultiviewPayload) => Promise<string[]>;
+  setViewportMultiviewCaptureHandler: (
+    handler: (payload: GenerationCaptureViewportMultiviewPayload) => Promise<string[]> | string[]
+  ) => void;
+  clearViewportMultiviewCaptureHandler: () => void;
+  writePngBase64: (payload: GenerationWritePngBase64Payload) => Promise<string>;
   readImageAsDataUrl: (imagePath: string) => Promise<string>;
   openLogPath: (logPath: string) => Promise<{ ok: boolean; path: string; error?: string }>;
   openOutputFolder: (glbPath: string) => Promise<{ ok: boolean; path: string; error?: string }>;
@@ -159,6 +167,10 @@ function ensureGenerationBridge(): VolumiaGenerationBridge {
     !generation.cancel ||
     !generation.check ||
     !generation.test ||
+    !generation.captureViewportMultiview ||
+    !generation.setViewportMultiviewCaptureHandler ||
+    !generation.clearViewportMultiviewCaptureHandler ||
+    !generation.writePngBase64 ||
     !generation.readImageAsDataUrl ||
     !generation.openLogPath ||
     !generation.openOutputFolder ||

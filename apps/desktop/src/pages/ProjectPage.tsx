@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type PropsWithChildren } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Navigate, useParams } from "react-router-dom";
 import { createChatMessage } from "@/projects/factory";
 import { useProjects } from "@/projects/context";
@@ -187,23 +187,6 @@ function getProjectModel(model: ProjectModel | undefined): ProjectModel {
     preset: model?.preset,
     mode: model?.mode ?? "auto",
   };
-}
-
-type ViewportBackgroundProps = {
-  glbPath?: string;
-  glbVersion?: number;
-};
-
-function ViewportBackground({ glbPath, glbVersion }: ViewportBackgroundProps) {
-  return (
-    <div className="absolute inset-4 z-0 overflow-hidden rounded-2xl pointer-events-auto">
-      <ProjectViewport glbPath={glbPath} glbVersion={glbVersion} showUtilityButtons={false} showChrome={false} />
-    </div>
-  );
-}
-
-function UILayer({ children }: PropsWithChildren) {
-  return <div className="relative z-10 h-full w-full pointer-events-none">{children}</div>;
 }
 
 export function ProjectPage() {
@@ -650,81 +633,49 @@ export function ProjectPage() {
   const selectClass = "pointer-events-auto border-[var(--border)] bg-[var(--surface-3)] text-[var(--text)] hover:border-[var(--accent)] focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--focus-ring)]";
 
   return (
-    <div className="relative h-full min-h-0 w-full min-w-0 overflow-hidden p-4">
-      <ViewportBackground glbPath={project.model?.glbPath} glbVersion={project.model?.generatedAt} />
-      <UILayer>
-        <div className={`grid h-full min-h-0 w-full min-w-0 gap-4 ${isAssistantOpen ? "grid-cols-[320px_minmax(0,1fr)_340px]" : "grid-cols-[320px_minmax(0,1fr)]"}`}>
-          <aside className={`pointer-events-auto flex min-h-0 flex-col rounded-2xl p-4 ${floatingPanelClass}`}>
-          <TextField
-            value={project.name}
-            onChange={(event) => renameProject(project.id, event.target.value)}
-            aria-label={t("dashboard.projectNameLabel")}
-            label={t("project.projectName")}
-          />
+    <div className="relative flex h-full min-h-0 w-full min-w-0 overflow-hidden">
+      <div className="relative z-0 flex min-h-0 min-w-0 flex-1">
+        <ProjectViewport
+          glbPath={project.model?.glbPath}
+          glbVersion={project.model?.generatedAt}
+          showUtilityButtons={false}
+          showChrome={false}
+        />
+      </div>
 
-          <div className="mt-4 flex min-h-0 flex-1 flex-col">
-            <h2 className="mb-3 text-[11px] font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">Image to 3D</h2>
-            <div className="mb-3 flex flex-wrap items-center gap-2">
-              <Button variant="secondary" onClick={() => void handleSelectImages()} disabled={isGenerating}>
+      <div className="pointer-events-none absolute inset-0 z-10 flex min-h-0 min-w-0">
+        <section className="pointer-events-none flex min-h-0 min-w-0 flex-1 flex-col gap-3 p-3">
+          <div className={`pointer-events-auto shrink-0 self-start max-w-full rounded-2xl p-3 ${floatingPanelClass}`}>
+            <div className="mb-2 flex flex-wrap items-center gap-2">
+              <Button className="pointer-events-auto" variant="secondary" onClick={() => void handleSelectImages()} disabled={isGenerating}>
                 Agregar imagenes
               </Button>
-              <Button variant="secondary" onClick={() => void handleOpenOutputFolder()} disabled={!project.model?.glbPath}>
+              <Button
+                className="pointer-events-auto"
+                variant="secondary"
+                onClick={() => void handleOpenOutputFolder()}
+                disabled={!project.model?.glbPath}
+              >
                 Abrir salida
               </Button>
             </div>
 
-            {selectedImages.length > 0 ? (
-              <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
-                {selectedImages.map((imagePath) => (
-                  <figure key={imagePath} className={`flex items-center gap-2 overflow-hidden rounded-xl p-2 ${panelSoftClass}`}>
-                    {imagePreviews[imagePath] ? (
-                      <img src={imagePreviews[imagePath]} alt={filenameFromPath(imagePath)} className="h-16 w-16 shrink-0 rounded object-cover" />
-                    ) : (
-                      <div className="h-16 w-16 shrink-0 rounded bg-[var(--surface-3)]" />
-                    )}
-                    <figcaption className="truncate text-[11px] text-[var(--text-muted)]">{filenameFromPath(imagePath)}</figcaption>
-                  </figure>
-                ))}
-              </div>
-            ) : (
-              <p className="text-xs text-[var(--text-muted)]">No hay imagenes seleccionadas.</p>
-            )}
-
-            <div className="mt-3 space-y-1">
-              <div className="h-2 w-full overflow-hidden rounded-full bg-[var(--surface-3)]">
-                <div className="h-full bg-[var(--accent)] transition-all duration-150 ease-out" style={{ width: `${generationPercent}%` }} />
-              </div>
-              <p className="text-xs text-[var(--text-muted)]">
-                {generationStage}: {generationMessage}
-              </p>
-              {generationStage === "error" && generationLogPath ? (
-                <div className="pt-1">
-                  <Button variant="secondary" onClick={() => void handleOpenGenerationLog()}>
-                    Abrir log
-                  </Button>
-                </div>
-              ) : null}
-            </div>
-          </div>
-        </aside>
-
-        <section className="pointer-events-none flex min-h-0 min-w-0 flex-col gap-3">
-          <div className={`pointer-events-none shrink-0 rounded-2xl p-3 ${floatingPanelClass}`}>
             <div className="flex flex-wrap items-center gap-2">
               <select
                 value={preset}
-                onChange={(event) => setPreset(event.target.value as GenerationPreset)}
-                className={`h-9 min-w-32 appearance-none rounded-lg border px-3 text-sm outline-none transition duration-150 ease-out focus:ring-2 focus:ring-[#8c7e6d]/50 ${selectClass}`}
+                onChange={(event) => setPreset(event.currentTarget.value as GenerationPreset)}
+                className={`pointer-events-auto h-9 min-w-32 appearance-none rounded-lg border px-3 text-sm outline-none transition duration-150 ease-out focus:ring-2 focus:ring-[#8c7e6d]/50 ${selectClass}`}
                 disabled={isGenerating}
               >
                 <option value="fast">Fast</option>
                 <option value="balanced">Balanced</option>
                 <option value="quality">Quality</option>
               </select>
+
               <select
                 value={settings.autoGenerationProfile}
-                onChange={(event) => setAutoGenerationProfile(event.target.value as AutoProfile)}
-                className={`h-9 min-w-48 appearance-none rounded-lg border px-3 text-sm outline-none transition duration-150 ease-out focus:ring-2 focus:ring-[#8c7e6d]/50 ${selectClass}`}
+                onChange={(event) => setAutoGenerationProfile(event.currentTarget.value as AutoProfile)}
+                className={`pointer-events-auto h-9 min-w-48 appearance-none rounded-lg border px-3 text-sm outline-none transition duration-150 ease-out focus:ring-2 focus:ring-[#8c7e6d]/50 ${selectClass}`}
                 disabled={isGenerating}
                 aria-label="AUTO mode selector"
               >
@@ -732,10 +683,11 @@ export function ProjectPage() {
                 <option value="hard_surface">HARD-SURFACE</option>
                 <option value="organic">ORGANICO</option>
               </select>
+
               <select
                 value={reconstructionTier}
                 onChange={(event) => {
-                  const nextValue = event.target.value as ReconstructionTier;
+                  const nextValue = event.currentTarget.value as ReconstructionTier;
                   setReconstructionTier(nextValue);
                   if (!hasStoredMultiviewPreferenceRef.current) {
                     setMultiviewEnabled(nextValue === "final");
@@ -746,19 +698,21 @@ export function ProjectPage() {
                     // No-op by design.
                   }
                 }}
-                className={`h-9 min-w-44 appearance-none rounded-lg border px-3 text-sm outline-none transition duration-150 ease-out focus:ring-2 focus:ring-[#8c7e6d]/50 ${selectClass}`}
+                className={`pointer-events-auto h-9 min-w-44 appearance-none rounded-lg border px-3 text-sm outline-none transition duration-150 ease-out focus:ring-2 focus:ring-[#8c7e6d]/50 ${selectClass}`}
                 disabled={isGenerating}
                 aria-label="Reconstruction tier selector"
               >
                 <option value="preview">Preview (rapido)</option>
                 <option value="final">Final (HQ)</option>
               </select>
+
               <label className="pointer-events-auto inline-flex h-9 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface-2)] px-3 text-xs text-[var(--text)]">
                 <input
+                  className="pointer-events-auto"
                   type="checkbox"
                   checked={multiviewEnabled}
                   onChange={(event) => {
-                    const nextValue = event.target.checked;
+                    const nextValue = event.currentTarget.checked;
                     setMultiviewEnabled(nextValue);
                     hasStoredMultiviewPreferenceRef.current = true;
                     try {
@@ -771,10 +725,11 @@ export function ProjectPage() {
                 />
                 Multiview (Local)
               </label>
+
               <select
                 value={multiviewPreset}
-                onChange={(event) => setMultiviewPreset(event.target.value as MultiviewPreset)}
-                className={`h-9 min-w-44 appearance-none rounded-lg border px-3 text-sm outline-none transition duration-150 ease-out focus:ring-2 focus:ring-[#8c7e6d]/50 ${selectClass}`}
+                onChange={(event) => setMultiviewPreset(event.currentTarget.value as MultiviewPreset)}
+                className={`pointer-events-auto h-9 min-w-44 appearance-none rounded-lg border px-3 text-sm outline-none transition duration-150 ease-out focus:ring-2 focus:ring-[#8c7e6d]/50 ${selectClass}`}
                 disabled={isGenerating || !multiviewEnabled}
                 aria-label="Multiview preset selector"
               >
@@ -782,11 +737,12 @@ export function ProjectPage() {
                 <option value="balanced">Balanced</option>
                 <option value="organic">Organic</option>
               </select>
+
               {multiviewPreset === "hard_surface" ? (
                 <select
                   value={multiviewHardSurfaceQuality}
                   onChange={(event) => {
-                    const nextValue = event.target.value as MultiviewHardSurfaceQuality;
+                    const nextValue = event.currentTarget.value as MultiviewHardSurfaceQuality;
                     setMultiviewHardSurfaceQuality(nextValue);
                     try {
                       window.localStorage.setItem(MULTIVIEW_HARD_SURFACE_QUALITY_KEY, nextValue);
@@ -794,7 +750,7 @@ export function ProjectPage() {
                       // No-op by design.
                     }
                   }}
-                  className={`h-9 min-w-36 appearance-none rounded-lg border px-3 text-sm outline-none transition duration-150 ease-out focus:ring-2 focus:ring-[#8c7e6d]/50 ${selectClass}`}
+                  className={`pointer-events-auto h-9 min-w-36 appearance-none rounded-lg border px-3 text-sm outline-none transition duration-150 ease-out focus:ring-2 focus:ring-[#8c7e6d]/50 ${selectClass}`}
                   disabled={isGenerating || !multiviewEnabled}
                   aria-label="HardSurface quality selector"
                 >
@@ -803,6 +759,7 @@ export function ProjectPage() {
                   <option value="pro">Pro</option>
                 </select>
               ) : null}
+
               <Button className="pointer-events-auto" variant="primary" onClick={() => void handleRunGeneration()} disabled={selectedImages.length === 0 || isGenerating}>
                 Generar 3D
               </Button>
@@ -817,111 +774,65 @@ export function ProjectPage() {
               <Button className="pointer-events-auto" variant="ghost" onClick={() => void handleCancelGeneration()} disabled={!isGenerating}>
                 Cancelar
               </Button>
-              <span className="rounded-md border border-[var(--border)] bg-[var(--surface-2)] px-2.5 py-1.5 text-xs text-[var(--text-muted)]">
-                MODE: {formatAutoProfileLabel(settings.autoGenerationProfile)}
-              </span>
-              {autoUsedEngine ? (
-                <span className="rounded-md border border-[var(--border)] bg-[var(--surface-2)] px-2.5 py-1.5 text-xs text-[var(--text-muted)]">
-                  AUTO used: {formatAutoEngineLabel(autoUsedEngine)}
-                </span>
-              ) : null}
-              {autoUsedPreset ? (
-                <span className="rounded-md border border-[var(--border)] bg-[var(--surface-2)] px-2.5 py-1.5 text-xs text-[var(--text-muted)]">
-                  AUTO preset: {formatAutoPresetLabel(autoUsedPreset)}
-                </span>
-              ) : null}
-              {generationDevice ? (
-                <span className="rounded-md border border-[var(--border)] bg-[var(--surface-2)] px-2.5 py-1.5 text-xs text-[var(--text-muted)]">
-                  {generationDevice
-                    ? generationDevice.device === "cuda"
-                      ? `GPU: ${shortDeviceName(generationDevice.name)}`
-                      : "CPU"
-                    : "Detectando..."}
-                </span>
-              ) : null}
-              <Button variant="secondary" className="pointer-events-auto ml-auto" onClick={() => setIsAssistantOpen((current) => !current)}>
-                {isAssistantOpen ? "Ocultar asistente" : "Asistente"}
-              </Button>
             </div>
-          </div>
-
-          <div className="flex-1 min-h-0 min-w-0" aria-hidden />
-
-          <div className={`pointer-events-auto shrink-0 overflow-hidden rounded-2xl ${floatingPanelClass}`}>
-            <button
-              type="button"
-              className="flex h-10 w-full items-center justify-between px-4 text-left text-xs font-medium uppercase tracking-[0.16em] text-[var(--text-muted)] transition-all duration-200 ease-out hover:bg-[var(--surface-2)]/80"
-              onClick={() => setIsNotesOpen((current) => !current)}
-            >
-              <span>{t("project.notes").toUpperCase()}</span>
-              <span>{isNotesOpen ? "OCULTAR" : "MOSTRAR"}</span>
-            </button>
-            {isNotesOpen ? (
-              <div className="h-40 p-3 pt-0">
-                <TextArea
-                  value={project.notes}
-                  onChange={(event) => updateNotes(project.id, event.target.value)}
-                  rows={7}
-                  className="h-full min-h-0 leading-relaxed"
-                  placeholder={t("project.notesPlaceholder")}
-                  label=""
-                />
-              </div>
-            ) : null}
           </div>
         </section>
 
-          {isAssistantOpen ? (
-            <aside className={`pointer-events-auto flex min-h-0 flex-col rounded-2xl p-4 ${floatingPanelClass}`}>
-            <h2 className="mb-3 text-[11px] font-medium uppercase tracking-[0.18em] text-[var(--text-muted)]">{t("project.assistant")}</h2>
-
-            <div className={`min-h-0 flex-1 space-y-3 overflow-y-auto rounded-xl p-3.5 ${panelSoftClass}`}>
-              {project.chatHistory.length === 0 ? <p className="text-sm leading-relaxed text-[var(--text-muted)]">{t("project.noMessages")}</p> : null}
-
-              {project.chatHistory.map((message) => {
-                const isAssistant = message.role === "assistant";
-
-                return (
-                  <article
-                    key={message.id}
-                    className={`rounded-xl border p-3 ${
-                      isAssistant
-                        ? "border-[var(--border)] bg-[var(--surface-1)] text-[var(--text)]"
-                        : "border-[var(--accent)] bg-[var(--surface-2)] text-[var(--text)]"
-                    }`}
+        <aside className="pointer-events-auto min-h-0 w-[360px] max-w-[40vw] p-3">
+          <div className={`flex h-full min-h-0 flex-col rounded-2xl p-3 ${floatingPanelClass}`}>
+            {selectedImages.length > 0 ? (
+              <div className="min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
+                {selectedImages.map((imagePath) => (
+                  <figure
+                    key={imagePath}
+                    className={`flex items-center gap-2 overflow-hidden rounded-xl p-2 ${panelSoftClass}`}
                   >
-                    <header className="mb-1.5 flex items-center justify-between text-[10px] uppercase tracking-[0.16em] text-[var(--text-muted)]">
-                      <span>{isAssistant ? t("project.assistantRole") : t("project.userRole")}</span>
-                      <time>{formatMessageTime(message.createdAt, language)}</time>
-                    </header>
-                    <p className="whitespace-pre-wrap text-sm leading-relaxed">{message.content}</p>
-                  </article>
-                );
-              })}
-              <div ref={historyBottomRef} />
-            </div>
+                    {imagePreviews[imagePath] ? (
+                      <img
+                        src={imagePreviews[imagePath]}
+                        alt={filenameFromPath(imagePath)}
+                        className="h-16 w-16 shrink-0 rounded object-cover"
+                      />
+                    ) : (
+                      <div className="h-16 w-16 shrink-0 rounded bg-[var(--surface-3)]" />
+                    )}
+                    <figcaption className="truncate text-[11px] text-[var(--text-muted)]">
+                      {filenameFromPath(imagePath)}
+                    </figcaption>
+                  </figure>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-[var(--text-muted)]">No hay imagenes seleccionadas.</p>
+            )}
 
-            <div className="mt-3 flex gap-2">
-              <TextField
-                value={chatInput}
-                onChange={(event) => setChatInput(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    submitChat();
-                  }
-                }}
-                placeholder={t("project.promptPlaceholder")}
-                aria-label={t("project.assistant")}
-              />
-              <Button variant="primary" className="min-w-24" onClick={submitChat}>
-                {t("project.send")}
-              </Button>
+            <div className="mt-3 space-y-1">
+              <div className="h-2 w-full overflow-hidden rounded-full bg-[var(--surface-3)]">
+                <div
+                  className="h-full bg-[var(--accent)] transition-all duration-150 ease-out"
+                  style={{ width: `${generationPercent}%` }}
+                />
+              </div>
+
+              <p className="text-xs text-[var(--text-muted)]">
+                {generationStage}: {generationMessage}
+              </p>
+
+              {generationStage === "error" && generationLogPath ? (
+                <div className="pt-1">
+                  <Button
+                    className="pointer-events-auto"
+                    variant="secondary"
+                    onClick={() => void handleOpenGenerationLog()}
+                  >
+                    Abrir log
+                  </Button>
+                </div>
+              ) : null}
             </div>
-            </aside>
-          ) : null}
-        </div>
-      </UILayer>
+          </div>
+        </aside>
+      </div>
     </div>
   );
 }

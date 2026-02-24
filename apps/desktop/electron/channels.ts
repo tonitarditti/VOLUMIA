@@ -252,6 +252,18 @@ export type GenerationRunPayload = {
   sketchupExe?: string;
 };
 
+export type GenerationCaptureViewportMultiviewPayload = {
+  outputDir: string;
+  baseName: string;
+  width: number;
+  height: number;
+};
+
+export type GenerationWritePngBase64Payload = {
+  outputPath: string;
+  base64: string;
+};
+
 export type GenerationRunResult =
   | {
       ok: true;
