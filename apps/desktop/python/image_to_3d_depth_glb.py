@@ -1284,7 +1284,9 @@ def run_auto_pipeline(
     runtime_device: str,
     auto_profile: str = "auto",
     multiview_dir: str = "",
+    tier: str = "final",
 ) -> str:
+    preview_mode = tier == "preview"
     errors: List[str] = []
     preprocess_info: Dict[str, Any] = {}
     quick_scores: Dict[str, Any] = {}
@@ -1374,22 +1376,27 @@ def run_auto_pipeline(
         auto_preset = "hard_surface"
         auto_preset_reason = f"classifier hard_surface_score={hard_surface_score:.3f}"
     else:
-        emit_progress("neural_bootstrap", 38, "Selecting AUTO preset (HardSurface/Organic)")
-        try:
-            auto_preset, auto_preset_reason, quick_scores = _select_auto_triposr_preset(
-                clean_image_path=clean_image_path,
-                out_path=out_path,
-                runtime_device=runtime_device,
-                class_label=str(preprocess_info.get("class_label", "")),
-                class_confidence=float(preprocess_info.get("class_confidence", 0.0)),
-                curvature=float(preprocess_info.get("curvature", 0.0)),
-            )
-        except Exception as preset_error:
+        if preview_mode:
             auto_preset = "organic"
-            auto_preset_reason = f"preset selection fallback: {preset_error}"
+            auto_preset_reason = "preview tier: skipping AUTO quick-pass preset selection"
             quick_scores = {}
-            errors.append(f"preset selection warning: {preset_error}")
-            log_error(f"[AUTO] preset selection warning: {preset_error}")
+        else:
+            emit_progress("neural_bootstrap", 38, "Selecting AUTO preset (HardSurface/Organic)")
+            try:
+                auto_preset, auto_preset_reason, quick_scores = _select_auto_triposr_preset(
+                    clean_image_path=clean_image_path,
+                    out_path=out_path,
+                    runtime_device=runtime_device,
+                    class_label=str(preprocess_info.get("class_label", "")),
+                    class_confidence=float(preprocess_info.get("class_confidence", 0.0)),
+                    curvature=float(preprocess_info.get("curvature", 0.0)),
+                )
+            except Exception as preset_error:
+                auto_preset = "organic"
+                auto_preset_reason = f"preset selection fallback: {preset_error}"
+                quick_scores = {}
+                errors.append(f"preset selection warning: {preset_error}")
+                log_error(f"[AUTO] preset selection warning: {preset_error}")
 
     if has_strong_furniture_label and profile != "organic":
         auto_preset = "hard_surface"
@@ -1398,6 +1405,7 @@ def run_auto_pipeline(
     use_hard_surface_route = profile == "hard_surface" or (profile != "organic" and is_hard_surface)
     use_architecture_route = profile == "auto" and (not use_hard_surface_route) and is_architecture_scene
     log(f"[AUTO][PRESET] selected={auto_preset} reason={auto_preset_reason}")
+    log(f"[AUTO][TIER] tier={tier} quality={quality}")
     log(
         f"[AUTO][ROUTER] hard_surface={use_hard_surface_route} "
         f"architecture={use_architecture_route} profile={profile}"
@@ -1429,11 +1437,18 @@ def run_auto_pipeline(
     def try_triposr(raise_on_missing_pymcubes: bool) -> bool:
         nonlocal final_score
         try:
-            emit_progress("neural_generate", 44, f"Generating with TripoSR ({auto_preset})")
+            triposr_preset = auto_preset
+            if preview_mode:
+                if auto_preset == "hard_surface":
+                    triposr_preset = "hard_surface_quick"
+                elif auto_preset == "organic":
+                    triposr_preset = "organic_quick"
+            log(f"[AUTO][TRIPOSR] tier={tier} preset={triposr_preset}")
+            emit_progress("neural_generate", 44, f"Generating with TripoSR ({triposr_preset})")
             run_triposr(
                 image_path=clean_image_path,
                 out_glb_path=out_path,
-                preset=auto_preset,
+                preset=triposr_preset,
                 device=runtime_device,
                 views_dir=resolved_multiview_dir,
             )
@@ -1446,16 +1461,24 @@ def run_auto_pipeline(
             final_score = _score_glb_mesh(out_path)
             if final_score.get("ok"):
                 log(
-                    f"[AUTO][SCORE] final preset={auto_preset} score={float(final_score.get('score', 0.0)):.4f} "
+                    f"[AUTO][SCORE] final preset={triposr_preset} score={float(final_score.get('score', 0.0)):.4f} "
                     f"components={final_score.get('components', 0)} degenerate={final_score.get('degenerate_faces', 0)} "
                     f"bbox_ratio={float(final_score.get('bbox_ratio', float('inf'))):.4f} "
                     f"base_flat={final_score.get('base_flat', False)}"
                 )
             else:
-                log_error(f"[AUTO][SCORE] final preset={auto_preset} failed: {final_score.get('reason', 'unknown')}")
+                log_error(f"[AUTO][SCORE] final preset={triposr_preset} failed: {final_score.get('reason', 'unknown')}")
 
-            emit_progress("gate1", 56, "Evaluating neural quality gate")
-            gate = quality_gate(out_path)
+            if preview_mode:
+                emit_progress("gate1", 56, "Preview tier: skipping strict quality gate")
+                gate = {
+                    "ok": True,
+                    "metrics": {"tier": tier, "preset": triposr_preset},
+                    "reason": "preview tier accepted",
+                }
+            else:
+                emit_progress("gate1", 56, "Evaluating neural quality gate")
+                gate = quality_gate(out_path)
             if gate.get("ok"):
                 emit_progress("export", 95, "Exporting GLB")
                 write_meta("triposr", gate)
@@ -1596,6 +1619,8 @@ def run_auto_pipeline(
         emit_progress("neural_bootstrap", 40, "AUTO hard-surface route: TripoSR preferred")
         if try_triposr(raise_on_missing_pymcubes=False):
             return "triposr"
+        if preview_mode and try_blockout():
+            return "blockout"
         if try_instantmesh():
             return "instantmesh"
         if try_blockout():
@@ -1604,6 +1629,10 @@ def run_auto_pipeline(
 
     if use_architecture_route:
         emit_progress("neural_bootstrap", 40, "AUTO architecture route: InstantMesh/ARCH preferred")
+        if preview_mode and try_arch():
+            return "arch"
+        if preview_mode and try_blockout():
+            return "blockout"
         if try_instantmesh():
             return "instantmesh"
         if try_arch():
@@ -1615,6 +1644,10 @@ def run_auto_pipeline(
         raise RuntimeError("AUTO architecture pipeline failed after InstantMesh, ARCH and blockout fallbacks.")
 
     emit_progress("neural_bootstrap", 40, "AUTO organic/default route")
+    if preview_mode and try_triposr(raise_on_missing_pymcubes=False):
+        return "triposr"
+    if preview_mode and try_blockout():
+        return "blockout"
     if try_instantmesh():
         return "instantmesh"
     if try_triposr(raise_on_missing_pymcubes=True):
@@ -3712,6 +3745,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--in", dest="in_path", required=True, help="Input image path")
     parser.add_argument("--out", dest="out_path", required=True, help="Output GLB path")
     parser.add_argument("--quality", choices=["fast", "balanced", "high"], default="balanced")
+    parser.add_argument("--tier", choices=["preview", "final"], default="final")
     parser.add_argument("--mode", choices=["auto", "neural", "architectural"], default="auto")
     parser.add_argument("--auto-profile", choices=["auto", "hard_surface", "organic"], default="auto")
     parser.add_argument("--multiview-dir", default="", help="Optional ComfyUI multiview directory (3-6 PNGs)")
@@ -3789,9 +3823,21 @@ def main() -> int:
     import numpy as np
     from PIL import Image
 
+    tier = str(args.tier or "final").strip().lower()
+    if tier not in {"preview", "final"}:
+        tier = "final"
+    effective_quality = "fast" if tier == "preview" else args.quality
+    quality_profile = _quality_profile(effective_quality)
+
     log(f"in: {in_path}")
     log(f"out: {out_path}")
     log(f"quality: {args.quality}")
+    log(f"reconstruction_tier: {tier}")
+    log(f"effective_quality: {effective_quality}")
+    log(
+        f"[RECON] tier={tier} max_side={int(quality_profile['max_side'])} "
+        f"step={int(quality_profile['step'])} retry_high_density={'off' if tier == 'preview' else 'on'}"
+    )
     log(f"mode: {args.mode}")
     log(f"auto_profile: {args.auto_profile}")
     log(f"multiview_dir: {args.multiview_dir or '(disabled)'}")
@@ -3810,10 +3856,11 @@ def main() -> int:
             used_engine = run_auto_pipeline(
                 image_path=in_path,
                 out_path=out_path,
-                quality=args.quality,
+                quality=effective_quality,
                 runtime_device=runtime_device,
                 auto_profile=args.auto_profile,
                 multiview_dir=args.multiview_dir,
+                tier=tier,
             )
             if not os.path.exists(out_path):
                 raise RuntimeError(f"AUTO output missing: {out_path}")
@@ -3829,7 +3876,7 @@ def main() -> int:
         if args.mode == "architectural":
             emit_progress("preprocess", 9, "Modo arquitectonico activo")
             try:
-                run_architectural_pipeline(in_path, out_path, args.quality)
+                run_architectural_pipeline(in_path, out_path, effective_quality)
                 emit_progress("done", 100, "Modelo 3D listo (arquitectonico)")
                 return 0
             except Exception as arch_error:
@@ -3888,7 +3935,7 @@ def main() -> int:
             rgb=rgb,
             depth=depth,
             objects=objects,
-            quality=args.quality,
+            quality=effective_quality,
         )
 
         emit_progress("normalize", 88, "Normalizando malla para export")
@@ -3903,7 +3950,7 @@ def main() -> int:
             export_mesh=normalized_mesh,
         )
         detail_low = total_vertices < MIN_VERTS or total_faces < MIN_FACES
-        if detail_low:
+        if detail_low and tier != "preview":
             log(
                 f"[RETRY] reason=low_detail attempt=1 verts={total_vertices} "
                 f"faces={total_faces} -> increasing density"

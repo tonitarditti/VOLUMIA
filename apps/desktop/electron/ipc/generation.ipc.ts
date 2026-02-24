@@ -18,6 +18,7 @@ import {
   type GenerationPipeline,
   type GenerationProgressPayload,
   type GenerationPreset,
+  type ReconstructionTier,
   type GenerationRunPayload,
   type GenerationSkpQuality,
   type GenerationTestResult,
@@ -77,7 +78,7 @@ type GenerationRunHandlerResult = GenerationRunSuccessResult | GenerationRunErro
 type ResolvedPythonCommand = {
   cmd: string;
   prefixArgs: string[];
-  source: "env" | "conda_prefix" | "common_path" | "requested" | "path_fallback";
+  source: "env" | "requested" | "conda_prefix" | "common_path" | "custom";
 };
 type GenerationRunPayloadDepth = GenerationRunPayload & {
   pipeline?: "depth_glb";
@@ -105,6 +106,7 @@ type LocalGenerationContext = {
   multiviewEnabled: boolean;
   multiviewPreset: GenerationMultiviewPreset;
   multiviewHardSurfaceQuality?: GenerationMultiviewHardSurfaceQuality;
+  reconstructionTier: ReconstructionTier;
   multiviewViewsDir?: string;
   multiviewLogs: string[];
   multiviewFallbackReason?: string;
@@ -120,6 +122,8 @@ const STDOUT_TAIL_LINES = 8;
 const STDERR_PREVIEW_CHARS = 2_000;
 const DEFAULT_CONDA_PYTHON = "F:\\MINICONDA\\envs\\volumia\\python.exe";
 const COMFYUI_BASE_URL = "http://127.0.0.1:8188";
+const DEBUG_GENERATION = process.env.VOLUMIA_DEBUG_GENERATION === "1";
+const DEBUG_COMFYUI = process.env.VOLUMIA_DEBUG_COMFYUI === "1";
 let generationLogFilePath: string | null = null;
 
 function formatLogArg(value: unknown) {
@@ -412,6 +416,27 @@ function getArgValue(args: string[], flag: string) {
   return args[index + 1];
 }
 
+function quoteCommandArg(value: string) {
+  if (value.length === 0) {
+    return "\"\"";
+  }
+  if (!/[\s"]/u.test(value)) {
+    return value;
+  }
+  return `"${value.replace(/"/g, '\\"')}"`;
+}
+
+function resolveAndValidatePythonExecutablePath(rawPythonPath: string) {
+  const resolvedPythonPath = path.resolve(rawPythonPath);
+  if (!path.isAbsolute(resolvedPythonPath)) {
+    throw new Error(`[VOLUMIA][PY] Python path must be absolute: ${rawPythonPath}`);
+  }
+  if (!fs.existsSync(resolvedPythonPath)) {
+    throw new Error(`[VOLUMIA][PY] Python executable not found: ${resolvedPythonPath}`);
+  }
+  return resolvedPythonPath;
+}
+
 function runPython(
   pythonPath: string,
   scriptPath: string,
@@ -421,19 +446,22 @@ function runPython(
   prefixArgs: string[] = []
 ) {
   return new Promise<{ stdout: string; stderr: string; code: number }>((resolvePromise, rejectPromise) => {
-    logInfo("[VOLUMIA] Using Python:", pythonPath);
+    const resolvedPythonPath = resolveAndValidatePythonExecutablePath(pythonPath);
+    console.log("[VOLUMIA][PY] Executable:", resolvedPythonPath);
+    logInfo("[VOLUMIA] Using Python:", resolvedPythonPath);
     const outPath = getArgValue(args, "--out");
     const commandArgs = [...prefixArgs, scriptPath, ...args];
     logInfo(
       "[VOLUMIA][PY] spawn",
-      `python=${pythonPath}`,
+      `python=${resolvedPythonPath}`,
       `prefix=${JSON.stringify(prefixArgs)}`,
       `script=${scriptPath}`,
       `args=${JSON.stringify(args)}`,
       `out=${outPath || "n/a"}`
     );
-    const p = spawn(pythonPath, commandArgs, {
+    const p = spawn(resolvedPythonPath, commandArgs, {
       windowsHide: true,
+      shell: false,
       env: spawnEnv,
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -457,7 +485,7 @@ function runPython(
 
     p.on("error", (error) => {
       stderr = capOutput(stderr, `\n${asErrorMessage(error)}`, MAX_STDERR_CHARS);
-      logErr("[VOLUMIA][PY] spawn error", `python=${pythonPath}`, `script=${scriptPath}`, `out=${outPath || "n/a"}`);
+      logErr("[VOLUMIA][PY] spawn error", `python=${resolvedPythonPath}`, `script=${scriptPath}`, `out=${outPath || "n/a"}`);
       rejectOnce(createPythonError(-1, null, stdout, stderr, extractPythonStructuredError(stdout, stderr)));
     });
 
@@ -473,7 +501,7 @@ function runPython(
       const exitCode = code ?? -1;
       logInfo(
         "[VOLUMIA][PY]",
-        `python=${pythonPath}`,
+        `python=${resolvedPythonPath}`,
         `script=${scriptPath}`,
         `out=${outPath || "n/a"}`,
         `exit=${exitCode}`
@@ -550,6 +578,18 @@ function isGenerationMultiviewHardSurfaceQuality(value: unknown): value is Gener
   return value === "fast" || value === "balanced" || value === "pro";
 }
 
+function isReconstructionTier(value: unknown): value is ReconstructionTier {
+  return value === "preview" || value === "final";
+}
+
+function resolveReconstructionTier(value: ReconstructionTier | undefined): ReconstructionTier {
+  if (value === "preview" || value === "final") {
+    return value;
+  }
+  // Preserve historical behavior for callers that do not send the new optional field.
+  return "final";
+}
+
 function resolveGenerationAutoProfile(value: GenerationAutoProfile | undefined): GenerationAutoProfile {
   if (value === "hard_surface" || value === "organic" || value === "auto") {
     return value;
@@ -570,7 +610,51 @@ function resolveGenerationMultiviewPreset(
   if (autoProfile === "organic") {
     return "organic";
   }
-  return "balanced";
+  return "hard_surface";
+}
+
+type TierAwareMultiviewOverride = {
+  width: number;
+  height: number;
+  steps: number;
+  cfg: number;
+  denoise: number;
+  controlStrength: number;
+  cannyLow: number;
+  cannyHigh: number;
+};
+
+const PREVIEW_MULTIVIEW_OVERRIDE: TierAwareMultiviewOverride = {
+  width: 768,
+  height: 768,
+  steps: 16,
+  cfg: 6.2,
+  denoise: 0.32,
+  controlStrength: 0.95,
+  cannyLow: 0.28,
+  cannyHigh: 0.75,
+};
+
+const FINAL_MULTIVIEW_OVERRIDE: TierAwareMultiviewOverride = {
+  width: 1024,
+  height: 1024,
+  steps: 28,
+  cfg: 6.5,
+  denoise: 0.32,
+  controlStrength: 0.95,
+  cannyLow: 0.28,
+  cannyHigh: 0.75,
+};
+
+function applyTierAwareMultiviewOverrides(
+  params: ReturnType<typeof resolveComfyMultiviewPresetConfig>["params"],
+  reconstructionTier: ReconstructionTier
+) {
+  const override = reconstructionTier === "preview" ? PREVIEW_MULTIVIEW_OVERRIDE : FINAL_MULTIVIEW_OVERRIDE;
+  return {
+    ...params,
+    ...override,
+  };
 }
 
 function isPathLikePython(value: string) {
@@ -583,17 +667,74 @@ function isPathLikePython(value: string) {
 }
 
 function isValidPythonCommand(cmd: string, prefixArgs: string[], spawnEnv?: NodeJS.ProcessEnv) {
+  if (!path.isAbsolute(cmd) || !fs.existsSync(cmd)) {
+    return false;
+  }
   try {
-    const result = spawnSync(cmd, [...prefixArgs, "--version"], {
+    const pythonVersion = spawnSync(cmd, [...prefixArgs, "--version"], {
       windowsHide: true,
       shell: false,
       encoding: "utf8",
       env: spawnEnv,
     });
-    const output = `${result.stdout ?? ""}${result.stderr ?? ""}`;
-    return result.status === 0 && output.includes("Python");
+    const versionOutput = `${pythonVersion.stdout ?? ""}${pythonVersion.stderr ?? ""}`;
+    if (!(pythonVersion.status === 0 && versionOutput.includes("Python"))) {
+      return false;
+    }
+    const pipVersion = spawnSync(cmd, [...prefixArgs, "-m", "pip", "--version"], {
+      windowsHide: true,
+      shell: false,
+      encoding: "utf8",
+      env: spawnEnv,
+    });
+    return pipVersion.status === 0;
   } catch {
     return false;
+  }
+}
+
+function isCondaVolumiaActive() {
+  const condaPrefix = (process.env.CONDA_PREFIX ?? "").trim();
+  if (!condaPrefix) {
+    return false;
+  }
+  const activeEnvName = (process.env.CONDA_DEFAULT_ENV ?? "").trim().toLowerCase();
+  if (activeEnvName === "volumia") {
+    return true;
+  }
+  return path.basename(condaPrefix).trim().toLowerCase() === "volumia";
+}
+
+function validateTorchCudaReadiness(cmd: string, prefixArgs: string[], spawnEnv?: NodeJS.ProcessEnv) {
+  try {
+    const result = spawnSync(
+      cmd,
+      [
+        ...prefixArgs,
+        "-c",
+        "import torch, sys; sys.exit(0 if torch.cuda.is_available() else 3)",
+      ],
+      {
+        windowsHide: true,
+        shell: false,
+        encoding: "utf8",
+        env: spawnEnv,
+      }
+    );
+    const status = result.status ?? -1;
+    const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+    if (status === 0) {
+      return { valid: true as const, reason: "" };
+    }
+    if (/No module named ['"]torch['"]|ModuleNotFoundError:.*torch/i.test(output)) {
+      return { valid: false as const, reason: "torch missing" };
+    }
+    if (status === 3) {
+      return { valid: false as const, reason: "CUDA not available" };
+    }
+    return { valid: false as const, reason: `probe failed (exit ${status})` };
+  } catch {
+    return { valid: false as const, reason: "probe failed" };
   }
 }
 
@@ -604,71 +745,115 @@ function sanitizeCandidatePath(candidate: string) {
 }
 
 function collectPythonPathCandidates(requestedPath?: string) {
-  const candidates: Array<{ path: string; source: ResolvedPythonCommand["source"] }> = [];
+  const candidates: Array<{ path: string; source: ResolvedPythonCommand["source"]; priority: number; order: number }> = [];
   const seen = new Set<string>();
   const userProfile = (process.env.USERPROFILE ?? "").trim();
   const condaPrefix = (process.env.CONDA_PREFIX ?? "").trim();
   const preferredEnvPath = (process.env.VOLUMIA_PYTHON ?? "").trim();
   const requested = typeof requestedPath === "string" ? requestedPath.trim() : "";
+  const condaPrefixPythonPath = condaPrefix ? path.join(condaPrefix, "python.exe") : "";
   const commonPaths = [
     DEFAULT_CONDA_PYTHON,
     userProfile ? path.join(userProfile, "miniconda3", "envs", "volumia", "python.exe") : "",
     userProfile ? path.join(userProfile, "anaconda3", "envs", "volumia", "python.exe") : "",
   ];
+  const fallbackCustomPaths = [
+    (process.env.VOLUMIA_PYTHON_PATH ?? "").trim(),
+  ];
 
-  const addPathCandidate = (value: string, source: ResolvedPythonCommand["source"]) => {
+  const addPathCandidate = (value: string, source: ResolvedPythonCommand["source"], priority: number) => {
     if (!value.trim()) {
       return;
     }
     const cleanPath = sanitizeCandidatePath(value);
-    const normalized = path.normalize(cleanPath);
+    const normalized = path.normalize(path.isAbsolute(cleanPath) ? cleanPath : path.resolve(cleanPath));
     const dedupeKey = normalized.toLowerCase();
     if (seen.has(dedupeKey)) {
       return;
     }
     seen.add(dedupeKey);
-    candidates.push({ path: normalized, source });
+    candidates.push({ path: normalized, source, priority, order: candidates.length });
   };
 
-  addPathCandidate(preferredEnvPath, "env");
-  if (condaPrefix) {
-    addPathCandidate(path.join(condaPrefix, "python.exe"), "conda_prefix");
-  }
+  addPathCandidate(preferredEnvPath, "env", 1);
+  addPathCandidate(requested, "requested", 2);
   for (const candidatePath of commonPaths) {
-    addPathCandidate(candidatePath, "common_path");
+    addPathCandidate(candidatePath, "common_path", 3);
   }
-  addPathCandidate(requested, "requested");
+  if (isCondaVolumiaActive()) {
+    addPathCandidate(condaPrefixPythonPath, "conda_prefix", 3);
+  }
+  addPathCandidate(condaPrefixPythonPath, "conda_prefix", 4);
+  for (const fallbackPath of fallbackCustomPaths) {
+    addPathCandidate(fallbackPath, "custom", 4);
+  }
+
+  candidates.sort((left, right) => {
+    if (left.priority !== right.priority) {
+      return left.priority - right.priority;
+    }
+    return left.order - right.order;
+  });
 
   return candidates;
 }
 
 function resolvePythonCommand(pythonPath?: string): ResolvedPythonCommand | null {
-  for (const candidate of collectPythonPathCandidates(pythonPath)) {
+  const candidates = collectPythonPathCandidates(pythonPath);
+  if (DEBUG_GENERATION) {
+    logInfo(
+      "[gen][debug] discovered python candidates:",
+      candidates.map((candidate) => `${candidate.source}:${candidate.path}`)
+    );
+  }
+
+  const validatedCandidates: Array<{ path: string; source: ResolvedPythonCommand["source"]; priority: number; order: number }> = [];
+
+  for (const candidate of candidates) {
     if (!fs.existsSync(candidate.path)) {
       logErr("[gen] python candidate missing", `source=${candidate.source}`, `path=${candidate.path}`);
+      continue;
+    }
+    if (!path.isAbsolute(candidate.path)) {
+      logErr("[gen] python candidate non-absolute", `source=${candidate.source}`, `path=${candidate.path}`);
       continue;
     }
     if (!isValidPythonCommand(candidate.path, [])) {
       logErr("[gen] python candidate invalid", `source=${candidate.source}`, `path=${candidate.path}`);
       continue;
     }
-    return { cmd: candidate.path, prefixArgs: [], source: candidate.source };
+    const readiness = validateTorchCudaReadiness(candidate.path, []);
+    if (!readiness.valid) {
+      if (DEBUG_GENERATION) {
+        logInfo("[gen][debug] python rejected", `source=${candidate.source}`, `path=${candidate.path}`, `reason=${readiness.reason}`);
+      }
+      continue;
+    }
+    validatedCandidates.push(candidate);
   }
 
-  if (isValidPythonCommand("python", [])) {
-    logErr(
-      "[gen] WARNING: falling back to PATH python. Set VOLUMIA_PYTHON or activate the conda env 'volumia' to force the correct interpreter."
-    );
-    return { cmd: "python", prefixArgs: [], source: "path_fallback" };
+  if (validatedCandidates.length > 0) {
+    const topPriority = Math.min(...validatedCandidates.map((candidate) => candidate.priority));
+    const topPriorityCandidates = validatedCandidates.filter((candidate) => candidate.priority === topPriority);
+    const selected =
+      topPriorityCandidates.find((candidate) => candidate.path.toLowerCase().includes("\\envs\\volumia\\")) ??
+      topPriorityCandidates[0];
+    if (DEBUG_GENERATION) {
+      logInfo("[gen][debug] final selected interpreter:", `${selected.source}:${selected.path}`);
+    }
+    return { cmd: selected.path, prefixArgs: [], source: selected.source };
   }
 
+  if (DEBUG_GENERATION) {
+    logInfo("[gen][debug] final selected interpreter:", "(none)");
+  }
   return null;
 }
 
 function formatPythonCommand(command: ResolvedPythonCommand | null, requestedPath?: string) {
   if (!command) {
     const trimmed = typeof requestedPath === "string" ? requestedPath.trim() : "";
-    return trimmed || "python";
+    return trimmed || "(not found)";
   }
   if (command.prefixArgs.length > 0) {
     return `${command.cmd} ${command.prefixArgs.join(" ")}`.trim();
@@ -684,7 +869,9 @@ function runPythonPreflight(command: ResolvedPythonCommand, spawnEnv: NodeJS.Pro
   ];
   const commandLabel = formatPythonCommand(command);
   try {
-    const result = spawnSync(command.cmd, preflightArgs, {
+    const resolvedPythonPath = resolveAndValidatePythonExecutablePath(command.cmd);
+    console.log("[VOLUMIA][PY] Executable:", resolvedPythonPath);
+    const result = spawnSync(resolvedPythonPath, preflightArgs, {
       windowsHide: true,
       shell: false,
       encoding: "utf8",
@@ -740,6 +927,7 @@ function validateRunPayload(payload: unknown): payload is GenerationRunPayload {
       candidate.outputDir.trim().length > 0 &&
       isGenerationSkpQuality(candidate.quality) &&
       (typeof candidate.sketchupExe === "undefined" || typeof candidate.sketchupExe === "string") &&
+      (typeof candidate.reconstructionTier === "undefined" || isReconstructionTier(candidate.reconstructionTier)) &&
       (typeof candidate.pythonPath === "undefined" || typeof candidate.pythonPath === "string")
     );
   }
@@ -756,6 +944,7 @@ function validateRunPayload(payload: unknown): payload is GenerationRunPayload {
       typeof candidate.multiviewHardSurfaceQuality === "undefined" ||
       isGenerationMultiviewHardSurfaceQuality(candidate.multiviewHardSurfaceQuality)
     ) &&
+    (typeof candidate.reconstructionTier === "undefined" || isReconstructionTier(candidate.reconstructionTier)) &&
     (typeof candidate.pythonPath === "undefined" || typeof candidate.pythonPath === "string")
   );
 }
@@ -833,6 +1022,26 @@ function mapPresetToQuality(preset: GenerationPreset): "fast" | "balanced" | "hi
     return "high";
   }
   return preset;
+}
+
+function mapReconstructionTierToDepthQuality(
+  tier: ReconstructionTier,
+  preset: GenerationPreset
+): "fast" | "balanced" | "high" {
+  if (tier === "preview") {
+    return "fast";
+  }
+  return mapPresetToQuality(preset);
+}
+
+function mapReconstructionTierToSkpQuality(
+  tier: ReconstructionTier,
+  requestedQuality: GenerationSkpQuality
+): GenerationSkpQuality {
+  if (tier === "preview") {
+    return "fast";
+  }
+  return requestedQuality;
 }
 
 function resolveGenerationMode(mode: GenerationMode | undefined): GenerationMode {
@@ -1020,8 +1229,12 @@ async function runLocalPythonGeneration(
   scriptPath: string,
   pythonCommand: ResolvedPythonCommand,
   projectAssetsDir: string,
-  context?: LocalGenerationContext
+  options: {
+    reconstructionTier: ReconstructionTier;
+    context?: LocalGenerationContext;
+  }
 ): Promise<LocalGenerationResult> {
+  const { reconstructionTier, context } = options;
   const logs: string[] = [];
   let device: GenerationDevice | undefined;
   let outGlb = "";
@@ -1029,6 +1242,12 @@ async function runLocalPythonGeneration(
   const logsDir = ensureProjectLogsDir(projectAssetsDir);
 
   try {
+    const resolvedPythonPath = resolveAndValidatePythonExecutablePath(pythonCommand.cmd);
+    const resolvedPythonCommand: ResolvedPythonCommand = {
+      ...pythonCommand,
+      cmd: resolvedPythonPath,
+    };
+    console.log("[VOLUMIA][PY] Executable:", resolvedPythonPath);
     outGlb = path.join(projectAssetsDir, "latest.glb");
     const modelsDir = path.join(projectAssetsDir, "models");
     const pipDir = path.join(projectAssetsDir, "pip");
@@ -1050,12 +1269,14 @@ async function runLocalPythonGeneration(
       PIP_CACHE_DIR: pipDir,
       VOLUMIA_FORCE_DEVICE: "cuda",
     };
-    const preflight = runPythonPreflight(pythonCommand, spawnEnv);
+    const preflight = runPythonPreflight(resolvedPythonCommand, spawnEnv);
     preflightOutput = preflight.output;
     logInfo("[VOLUMIA] OpenMP duplicate workaround enabled");
     const generationMode = resolveGenerationMode(payload.mode);
     const autoProfile = resolveGenerationAutoProfile(payload.autoProfile);
+    const reconstructionQuality = mapReconstructionTierToDepthQuality(reconstructionTier, payload.preset);
     logInfo("[gen] autoProfile:", autoProfile);
+    logInfo("[gen] reconstruction tier:", reconstructionTier, "quality:", reconstructionQuality);
 
     const pythonArgs = [
       "--in",
@@ -1063,7 +1284,9 @@ async function runLocalPythonGeneration(
       "--out",
       outGlb,
       "--quality",
-      mapPresetToQuality(payload.preset),
+      reconstructionQuality,
+      "--tier",
+      reconstructionTier,
       "--mode",
       generationMode,
       "--auto-profile",
@@ -1074,16 +1297,21 @@ async function runLocalPythonGeneration(
     if (context?.multiviewViewsDir) {
       pythonArgs.push("--multiview-dir", context.multiviewViewsDir);
     }
+    if (DEBUG_GENERATION) {
+      const commandArgs = [...resolvedPythonCommand.prefixArgs, scriptPath, ...pythonArgs];
+      const prettyCommand = [resolvedPythonCommand.cmd, ...commandArgs].map(quoteCommandArg).join(" ");
+      logInfo("[gen][debug] python command:", prettyCommand);
+    }
 
     const { stdout, stderr, code } = await runPython(
-      pythonCommand.cmd,
+      resolvedPythonCommand.cmd,
       scriptPath,
       pythonArgs,
       spawnEnv,
       (process) => {
         job.process = process;
       },
-      pythonCommand.prefixArgs
+      resolvedPythonCommand.prefixArgs
     ).finally(() => {
       job.process = null;
     });
@@ -1105,6 +1333,7 @@ async function runLocalPythonGeneration(
     const contextSections: Array<{ title: string; content: string }> = [];
     if (context?.multiviewEnabled) {
       const multiviewDetails = [
+        `reconstruction_tier=${context.reconstructionTier}`,
         `preset=${context.multiviewPreset}`,
         context.multiviewHardSurfaceQuality ? `quality=${context.multiviewHardSurfaceQuality}` : "",
         context.multiviewViewsDir ? `views_dir=${context.multiviewViewsDir}` : "",
@@ -1201,6 +1430,7 @@ async function runLocalPythonGeneration(
     const contextSections: Array<{ title: string; content: string }> = [];
     if (context?.multiviewEnabled) {
       const multiviewDetails = [
+        `reconstruction_tier=${context.reconstructionTier}`,
         `preset=${context.multiviewPreset}`,
         context.multiviewHardSurfaceQuality ? `quality=${context.multiviewHardSurfaceQuality}` : "",
         context.multiviewViewsDir ? `views_dir=${context.multiviewViewsDir}` : "",
@@ -1237,7 +1467,8 @@ async function runGenSkpPythonGeneration(
   job: GenerationJobState,
   getWindow: WindowGetter,
   scriptPath: string,
-  pythonCommand: ResolvedPythonCommand
+  pythonCommand: ResolvedPythonCommand,
+  reconstructionTier: ReconstructionTier
 ): Promise<GenSkpPythonResult> {
   const logs: string[] = [];
   const outputDir = resolve(payload.outputDir);
@@ -1245,7 +1476,14 @@ async function runGenSkpPythonGeneration(
   let preflightOutput = "";
 
   try {
+    const resolvedPythonPath = resolveAndValidatePythonExecutablePath(pythonCommand.cmd);
+    const resolvedPythonCommand: ResolvedPythonCommand = {
+      ...pythonCommand,
+      cmd: resolvedPythonPath,
+    };
+    console.log("[VOLUMIA][PY] Executable:", resolvedPythonPath);
     const inputs = payload.inputs.map((value) => resolve(value));
+    const skpQuality = mapReconstructionTierToSkpQuality(reconstructionTier, payload.quality);
     const args: string[] = [
       "--inputs",
       ...inputs,
@@ -1256,7 +1494,7 @@ async function runGenSkpPythonGeneration(
       "--output_dir",
       resolve(payload.outputDir),
       "--quality",
-      payload.quality,
+      skpQuality,
     ];
     if (typeof payload.sketchupExe === "string" && payload.sketchupExe.trim().length > 0) {
       args.push("--sketchup_exe", payload.sketchupExe.trim());
@@ -1270,18 +1508,18 @@ async function runGenSkpPythonGeneration(
       HF_HUB_DISABLE_PROGRESS_BARS: "1",
       VOLUMIA_FORCE_DEVICE: "cuda",
     };
-    const preflight = runPythonPreflight(pythonCommand, spawnEnv);
+    const preflight = runPythonPreflight(resolvedPythonCommand, spawnEnv);
     preflightOutput = preflight.output;
 
     const { stdout, stderr } = await runPython(
-      pythonCommand.cmd,
+      resolvedPythonCommand.cmd,
       scriptPath,
       args,
       spawnEnv,
       (process) => {
         job.process = process;
       },
-      pythonCommand.prefixArgs
+      resolvedPythonCommand.prefixArgs
     ).finally(() => {
       job.process = null;
     });
@@ -1382,6 +1620,8 @@ async function runGenerationJob(
   getWindow: WindowGetter,
   job: GenerationJobState
 ): Promise<{ outPath: string; device?: GenerationDevice; logPath?: string }> {
+  const reconstructionTier = resolveReconstructionTier(payload.reconstructionTier);
+
   if ((payload.pipeline ?? "depth_glb") === "gen_skp") {
     const genPayload = payload as GenerationRunPayloadGenSkp;
     const projectId = genPayload.projectId;
@@ -1406,7 +1646,7 @@ async function runGenerationJob(
       message: "Preparando pipeline SKP IA...",
     });
 
-    const skpResult = await runGenSkpPythonGeneration(genPayload, job, getWindow, scriptPath, resolvedPython);
+    const skpResult = await runGenSkpPythonGeneration(genPayload, job, getWindow, scriptPath, resolvedPython, reconstructionTier);
     if (!skpResult.ok || !skpResult.skpPath) {
       const generationError = new Error(skpResult.error ?? "Fallo la generacion SKP IA.") as PythonRunError;
       if (typeof skpResult.stdout === "string") {
@@ -1519,6 +1759,7 @@ async function runGenerationJob(
     multiviewEnabled,
     multiviewPreset,
     multiviewHardSurfaceQuality: multiviewPreset === "hard_surface" ? multiviewHardSurfaceQuality : undefined,
+    reconstructionTier,
     multiviewLogs: [],
   };
   const shouldAttemptMultiview = multiviewEnabled && (mode === "auto" || multiviewPreset === "hard_surface");
@@ -1535,6 +1776,23 @@ async function runGenerationJob(
         multiviewPreset,
         multiviewPreset === "hard_surface" ? multiviewHardSurfaceQuality : "balanced"
       );
+      const tierAwareComfyParams = applyTierAwareMultiviewOverrides(comfyPreset.params, reconstructionTier);
+      if (DEBUG_COMFYUI) {
+        const effectiveParamsLog = [
+          `tier=${reconstructionTier}`,
+          `width=${tierAwareComfyParams.width}`,
+          `height=${tierAwareComfyParams.height}`,
+          `steps=${tierAwareComfyParams.steps}`,
+          `cfg=${tierAwareComfyParams.cfg}`,
+          `denoise=${tierAwareComfyParams.denoise}`,
+          `controlStrength=${tierAwareComfyParams.controlStrength}`,
+          `cannyLow=${tierAwareComfyParams.cannyLow}`,
+          `cannyHigh=${tierAwareComfyParams.cannyHigh}`,
+        ].join(" ");
+        localContext.multiviewLogs.push(`[debug] effective_params ${effectiveParamsLog}`);
+        logInfo("[gen][multiview][debug] effective params:", effectiveParamsLog);
+      }
+      const multiviewStartedAtMs = Date.now();
       const multiviewResult = await runMultiviewCannyRefine({
         baseUrl: COMFYUI_BASE_URL,
         inputImagePath: copiedImages[0],
@@ -1542,11 +1800,12 @@ async function runGenerationJob(
         basePrompt: comfyPreset.basePrompt,
         negative: comfyPreset.negativePrompt,
         params: {
-          ...comfyPreset.params,
+          ...tierAwareComfyParams,
           seed: computeDeterministicSeedFromFile(copiedImages[0], multiviewPreset),
           checkpointName: "",
           controlNetName: "",
         },
+        tier: reconstructionTier,
         maxConcurrency: 1,
         useSeedOffsets: false,
         isCanceled: () => job.canceled,
@@ -1561,6 +1820,11 @@ async function runGenerationJob(
       });
       localContext.multiviewViewsDir = multiviewResult.viewsDir;
       localContext.multiviewLogs.push(...multiviewResult.logs);
+      if (DEBUG_COMFYUI) {
+        const totalMultiviewMs = Date.now() - multiviewStartedAtMs;
+        localContext.multiviewLogs.push(`[debug] total_time_ms=${totalMultiviewMs}`);
+        logInfo("[gen][multiview][debug] total time ms:", totalMultiviewMs);
+      }
       sendProgress(getWindow, {
         projectId,
         stage: "multiview",
@@ -1589,7 +1853,10 @@ async function runGenerationJob(
     projectId,
     stage: "infer",
     percent: 55,
-    message: "Reconstruyendo 3D (2/2)...",
+    message:
+      reconstructionTier === "preview"
+        ? "Reconstruyendo 3D (Preview) (2/2)..."
+        : "Reconstruyendo 3D (Final HQ) (2/2)...",
   });
 
   const localResult = await runLocalPythonGeneration(
@@ -1600,7 +1867,10 @@ async function runGenerationJob(
     scriptPath,
     resolvedPython,
     baseDir,
-    localContext
+    {
+      reconstructionTier,
+      context: localContext,
+    }
   );
 
   if (!localResult.ok || !localResult.outGlbPath) {
@@ -1672,9 +1942,6 @@ function buildGeneratorCheckResult(pythonPath?: string): GenerationCheckResult {
     "generator: image_to_3d_depth_glb.py",
     "generator_modes: auto | neural | architectural",
   ];
-  if (resolvedPython?.source === "path_fallback") {
-    logs.push("warning: using PATH python fallback. Set VOLUMIA_PYTHON for deterministic conda runtime.");
-  }
 
   return {
     pythonFound,
@@ -1815,7 +2082,10 @@ export function registerGenerationHandlers(getWindow: WindowGetter) {
       getWindow,
       scriptPath,
       resolvedPython,
-      ensureProjectAssetsDir(testPayload.projectId)
+      ensureProjectAssetsDir(testPayload.projectId),
+      {
+        reconstructionTier: "final",
+      }
     );
 
     if (!localResult.ok || !localResult.outGlbPath) {

@@ -59,15 +59,24 @@ export interface AppSettingsSnapshot {
   autoGenerationProfile?: GenerationAutoProfile;
 }
 
-export type PythonCandidateSource = "conda" | "where" | "py-launcher" | "custom";
+export type PythonCandidateSource = "env" | "stored" | "conda" | "where" | "py-launcher" | "custom";
 
 export type PythonCandidate = {
   pythonPath: string;
   source: PythonCandidateSource;
+  isValid: boolean;
+  rejectionReason?: string;
+  recommended?: boolean;
+};
+
+export type PythonDetectPayload = {
+  preferredPath?: string;
 };
 
 export type PythonDetectResult = {
   candidates: PythonCandidate[];
+  rejectedCandidates: PythonCandidate[];
+  selectedPythonPath?: string;
 };
 
 export type PythonProbePayload = {
@@ -139,6 +148,7 @@ export type GenerationAutoPreset = "hard_surface" | "organic";
 export type GenerationAutoProfile = "auto" | "hard_surface" | "organic";
 export type GenerationMultiviewPreset = "hard_surface" | "balanced" | "organic";
 export type GenerationMultiviewHardSurfaceQuality = "fast" | "balanced" | "pro";
+export type ReconstructionTier = "preview" | "final";
 
 export type ProjectModel = {
   sourceImages: string[];
@@ -231,6 +241,7 @@ export type GenerationRunPayload = {
   multiviewEnabled?: boolean;
   multiviewPreset?: GenerationMultiviewPreset;
   multiviewHardSurfaceQuality?: GenerationMultiviewHardSurfaceQuality;
+  reconstructionTier?: ReconstructionTier;
   pythonPath?: string;
   pipeline?: GenerationPipeline;
   inputs?: string[];

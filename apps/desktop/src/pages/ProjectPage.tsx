@@ -21,6 +21,7 @@ type AutoPreset = "hard_surface" | "organic";
 type AutoProfile = "auto" | "hard_surface" | "organic";
 type MultiviewPreset = "hard_surface" | "balanced" | "organic";
 type MultiviewHardSurfaceQuality = "fast" | "balanced" | "pro";
+type ReconstructionTier = "preview" | "final";
 
 function formatMessageTime(value: string, locale: string) {
   return new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit" }).format(new Date(value));
@@ -99,10 +100,12 @@ function resolveDefaultMultiviewPreset(profile: AutoProfile | undefined): Multiv
   if (profile === "organic") {
     return "organic";
   }
-  return "balanced";
+  return "hard_surface";
 }
 
+const MULTIVIEW_ENABLED_KEY = "volumia.multiview.enabled";
 const MULTIVIEW_HARD_SURFACE_QUALITY_KEY = "volumia.multiview.hard_surface.quality";
+const RECONSTRUCTION_TIER_KEY = "volumia.reconstruction.tier";
 
 function isMultiviewHardSurfaceQuality(value: string): value is MultiviewHardSurfaceQuality {
   return value === "fast" || value === "balanced" || value === "pro";
@@ -121,6 +124,59 @@ function resolveStoredMultiviewHardSurfaceQuality(): MultiviewHardSurfaceQuality
     // No-op by design.
   }
   return "balanced";
+}
+
+function isReconstructionTier(value: string): value is ReconstructionTier {
+  return value === "preview" || value === "final";
+}
+
+function resolveStoredReconstructionTier(): ReconstructionTier {
+  if (typeof window === "undefined") {
+    return "preview";
+  }
+  try {
+    const stored = window.localStorage.getItem(RECONSTRUCTION_TIER_KEY);
+    if (stored && isReconstructionTier(stored)) {
+      return stored;
+    }
+  } catch {
+    // No-op by design.
+  }
+  return "preview";
+}
+
+function resolveStoredMultiviewEnabled(tier: ReconstructionTier): { enabled: boolean; hasStoredPreference: boolean } {
+  if (typeof window === "undefined") {
+    return {
+      enabled: tier === "final",
+      hasStoredPreference: false,
+    };
+  }
+  try {
+    const stored = window.localStorage.getItem(MULTIVIEW_ENABLED_KEY);
+    if (stored === "true") {
+      return { enabled: true, hasStoredPreference: true };
+    }
+    if (stored === "false") {
+      return { enabled: false, hasStoredPreference: true };
+    }
+  } catch {
+    // No-op by design.
+  }
+  return {
+    enabled: tier === "final",
+    hasStoredPreference: false,
+  };
+}
+
+function resolveInitialGenerationUiState() {
+  const reconstructionTier = resolveStoredReconstructionTier();
+  const multiview = resolveStoredMultiviewEnabled(reconstructionTier);
+  return {
+    reconstructionTier,
+    multiviewEnabled: multiview.enabled,
+    hasStoredMultiviewPreference: multiview.hasStoredPreference,
+  };
 }
 
 function getProjectModel(model: ProjectModel | undefined): ProjectModel {
@@ -151,6 +207,8 @@ function UILayer({ children }: PropsWithChildren) {
 }
 
 export function ProjectPage() {
+  const initialGenerationUiState = useMemo(() => resolveInitialGenerationUiState(), []);
+  const hasStoredMultiviewPreferenceRef = useRef(initialGenerationUiState.hasStoredMultiviewPreference);
   const { t, language } = useT();
   const { settings, setAutoGenerationProfile } = useSettings();
   const { projectId = "" } = useParams();
@@ -168,10 +226,11 @@ export function ProjectPage() {
   const [autoUsedEngine, setAutoUsedEngine] = useState<AutoEngine | null>(null);
   const [autoUsedPreset, setAutoUsedPreset] = useState<AutoPreset | null>(null);
   const [generationLogPath, setGenerationLogPath] = useState("");
-  const [multiviewEnabled, setMultiviewEnabled] = useState(true);
+  const [multiviewEnabled, setMultiviewEnabled] = useState(initialGenerationUiState.multiviewEnabled);
   const [multiviewPreset, setMultiviewPreset] = useState<MultiviewPreset>(resolveDefaultMultiviewPreset(settings.autoGenerationProfile));
   const [multiviewHardSurfaceQuality, setMultiviewHardSurfaceQuality] =
     useState<MultiviewHardSurfaceQuality>(resolveStoredMultiviewHardSurfaceQuality);
+  const [reconstructionTier, setReconstructionTier] = useState<ReconstructionTier>(initialGenerationUiState.reconstructionTier);
   const [imagePreviews, setImagePreviews] = useState<Record<string, string>>({});
   const [isAssistantOpen, setIsAssistantOpen] = useState(false);
   const [isNotesOpen, setIsNotesOpen] = useState(false);
@@ -199,8 +258,10 @@ export function ProjectPage() {
     setAutoUsedEngine(null);
     setAutoUsedPreset(null);
     setGenerationLogPath("");
-    setMultiviewEnabled(true);
-    setMultiviewPreset("balanced");
+    const storedMultiview = resolveStoredMultiviewEnabled(reconstructionTier);
+    hasStoredMultiviewPreferenceRef.current = storedMultiview.hasStoredPreference;
+    setMultiviewEnabled(storedMultiview.enabled);
+    setMultiviewPreset(resolveDefaultMultiviewPreset(settings.autoGenerationProfile));
     setImagePreviews({});
   }, [project?.id]);
 
@@ -416,6 +477,7 @@ export function ProjectPage() {
       preset,
       mode: "auto",
       autoProfile: settings.autoGenerationProfile,
+      reconstructionTier,
       multiviewEnabled,
       multiviewPreset,
       ...(multiviewPreset === "hard_surface" ? { multiviewHardSurfaceQuality } : {}),
@@ -473,6 +535,7 @@ export function ProjectPage() {
       workDir,
       outputDir,
       quality: preset === "fast" ? "fast" : "high",
+      reconstructionTier,
     });
 
     if (!result.ok) {
@@ -598,11 +661,41 @@ export function ProjectPage() {
                 <option value="hard_surface">HARD-SURFACE</option>
                 <option value="organic">ORGANICO</option>
               </select>
+              <select
+                value={reconstructionTier}
+                onChange={(event) => {
+                  const nextValue = event.target.value as ReconstructionTier;
+                  setReconstructionTier(nextValue);
+                  if (!hasStoredMultiviewPreferenceRef.current) {
+                    setMultiviewEnabled(nextValue === "final");
+                  }
+                  try {
+                    window.localStorage.setItem(RECONSTRUCTION_TIER_KEY, nextValue);
+                  } catch {
+                    // No-op by design.
+                  }
+                }}
+                className={`h-9 min-w-44 appearance-none rounded-lg border px-3 text-sm outline-none transition duration-150 ease-out focus:ring-2 focus:ring-[#8c7e6d]/50 ${selectClass}`}
+                disabled={isGenerating}
+                aria-label="Reconstruction tier selector"
+              >
+                <option value="preview">Preview (rapido)</option>
+                <option value="final">Final (HQ)</option>
+              </select>
               <label className="inline-flex h-9 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface-2)] px-3 text-xs text-[var(--text)]">
                 <input
                   type="checkbox"
                   checked={multiviewEnabled}
-                  onChange={(event) => setMultiviewEnabled(event.target.checked)}
+                  onChange={(event) => {
+                    const nextValue = event.target.checked;
+                    setMultiviewEnabled(nextValue);
+                    hasStoredMultiviewPreferenceRef.current = true;
+                    try {
+                      window.localStorage.setItem(MULTIVIEW_ENABLED_KEY, String(nextValue));
+                    } catch {
+                      // No-op by design.
+                    }
+                  }}
                   disabled={isGenerating}
                 />
                 Multiview (Local)

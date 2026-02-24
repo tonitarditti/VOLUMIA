@@ -7,6 +7,34 @@ import { useSettings } from "@/volumia/settings/context";
 import type { AppSettings } from "@/volumia/settings/types";
 
 const CACHE_CLEAR_MARKER_FILE = "__clear_cache_on_next_start__.json";
+const PYTHON_PATH_STORAGE_KEY = "volumia.python.path";
+const PYTHON_SHOW_ADVANCED_STORAGE_KEY = "volumia.python.showAdvanced";
+
+function readLocalStorageValue(key: string) {
+  if (typeof window === "undefined") {
+    return "";
+  }
+  try {
+    return window.localStorage.getItem(key) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function writeLocalStorageValue(key: string, value: string | undefined) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    if (typeof value === "string" && value.trim().length > 0) {
+      window.localStorage.setItem(key, value.trim());
+    } else {
+      window.localStorage.removeItem(key);
+    }
+  } catch {
+    // Ignore storage failures.
+  }
+}
 
 type SettingsPageProps = {
   onImportProjects: () => Promise<void>;
@@ -50,7 +78,12 @@ export function SettingsPage({
     resetToRecommended,
   } = useSettings();
   const [pythonCandidates, setPythonCandidates] = useState<PythonCandidate[]>([]);
+  const [pythonRejectedCandidates, setPythonRejectedCandidates] = useState<PythonCandidate[]>([]);
   const [selectedPythonPath, setSelectedPythonPath] = useState(settings.pythonPath ?? "");
+  const [showAdvancedPython, setShowAdvancedPython] = useState<boolean>(() => {
+    const storedValue = readLocalStorageValue(PYTHON_SHOW_ADVANCED_STORAGE_KEY).toLowerCase();
+    return storedValue === "1" || storedValue === "true";
+  });
   const [pythonProbe, setPythonProbe] = useState<PythonProbeResult | null>(null);
   const [pythonLogs, setPythonLogs] = useState<string[]>([]);
   const [pythonMessage, setPythonMessage] = useState("");
@@ -86,6 +119,7 @@ export function SettingsPage({
     const normalizedPath = pythonPath.trim();
     setSelectedPythonPath(normalizedPath);
     setPythonPath(normalizedPath.length > 0 ? normalizedPath : undefined);
+    writeLocalStorageValue(PYTHON_PATH_STORAGE_KEY, normalizedPath.length > 0 ? normalizedPath : undefined);
   }, [setPythonPath]);
 
   const handleDetectPython = useCallback(async () => {
@@ -98,21 +132,29 @@ export function SettingsPage({
     setPythonMessage("");
 
     try {
-      const result = await desktopApi.detectPythonInterpreters();
+      const storedPreferredPath = readLocalStorageValue(PYTHON_PATH_STORAGE_KEY) || settings.pythonPath || "";
+      const result = await desktopApi.detectPythonInterpreters(storedPreferredPath);
       setPythonCandidates(result.candidates);
+      setPythonRejectedCandidates(result.rejectedCandidates);
       if (result.candidates.length === 0) {
         applyPythonPathSelection("");
         setPythonProbe(null);
-        setPythonMessage("No se encontraron interpretes de Python.");
+        setPythonMessage("No se encontraron interpretes de Python utilizables con CUDA.");
         return;
       }
 
       const preferredPath =
+        result.candidates.find((candidate) => candidate.pythonPath === result.selectedPythonPath)?.pythonPath ??
         result.candidates.find((candidate) => candidate.pythonPath === settings.pythonPath)?.pythonPath ??
         result.candidates[0].pythonPath;
 
       applyPythonPathSelection(preferredPath);
-      setPythonMessage(`Detectados ${result.candidates.length} interprete(s).`);
+      setPythonMessage(
+        `Detectados ${result.candidates.length} interprete(s) CUDA listos.` +
+          (result.rejectedCandidates.length > 0
+            ? ` ${result.rejectedCandidates.length} no utilizables en avanzado.`
+            : "")
+      );
     } catch (error) {
       setPythonMessage(
         error instanceof Error ? error.message : t("settings.generator.checkFailed")
@@ -259,6 +301,10 @@ export function SettingsPage({
   useEffect(() => {
     setSelectedPythonPath(settings.pythonPath ?? "");
   }, [settings.pythonPath]);
+
+  useEffect(() => {
+    writeLocalStorageValue(PYTHON_SHOW_ADVANCED_STORAGE_KEY, showAdvancedPython ? "1" : "0");
+  }, [showAdvancedPython]);
 
   useEffect(() => {
     if (!hasDesktopBridge()) {
@@ -534,14 +580,40 @@ export function SettingsPage({
             disabled={isInstallingTorch}
           >
             {pythonCandidates.length === 0 ? (
-              <option value="">Sin interpretes detectados</option>
+              <option value="">Sin interpretes CUDA listos detectados</option>
             ) : null}
             {pythonCandidates.map((candidate) => (
               <option key={candidate.pythonPath} value={candidate.pythonPath}>
                 {candidate.pythonPath} ({candidate.source})
+                {candidate.pythonPath === selectedPythonPath ? " - CUDA Ready (Recommended)" : ""}
               </option>
             ))}
           </Select>
+
+          <Toggle
+            checked={showAdvancedPython}
+            onChange={setShowAdvancedPython}
+            label="Show advanced (CPU)"
+          />
+
+          {showAdvancedPython ? (
+            <div className="space-y-2 rounded-lg border border-[var(--border)] bg-[var(--surface-2)] p-3 text-xs">
+              {pythonRejectedCandidates.length > 0 ? (
+                pythonRejectedCandidates.map((candidate) => (
+                  <div key={candidate.pythonPath} className="space-y-1">
+                    <p className="text-[var(--text)]">
+                      {candidate.pythonPath} ({candidate.source})
+                    </p>
+                    <p className="text-[var(--warning)]">
+                      Not usable (no torch/CUDA): {candidate.rejectionReason ?? "unknown"}
+                    </p>
+                  </div>
+                ))
+              ) : (
+                <p className="text-[var(--text-muted)]">No rejected interpreters detected.</p>
+              )}
+            </div>
+          ) : null}
 
           <div className="flex flex-wrap gap-2">
             <Button

@@ -16,6 +16,8 @@ export type MultiviewViewSpec = {
   seedOffset?: number;
 };
 
+type MultiviewTier = "preview" | "final";
+
 type HistoryImage = {
   filename: string;
   subfolder?: string;
@@ -84,6 +86,7 @@ export type RunMultiviewCannyRefineArgs = {
   basePrompt: string;
   negative: string;
   params: SDXLCannyParams;
+  tier?: MultiviewTier;
   views?: Array<MultiviewViewSpec>;
   maxConcurrency?: number;
   useSeedOffsets?: boolean;
@@ -147,9 +150,9 @@ const DEFAULT_VIEWS: MultiviewViewSpec[] = [
 const PRESET_CONFIGS: Record<ComfyMultiviewPreset, PresetConfig> = {
   hard_surface: {
     basePrompt:
-      "clean hard-surface industrial object, crisp edges, planar surfaces, symmetric proportions, studio lighting, white background",
+      "precise furniture product reconstruction, round thin tabletop, four angled wooden legs forming triangular base, sharp edges, clean straight geometry, accurate proportions, industrial furniture catalog style, neutral studio lighting, no artistic stylization",
     negativePrompt:
-      "organic shape, blob, melted geometry, warped topology, asymmetry, deformed silhouette, noise, extra limbs",
+      "melted geometry, rounded edges, inflated volume, warped proportions, organic deformation, blurry edges, thick tabletop, distorted legs, soft sculpture look",
     width: 1024,
     height: 1024,
     cannyLow: 0.4,
@@ -753,6 +756,7 @@ export async function runSDXLCannyRefineSingle(args: RunSDXLCannyRefineSingleArg
 }
 
 export async function runMultiviewCannyRefine(args: RunMultiviewCannyRefineArgs): Promise<RunMultiviewCannyRefineResult> {
+  const multiviewStartTimeMs = Date.now();
   const baseUrl = normalizeBaseUrl(args.baseUrl);
   const views = (args.views && args.views.length > 0 ? args.views : DEFAULT_VIEWS).map((item) => ({ ...item }));
   const useSeedOffsets = Boolean(args.useSeedOffsets);
@@ -789,10 +793,37 @@ export async function runMultiviewCannyRefine(args: RunMultiviewCannyRefineArgs)
   debugComfyLog("Multiview config", {
     baseUrl,
     outputDir,
+    tier: args.tier ?? "unknown",
     maxConcurrency,
     useSeedOffsets,
     views: views.map((view) => view.key),
+    params: {
+      width: effectiveParams.width,
+      height: effectiveParams.height,
+      steps: effectiveParams.steps,
+      cfg: effectiveParams.cfg,
+      denoise: effectiveParams.denoise,
+      controlStrength: effectiveParams.controlStrength,
+      cannyLow: effectiveParams.cannyLow,
+      cannyHigh: effectiveParams.cannyHigh,
+    },
   });
+  if (DEBUG_COMFYUI) {
+    logs.push(
+      [
+        "[debug] multiview_effective",
+        `tier=${args.tier ?? "unknown"}`,
+        `width=${effectiveParams.width}`,
+        `height=${effectiveParams.height}`,
+        `steps=${effectiveParams.steps}`,
+        `cfg=${effectiveParams.cfg}`,
+        `denoise=${effectiveParams.denoise}`,
+        `controlStrength=${effectiveParams.controlStrength}`,
+        `cannyLow=${effectiveParams.cannyLow}`,
+        `cannyHigh=${effectiveParams.cannyHigh}`,
+      ].join(" ")
+    );
+  }
 
   const tasks = views.map((view, index) => ({ view, index }));
   const results: Array<RunMultiviewViewResult> = [];
@@ -800,6 +831,12 @@ export async function runMultiviewCannyRefine(args: RunMultiviewCannyRefineArgs)
 
   const runTask = async (task: { view: MultiviewViewSpec; index: number }) => {
     assertNotCanceled(args.isCanceled);
+    const viewStartedAtMs = Date.now();
+    if (DEBUG_COMFYUI) {
+      const viewStartIso = new Date(viewStartedAtMs).toISOString();
+      logs.push(`[debug] view_start view=${task.view.key} at=${viewStartIso}`);
+      debugComfyLog("View start", { view: task.view.key, at: viewStartIso });
+    }
 
     const prompt = `${args.basePrompt}, ${task.view.suffixPrompt}, maintain identical materials across views`;
     const outputPrefix = `${baseName}_${sanitizeBaseName(task.view.outputSuffix)}`;
@@ -833,6 +870,19 @@ export async function runMultiviewCannyRefine(args: RunMultiviewCannyRefineArgs)
 
     logs.push(`[prompt] id=${singleResult.promptId} view=${task.view.key} seed=${seed}`);
     logs.push(...singleResult.logs);
+    if (DEBUG_COMFYUI) {
+      const viewEndedAtMs = Date.now();
+      const viewEndIso = new Date(viewEndedAtMs).toISOString();
+      const elapsedMs = viewEndedAtMs - viewStartedAtMs;
+      logs.push(
+        `[debug] view_end view=${task.view.key} at=${viewEndIso} elapsed_ms=${elapsedMs} prompt_id=${singleResult.promptId}`
+      );
+      debugComfyLog("View end", {
+        view: task.view.key,
+        promptId: singleResult.promptId,
+        elapsedMs,
+      });
+    }
 
     const viewResult: RunMultiviewViewResult = {
       key: task.view.key,
@@ -886,6 +936,11 @@ export async function runMultiviewCannyRefine(args: RunMultiviewCannyRefineArgs)
   });
 
   args.onProgress?.({ percent: 98, message: "Generando multivistas (1/2): completado." });
+  if (DEBUG_COMFYUI) {
+    const totalElapsedMs = Date.now() - multiviewStartTimeMs;
+    logs.push(`[debug] multiview_total elapsed_ms=${totalElapsedMs}`);
+    debugComfyLog("Multiview total time", { elapsedMs: totalElapsedMs });
+  }
 
   return {
     viewsDir: outputDir,

@@ -48,6 +48,7 @@ type LoadedModelProps = {
   wireframe: boolean;
   onLoadError: (message: string | null) => void;
   onCameraFit: (snapshot: CameraSnapshot) => void;
+  onModelNormalizationDebug: (info: ModelNormalizationDebug | null) => void;
 };
 
 type ViewportTheme = "light" | "dark";
@@ -57,6 +58,16 @@ type CameraSnapshot = {
   target: THREE.Vector3;
   near: number;
   far: number;
+};
+
+type ModelNormalizationDebug = {
+  appliedRotation: boolean;
+  bboxSize: {
+    x: number;
+    y: number;
+    z: number;
+  };
+  minYTranslation: number;
 };
 
 type ViewportThemeConfig = {
@@ -75,6 +86,9 @@ type ViewportThemeConfig = {
 };
 
 const VIEW_TARGET = new THREE.Vector3(0, 0.4, 0);
+const VIEWER_DEBUG = import.meta.env.DEV;
+const SIDEWAYS_ROTATION_X = -Math.PI / 2;
+const Y_TO_Z_NO_ROTATE_RATIO = 1.2;
 const SHADOW_CAMERA_BOUNDS = 12;
 const SHADOW_CAMERA_NEAR = 0.5;
 const SHADOW_CAMERA_FAR = 40;
@@ -166,6 +180,7 @@ function LoadedModel({
   wireframe,
   onLoadError,
   onCameraFit,
+  onModelNormalizationDebug,
 }: LoadedModelProps) {
   const { camera, controls, invalidate } = useThree();
   const modelRef = useRef<THREE.Group>(null);
@@ -183,6 +198,7 @@ function LoadedModel({
 
     if (!glbPath) {
       onLoadError(null);
+      onModelNormalizationDebug(null);
       return;
     }
 
@@ -229,12 +245,14 @@ function LoadedModel({
           (error) => {
             if (!active) return;
             onLoadError(`GLB parse error: ${extractErrorMessage(error)}`);
+            onModelNormalizationDebug(null);
             invalidate();
           }
         );
       } catch (error) {
         if (!active) return;
         onLoadError(`GLB load error: ${extractErrorMessage(error)}`);
+        onModelNormalizationDebug(null);
         invalidate();
       }
     })();
@@ -249,7 +267,7 @@ function LoadedModel({
         invalidate();
       }
     };
-  }, [envMapIntensity, glbPath, glbVersion, invalidate, onLoadError, wireframe]);
+  }, [envMapIntensity, glbPath, glbVersion, invalidate, onLoadError, onModelNormalizationDebug, wireframe]);
 
   useEffect(() => {
     if (!loadedModel || !(camera instanceof THREE.PerspectiveCamera)) {
@@ -257,12 +275,24 @@ function LoadedModel({
     }
 
     loadedModel.updateMatrixWorld(true);
+    const originalBox = new THREE.Box3().setFromObject(loadedModel);
+    if (originalBox.isEmpty()) {
+      return;
+    }
+    const originalSize = originalBox.getSize(new THREE.Vector3());
+    const isYDominant = originalSize.y > originalSize.z * Y_TO_Z_NO_ROTATE_RATIO;
+    const alreadyRotated = loadedModel.userData.volumiaOrientationNormalized === true;
+    const shouldRotate = !isYDominant && !alreadyRotated;
+    if (shouldRotate) {
+      loadedModel.rotation.x += SIDEWAYS_ROTATION_X;
+      loadedModel.userData.volumiaOrientationNormalized = true;
+      loadedModel.updateMatrixWorld(true);
+    }
 
     const box = new THREE.Box3().setFromObject(loadedModel);
     if (box.isEmpty()) {
       return;
     }
-
     const center = box.getCenter(new THREE.Vector3());
     loadedModel.position.x -= center.x;
     loadedModel.position.z -= center.z;
@@ -272,7 +302,9 @@ function LoadedModel({
     if (groundedBox.isEmpty()) {
       return;
     }
+    let minYTranslation = 0;
     if (Number.isFinite(groundedBox.min.y)) {
+      minYTranslation = groundedBox.min.y;
       loadedModel.position.y -= groundedBox.min.y;
       loadedModel.updateMatrixWorld(true);
     }
@@ -283,6 +315,19 @@ function LoadedModel({
     }
 
     const size = finalBox.getSize(new THREE.Vector3());
+    const normalizationDebug: ModelNormalizationDebug = {
+      appliedRotation: shouldRotate,
+      bboxSize: {
+        x: size.x,
+        y: size.y,
+        z: size.z,
+      },
+      minYTranslation,
+    };
+    onModelNormalizationDebug(normalizationDebug);
+    if (VIEWER_DEBUG) {
+      console.debug("[ProjectViewport][normalize]", normalizationDebug);
+    }
     const finalCenter = finalBox.getCenter(new THREE.Vector3());
     const maxDim = Math.max(size.x, size.y, size.z);
     if (!Number.isFinite(maxDim) || maxDim <= 0) {
@@ -311,7 +356,7 @@ function LoadedModel({
       far: snapshot.far,
     });
     invalidate();
-  }, [camera, controls, controlsRef, invalidate, loadedModel, onCameraFit]);
+  }, [camera, controls, controlsRef, invalidate, loadedModel, onCameraFit, onModelNormalizationDebug]);
 
   useEffect(() => {
     if (!loadedModel) {
@@ -518,6 +563,7 @@ export function ProjectViewport({
   const [size, setSize] = useState<ViewportSize>({ width: 0, height: 0 });
   const [wireframeInternal, setWireframeInternal] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [modelNormalizationDebug, setModelNormalizationDebug] = useState<ModelNormalizationDebug | null>(null);
   const wireframe = wireframeProp ?? wireframeInternal;
   const isOrbitingRef = useRef(false);
 
@@ -598,6 +644,7 @@ export function ProjectViewport({
       far: DEFAULT_CAMERA_SNAPSHOT.far,
     };
     setLoadError(null);
+    setModelNormalizationDebug(null);
   }, [glbPath]);
 
   const handleResetView = useCallback(() => {
@@ -737,6 +784,11 @@ export function ProjectViewport({
               {loadError}
             </div>
           ) : null}
+          {VIEWER_DEBUG && modelNormalizationDebug ? (
+            <div className="pointer-events-none absolute left-3 top-3 z-20 rounded-md border border-[var(--border)] bg-[var(--surface-1)]/95 px-3 py-2 text-[11px] leading-snug text-[var(--text)]">
+              {`appliedRotation: ${modelNormalizationDebug.appliedRotation ? "yes" : "no"} | bbox: ${modelNormalizationDebug.bboxSize.x.toFixed(3)}, ${modelNormalizationDebug.bboxSize.y.toFixed(3)}, ${modelNormalizationDebug.bboxSize.z.toFixed(3)} | minY shift: ${modelNormalizationDebug.minYTranslation.toFixed(3)}`}
+            </div>
+          ) : null}
           {canRenderCanvas ? (
             <div className="relative h-full w-full min-h-0 overflow-hidden">
               <Canvas
@@ -834,6 +886,7 @@ export function ProjectViewport({
                   onCameraFit={(snapshot) => {
                     cameraSnapshotRef.current = snapshot;
                   }}
+                  onModelNormalizationDebug={setModelNormalizationDebug}
                 />
                 <OrbitControls
                   ref={controlsRef}

@@ -16,6 +16,7 @@ import {
   type Theme,
   type ClearCacheResult,
   type PythonDetectResult,
+  type PythonDetectPayload,
   type PythonProbeResult,
   type PythonInstallTorchCudaResult,
   type WindowModePayload,
@@ -66,7 +67,7 @@ export type VolumiaGenerationBridge = {
 };
 
 export type VolumiaSystemPythonBridge = {
-  detect: () => Promise<PythonDetectResult>;
+  detect: (payload?: PythonDetectPayload) => Promise<PythonDetectResult>;
   probe: (pythonPath: string) => Promise<PythonProbeResult>;
   installTorchCuda: (pythonPath: string) => Promise<PythonInstallTorchCudaResult>;
   onInstallLog: (callback: (line: string) => void) => void;
@@ -291,8 +292,8 @@ export const desktopApi = {
       generation.offError(callback);
     };
   },
-  detectPythonInterpreters(): Promise<PythonDetectResult> {
-    return ensureSystemPythonBridge().detect();
+  detectPythonInterpreters(preferredPath?: string): Promise<PythonDetectResult> {
+    return ensureSystemPythonBridge().detect({ preferredPath });
   },
   probePythonInterpreter(pythonPath: string): Promise<PythonProbeResult> {
     return ensureSystemPythonBridge().probe(pythonPath);

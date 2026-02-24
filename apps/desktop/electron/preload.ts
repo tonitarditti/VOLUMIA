@@ -14,6 +14,7 @@ import {
   type GenerationTestResult,
   type ImportProjectsResult,
   type PythonDetectResult,
+  type PythonDetectPayload,
   type PythonInstallLogPayload,
   type PythonInstallTorchCudaResult,
   type PythonProbeResult,
@@ -145,7 +146,8 @@ const bridge = {
     },
   },
   systemPython: {
-    detect: () => ipcRenderer.invoke(IPC_CHANNELS.pyDetect) as Promise<PythonDetectResult>,
+    detect: (payload?: PythonDetectPayload) =>
+      ipcRenderer.invoke(IPC_CHANNELS.pyDetect, payload ?? {}) as Promise<PythonDetectResult>,
     probe: (pythonPath: string) =>
       ipcRenderer.invoke(IPC_CHANNELS.pyProbe, { pythonPath }) as Promise<PythonProbeResult>,
     installTorchCuda: (pythonPath: string) =>

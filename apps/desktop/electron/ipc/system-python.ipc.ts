@@ -8,6 +8,7 @@ import {
   IPC_CHANNELS,
   type PythonCandidate,
   type PythonCandidateSource,
+  type PythonDetectPayload,
   type PythonDetectResult,
   type PythonInstallDonePayload,
   type PythonInstallLogPayload,
@@ -38,6 +39,8 @@ const DEFAULT_COMMAND_TIMEOUT_MS = 60_000;
 const DETECT_COMMAND_TIMEOUT_MS = 10_000;
 const INSTALL_COMMAND_TIMEOUT_MS = 10 * 60_000;
 const MAX_CAPTURE_CHARS = 3_000_000;
+const DEFAULT_CONDA_PYTHON = "F:\\MINICONDA\\envs\\volumia\\python.exe";
+const DEBUG_GENERATION = process.env.VOLUMIA_DEBUG_GENERATION === "1";
 
 const TORCH_PROBE_CODE = [
   "import torch",
@@ -204,11 +207,37 @@ function formatCommandError(result: RunCommandResult) {
   return parts.join("\n");
 }
 
-function addCandidate(
-  candidates: PythonCandidate[],
+type PythonPathCandidate = {
+  pythonPath: string;
+  source: PythonCandidateSource;
+  priority: number;
+  order: number;
+};
+
+type ValidatedPythonCandidate = {
+  candidate: PythonCandidate;
+  priority: number;
+  order: number;
+};
+
+function logPythonDebug(...args: unknown[]) {
+  if (!DEBUG_GENERATION) {
+    return;
+  }
+  console.log("[VOLUMIA][PY]", ...args);
+}
+
+function isVolumiaEnvPath(candidatePath: string) {
+  const normalized = path.normalize(candidatePath).toLowerCase();
+  return normalized.includes(`${path.sep}envs${path.sep}volumia${path.sep}`);
+}
+
+function addPathCandidate(
+  candidates: PythonPathCandidate[],
   seen: Set<string>,
   rawPath: string,
-  source: PythonCandidateSource
+  source: PythonCandidateSource,
+  priority: number
 ) {
   const normalizedPath = sanitizePath(rawPath);
   if (!isExistingFile(normalizedPath)) {
@@ -222,6 +251,8 @@ function addCandidate(
   candidates.push({
     pythonPath: normalizedPath,
     source,
+    priority,
+    order: candidates.length,
   });
 }
 
@@ -287,29 +318,157 @@ function detectFromCustomEnv() {
   return envCandidates;
 }
 
-async function detectPythonCandidates(): Promise<PythonDetectResult> {
-  const candidates: PythonCandidate[] = [];
+function isCondaVolumiaActive() {
+  const condaPrefix = (process.env.CONDA_PREFIX ?? "").trim();
+  if (!condaPrefix) {
+    return false;
+  }
+  const activeEnvName = (process.env.CONDA_DEFAULT_ENV ?? "").trim().toLowerCase();
+  if (activeEnvName === "volumia") {
+    return true;
+  }
+  return path.basename(condaPrefix).trim().toLowerCase() === "volumia";
+}
+
+function detectFromCondaVolumiaCommonLocations() {
+  const userProfile = (process.env.USERPROFILE ?? "").trim();
+  const candidates: string[] = [
+    DEFAULT_CONDA_PYTHON,
+    userProfile ? path.join(userProfile, "miniconda3", "envs", "volumia", "python.exe") : "",
+    userProfile ? path.join(userProfile, "anaconda3", "envs", "volumia", "python.exe") : "",
+  ];
+  if (isCondaVolumiaActive()) {
+    const condaPrefix = (process.env.CONDA_PREFIX ?? "").trim();
+    if (condaPrefix) {
+      candidates.push(process.platform === "win32" ? path.join(condaPrefix, "python.exe") : path.join(condaPrefix, "bin", "python"));
+    }
+  }
+  return candidates.filter((value) => value.trim().length > 0);
+}
+
+function getRejectionReason(result: PythonProbeResult) {
+  const errorText = result.error ?? "";
+  const torchMissing = /No module named ['"]torch['"]|ModuleNotFoundError:.*torch/i.test(errorText);
+  if (torchMissing) {
+    return "torch missing";
+  }
+  if (!result.torchInstalled) {
+    return firstLineOrUndefined(errorText) ?? "torch probe failed";
+  }
+  if (result.cudaAvailable !== true) {
+    return "CUDA not available";
+  }
+  return "";
+}
+
+function selectFinalCandidate(validated: ValidatedPythonCandidate[]) {
+  if (validated.length === 0) {
+    return undefined;
+  }
+  const minPriority = Math.min(...validated.map((entry) => entry.priority));
+  const topPriority = validated.filter((entry) => entry.priority === minPriority);
+  return topPriority.find((entry) => isVolumiaEnvPath(entry.candidate.pythonPath)) ?? topPriority[0];
+}
+
+async function detectPythonCandidates(preferredPath?: string): Promise<PythonDetectResult> {
+  const rawCandidates: PythonPathCandidate[] = [];
   const seen = new Set<string>();
 
+  const envPath = (process.env.VOLUMIA_PYTHON ?? "").trim();
+  if (envPath) {
+    addPathCandidate(rawCandidates, seen, envPath, "env", 1);
+  }
+
+  if (preferredPath?.trim()) {
+    addPathCandidate(rawCandidates, seen, preferredPath, "stored", 2);
+  }
+
+  for (const condaCandidate of detectFromCondaVolumiaCommonLocations()) {
+    addPathCandidate(rawCandidates, seen, condaCandidate, "conda", 3);
+  }
+
   for (const condaCandidate of detectFromCondaPrefix()) {
-    addCandidate(candidates, seen, condaCandidate, "conda");
+    addPathCandidate(rawCandidates, seen, condaCandidate, "conda", 4);
   }
 
   for (const customCandidate of detectFromCustomEnv()) {
-    addCandidate(candidates, seen, customCandidate, "custom");
+    addPathCandidate(rawCandidates, seen, customCandidate, "custom", 4);
   }
 
   const whereCandidates = await detectFromWhereOrWhich();
   for (const whereCandidate of whereCandidates) {
-    addCandidate(candidates, seen, whereCandidate, "where");
+    addPathCandidate(rawCandidates, seen, whereCandidate, "where", 4);
   }
 
   const pyLauncherCandidates = await detectFromPyLauncher();
   for (const pyLauncherCandidate of pyLauncherCandidates) {
-    addCandidate(candidates, seen, pyLauncherCandidate, "py-launcher");
+    addPathCandidate(rawCandidates, seen, pyLauncherCandidate, "py-launcher", 4);
   }
 
-  return { candidates };
+  rawCandidates.sort((left, right) => {
+    if (left.priority !== right.priority) {
+      return left.priority - right.priority;
+    }
+    return left.order - right.order;
+  });
+
+  logPythonDebug(
+    "discovered candidates:",
+    rawCandidates.map((candidate) => `${candidate.source}:${candidate.pythonPath}`)
+  );
+
+  const validCandidates: ValidatedPythonCandidate[] = [];
+  const rejectedCandidates: PythonCandidate[] = [];
+
+  for (const rawCandidate of rawCandidates) {
+    const probe = await probeInterpreter(rawCandidate.pythonPath);
+    const rejectionReason = getRejectionReason(probe);
+    const isValid = rejectionReason.length === 0;
+    const candidate: PythonCandidate = {
+      pythonPath: rawCandidate.pythonPath,
+      source: rawCandidate.source,
+      isValid,
+      rejectionReason: isValid ? undefined : rejectionReason,
+    };
+
+    if (isValid) {
+      validCandidates.push({ candidate, priority: rawCandidate.priority, order: rawCandidate.order });
+      logPythonDebug("validation:", `${candidate.pythonPath} => valid`);
+    } else {
+      rejectedCandidates.push(candidate);
+      logPythonDebug("validation:", `${candidate.pythonPath} => rejected (${rejectionReason})`);
+    }
+  }
+
+  validCandidates.sort((left, right) => {
+    if (left.priority !== right.priority) {
+      return left.priority - right.priority;
+    }
+    return left.order - right.order;
+  });
+
+  const selected = selectFinalCandidate(validCandidates);
+  const selectedPath = selected?.candidate.pythonPath;
+
+  const candidates = validCandidates.map((entry) => ({
+    ...entry.candidate,
+    recommended: selectedPath ? entry.candidate.pythonPath === selectedPath : false,
+  }));
+
+  logPythonDebug("final selected interpreter:", selectedPath ?? "(none)");
+
+  return {
+    candidates,
+    rejectedCandidates,
+    selectedPythonPath: selectedPath,
+  };
+}
+
+function getPreferredPathFromDetectPayload(payload: unknown) {
+  if (!payload || typeof payload !== "object") return "";
+  const candidate = payload as Partial<PythonDetectPayload>;
+  if (typeof candidate.preferredPath !== "string") return "";
+  return sanitizePath(candidate.preferredPath);
 }
 
 function getPythonPathFromPayload(payload: unknown) {
@@ -512,8 +671,9 @@ async function runInstallTorchCuda(
 export function registerSystemPythonHandlers(getWindow: WindowGetter) {
   let isInstallRunning = false;
 
-  ipcMain.handle(IPC_CHANNELS.pyDetect, async () => {
-    return detectPythonCandidates();
+  ipcMain.handle(IPC_CHANNELS.pyDetect, async (_event, payload?: PythonDetectPayload) => {
+    const preferredPath = getPreferredPathFromDetectPayload(payload);
+    return detectPythonCandidates(preferredPath);
   });
 
   ipcMain.handle(IPC_CHANNELS.pyProbe, async (_event, payload: PythonProbePayload) => {
