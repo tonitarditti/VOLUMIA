@@ -13,6 +13,7 @@ import {
   type GenerationDonePayload,
   type GenerationErrorPayload,
   type GenerationMode,
+  type GenerationMultiviewHardSurfaceQuality,
   type GenerationMultiviewPreset,
   type GenerationPipeline,
   type GenerationProgressPayload,
@@ -103,6 +104,7 @@ type GenSkpPythonResult = {
 type LocalGenerationContext = {
   multiviewEnabled: boolean;
   multiviewPreset: GenerationMultiviewPreset;
+  multiviewHardSurfaceQuality?: GenerationMultiviewHardSurfaceQuality;
   multiviewViewsDir?: string;
   multiviewLogs: string[];
   multiviewFallbackReason?: string;
@@ -544,6 +546,10 @@ function isGenerationMultiviewPreset(value: unknown): value is GenerationMultivi
   return value === "hard_surface" || value === "balanced" || value === "organic";
 }
 
+function isGenerationMultiviewHardSurfaceQuality(value: unknown): value is GenerationMultiviewHardSurfaceQuality {
+  return value === "fast" || value === "balanced" || value === "pro";
+}
+
 function resolveGenerationAutoProfile(value: GenerationAutoProfile | undefined): GenerationAutoProfile {
   if (value === "hard_surface" || value === "organic" || value === "auto") {
     return value;
@@ -746,6 +752,10 @@ function validateRunPayload(payload: unknown): payload is GenerationRunPayload {
     (typeof candidate.autoProfile === "undefined" || isGenerationAutoProfile(candidate.autoProfile)) &&
     (typeof candidate.multiviewEnabled === "undefined" || typeof candidate.multiviewEnabled === "boolean") &&
     (typeof candidate.multiviewPreset === "undefined" || isGenerationMultiviewPreset(candidate.multiviewPreset)) &&
+    (
+      typeof candidate.multiviewHardSurfaceQuality === "undefined" ||
+      isGenerationMultiviewHardSurfaceQuality(candidate.multiviewHardSurfaceQuality)
+    ) &&
     (typeof candidate.pythonPath === "undefined" || typeof candidate.pythonPath === "string")
   );
 }
@@ -1096,6 +1106,7 @@ async function runLocalPythonGeneration(
     if (context?.multiviewEnabled) {
       const multiviewDetails = [
         `preset=${context.multiviewPreset}`,
+        context.multiviewHardSurfaceQuality ? `quality=${context.multiviewHardSurfaceQuality}` : "",
         context.multiviewViewsDir ? `views_dir=${context.multiviewViewsDir}` : "",
         context.multiviewFallbackReason ? `fallback_reason=${context.multiviewFallbackReason}` : "",
         context.multiviewLogs.join("\n"),
@@ -1191,6 +1202,7 @@ async function runLocalPythonGeneration(
     if (context?.multiviewEnabled) {
       const multiviewDetails = [
         `preset=${context.multiviewPreset}`,
+        context.multiviewHardSurfaceQuality ? `quality=${context.multiviewHardSurfaceQuality}` : "",
         context.multiviewViewsDir ? `views_dir=${context.multiviewViewsDir}` : "",
         context.multiviewFallbackReason ? `fallback_reason=${context.multiviewFallbackReason}` : "",
         context.multiviewLogs.join("\n"),
@@ -1485,6 +1497,9 @@ async function runGenerationJob(
   const mode = resolveGenerationMode(depthPayload.mode);
   const autoProfile = resolveGenerationAutoProfile(depthPayload.autoProfile);
   const multiviewPreset = resolveGenerationMultiviewPreset(depthPayload.multiviewPreset, autoProfile);
+  const multiviewHardSurfaceQuality = isGenerationMultiviewHardSurfaceQuality(depthPayload.multiviewHardSurfaceQuality)
+    ? depthPayload.multiviewHardSurfaceQuality
+    : "balanced";
   const multiviewEnabled = Boolean(depthPayload.multiviewEnabled);
   const scriptPath = resolveGeneratorScriptPath();
   if (!scriptPath) {
@@ -1503,6 +1518,7 @@ async function runGenerationJob(
   const localContext: LocalGenerationContext = {
     multiviewEnabled,
     multiviewPreset,
+    multiviewHardSurfaceQuality: multiviewPreset === "hard_surface" ? multiviewHardSurfaceQuality : undefined,
     multiviewLogs: [],
   };
   const shouldAttemptMultiview = multiviewEnabled && (mode === "auto" || multiviewPreset === "hard_surface");
@@ -1515,7 +1531,10 @@ async function runGenerationJob(
         percent: 8,
         message: "Generando multivistas (1/2): iniciando ComfyUI local...",
       });
-      const comfyPreset = resolveComfyMultiviewPresetConfig(multiviewPreset);
+      const comfyPreset = resolveComfyMultiviewPresetConfig(
+        multiviewPreset,
+        multiviewPreset === "hard_surface" ? multiviewHardSurfaceQuality : "balanced"
+      );
       const multiviewResult = await runMultiviewCannyRefine({
         baseUrl: COMFYUI_BASE_URL,
         inputImagePath: copiedImages[0],

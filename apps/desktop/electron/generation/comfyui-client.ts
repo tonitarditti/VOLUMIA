@@ -4,6 +4,7 @@ import path from "path";
 import { buildSDXLCannyWorkflow, type PromptWorkflow, type SDXLCannyParams } from "./comfyui-workflows/sdxlCanny";
 
 export type ComfyMultiviewPreset = "hard_surface" | "balanced" | "organic";
+export type ComfyHardSurfaceQuality = "fast" | "balanced" | "pro";
 export type { SDXLCannyParams } from "./comfyui-workflows/sdxlCanny";
 
 export type MultiviewViewKey = "front" | "v45" | "side" | "rear";
@@ -45,6 +46,10 @@ type PresetConfig = {
   sampler: string;
   scheduler: string;
   denoise: number;
+};
+
+type HardSurfaceQualityConfig = Partial<PresetConfig> & {
+  promptSuffix?: string;
 };
 
 export type ComfyPresetRuntimeConfig = {
@@ -109,6 +114,8 @@ const POLL_INTERVAL_MS = 1_200;
 const HISTORY_TIMEOUT_MS = 180_000;
 const INSTALL_DOC_PATH = path.join("docs", "README_COMFYUI_MODELS.md");
 const DEBUG_COMFYUI = process.env.VOLUMIA_DEBUG_COMFYUI === "1";
+const WORKFLOW_REFERENCE_SEGMENTS = ["tools", "comfyui", "workflows", "multiview_sdxl_canny.json"] as const;
+const MAX_REPO_ROOT_ASCENT = 10;
 
 const DEFAULT_VIEWS: MultiviewViewSpec[] = [
   {
@@ -184,11 +191,133 @@ const PRESET_CONFIGS: Record<ComfyMultiviewPreset, PresetConfig> = {
   },
 };
 
+const HARD_SURFACE_QUALITY_CONFIGS: Record<ComfyHardSurfaceQuality, HardSurfaceQualityConfig> = {
+  fast: {
+    width: 768,
+    height: 768,
+    steps: 18,
+    cfg: 6.0,
+    denoise: 0.35,
+    controlStrength: 0.82,
+    cannyLow: 0.32,
+    cannyHigh: 0.8,
+    sampler: "dpmpp_2m",
+    scheduler: "karras",
+  },
+  balanced: {
+    width: 768,
+    height: 768,
+    steps: 20,
+    cfg: 6.2,
+    denoise: 0.36,
+    controlStrength: 0.85,
+    cannyLow: 0.32,
+    cannyHigh: 0.8,
+    sampler: "dpmpp_2m",
+    scheduler: "karras",
+  },
+  pro: {
+    width: 1024,
+    height: 1024,
+    steps: 28,
+    cfg: 6.5,
+    denoise: 0.42,
+    controlStrength: 0.88,
+    cannyLow: 0.32,
+    cannyHigh: 0.8,
+    sampler: "dpmpp_2m",
+    scheduler: "karras",
+    promptSuffix: "physically accurate lighting, subtle contact shadow, realistic micro-detail",
+  },
+};
+
 function debugComfyLog(...args: unknown[]) {
   if (!DEBUG_COMFYUI) {
     return;
   }
   console.log("[ComfyUI:debug]", ...args);
+}
+
+function isDirectory(entryPath: string) {
+  try {
+    return fs.statSync(entryPath).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function hasWorkspacePackageJson(dir: string): boolean {
+  const packageJsonPath = path.join(dir, "package.json");
+  if (!fs.existsSync(packageJsonPath)) {
+    return false;
+  }
+
+  try {
+    const parsed = JSON.parse(fs.readFileSync(packageJsonPath, "utf8")) as Record<string, unknown>;
+    return Object.prototype.hasOwnProperty.call(parsed, "workspaces");
+  } catch {
+    return false;
+  }
+}
+
+function hasRepoMarkers(dir: string): boolean {
+  const toolsComfyPath = path.join(dir, "tools", "comfyui");
+  const appsPath = path.join(dir, "apps");
+  const desktopAppsPath = path.join(appsPath, "desktop");
+  return isDirectory(toolsComfyPath) && (isDirectory(appsPath) || isDirectory(desktopAppsPath));
+}
+
+function collectAncestorDirs(startDir: string) {
+  const inspected: string[] = [];
+  let cursor = path.resolve(startDir);
+
+  for (let depth = 0; depth <= MAX_REPO_ROOT_ASCENT; depth += 1) {
+    inspected.push(cursor);
+    const parent = path.dirname(cursor);
+    if (parent === cursor) {
+      break;
+    }
+    cursor = parent;
+  }
+
+  return inspected;
+}
+
+export function findRepoRoot(startDir: string): string {
+  const inspectedDirs = collectAncestorDirs(startDir);
+  for (const currentDir of inspectedDirs) {
+    if (hasWorkspacePackageJson(currentDir) || hasRepoMarkers(currentDir)) {
+      return currentDir;
+    }
+  }
+
+  throw new Error(
+    [
+      `[ComfyUI] No se pudo resolver la raiz del monorepo desde: ${path.resolve(startDir)}`,
+      `Inspeccion realizada (max ${MAX_REPO_ROOT_ASCENT} niveles):`,
+      ...inspectedDirs.map((item) => ` - ${item}`),
+      "Se esperaba encontrar package.json con workspaces o carpetas tools/comfyui y apps (o apps/desktop).",
+    ].join("\n")
+  );
+}
+
+export function resolveWorkflowReferencePath(startDir: string): string {
+  const repoRoot = findRepoRoot(startDir);
+  return path.join(repoRoot, ...WORKFLOW_REFERENCE_SEGMENTS);
+}
+
+function assertCanonicalWorkflowReferenceExists(startDir: string) {
+  const workflowReferencePath = resolveWorkflowReferencePath(startDir);
+  if (!fs.existsSync(workflowReferencePath)) {
+    throw new Error(
+      [
+        `[ComfyUI] Falta workflow de referencia en ruta canonica: ${workflowReferencePath}`,
+        "Debe existir en <repoRoot>/tools/comfyui/workflows/multiview_sdxl_canny.json",
+        "No se carga en runtime, pero se mantiene como referencia canonica del repo.",
+      ].join("\n")
+    );
+  }
+  return workflowReferencePath;
 }
 
 function assertNotCanceled(isCanceled?: () => boolean) {
@@ -513,24 +642,61 @@ function buildViewSeed(baseSeed: number, view: MultiviewViewSpec, index: number,
   return normalizeSeed(baseSeed + offset);
 }
 
-export function resolveComfyMultiviewPresetConfig(preset: ComfyMultiviewPreset): ComfyPresetRuntimeConfig {
-  const config = PRESET_CONFIGS[preset];
-  return {
-    basePrompt: config.basePrompt,
-    negativePrompt: config.negativePrompt,
+function isComfyHardSurfaceQuality(value: unknown): value is ComfyHardSurfaceQuality {
+  return value === "fast" || value === "balanced" || value === "pro";
+}
+
+export function resolveComfyMultiviewPresetConfig(
+  preset: ComfyMultiviewPreset,
+  hardSurfaceQuality: ComfyHardSurfaceQuality = "balanced"
+): ComfyPresetRuntimeConfig {
+  const hasExplicitQuality = arguments.length >= 2;
+  const baseConfig = PRESET_CONFIGS[preset];
+  let effectiveConfig: PresetConfig = { ...baseConfig };
+  let effectiveQualityLabel = "n/a";
+
+  if (preset === "hard_surface") {
+    if (hasExplicitQuality) {
+      const normalizedQuality = isComfyHardSurfaceQuality(hardSurfaceQuality) ? hardSurfaceQuality : "balanced";
+      const qualityConfig = HARD_SURFACE_QUALITY_CONFIGS[normalizedQuality];
+      const { promptSuffix, ...presetOverrides } = qualityConfig;
+
+      effectiveConfig = {
+        ...effectiveConfig,
+        ...presetOverrides,
+        basePrompt: promptSuffix ? `${effectiveConfig.basePrompt}, ${promptSuffix}` : effectiveConfig.basePrompt,
+      };
+      effectiveQualityLabel = normalizedQuality;
+    } else {
+      // Backward compatibility: preserve historical hard_surface defaults when only preset is provided.
+      effectiveQualityLabel = "legacy-default";
+    }
+  }
+
+  const runtimeConfig: ComfyPresetRuntimeConfig = {
+    basePrompt: effectiveConfig.basePrompt,
+    negativePrompt: effectiveConfig.negativePrompt,
     params: {
-      width: config.width,
-      height: config.height,
-      cannyLow: config.cannyLow,
-      cannyHigh: config.cannyHigh,
-      controlStrength: config.controlStrength,
-      steps: config.steps,
-      cfg: config.cfg,
-      sampler: config.sampler,
-      scheduler: config.scheduler,
-      denoise: config.denoise,
+      width: effectiveConfig.width,
+      height: effectiveConfig.height,
+      cannyLow: effectiveConfig.cannyLow,
+      cannyHigh: effectiveConfig.cannyHigh,
+      controlStrength: effectiveConfig.controlStrength,
+      steps: effectiveConfig.steps,
+      cfg: effectiveConfig.cfg,
+      sampler: effectiveConfig.sampler,
+      scheduler: effectiveConfig.scheduler,
+      denoise: effectiveConfig.denoise,
     },
   };
+
+  debugComfyLog("Resolved preset config", {
+    preset,
+    hardSurfaceQuality: effectiveQualityLabel,
+    params: runtimeConfig.params,
+  });
+
+  return runtimeConfig;
 }
 
 export function computeDeterministicSeedFromFile(imagePath: string, salt = "") {
@@ -594,6 +760,9 @@ export async function runMultiviewCannyRefine(args: RunMultiviewCannyRefineArgs)
   const maxConcurrency = clampMaxConcurrency(args.maxConcurrency);
   const baseName = sanitizeBaseName(path.basename(args.inputImagePath, path.extname(args.inputImagePath)) || "image");
   const baseSeed = normalizeSeed(args.params.seed);
+
+  const workflowReferencePath = assertCanonicalWorkflowReferenceExists(__dirname);
+  debugComfyLog("Workflow reference path", workflowReferencePath);
 
   await ensureComfyUiReachable(baseUrl);
 

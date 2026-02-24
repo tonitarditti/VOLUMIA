@@ -20,6 +20,7 @@ type AutoEngine = "instantmesh" | "triposr" | "arch" | "blockout";
 type AutoPreset = "hard_surface" | "organic";
 type AutoProfile = "auto" | "hard_surface" | "organic";
 type MultiviewPreset = "hard_surface" | "balanced" | "organic";
+type MultiviewHardSurfaceQuality = "fast" | "balanced" | "pro";
 
 function formatMessageTime(value: string, locale: string) {
   return new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit" }).format(new Date(value));
@@ -101,6 +102,27 @@ function resolveDefaultMultiviewPreset(profile: AutoProfile | undefined): Multiv
   return "balanced";
 }
 
+const MULTIVIEW_HARD_SURFACE_QUALITY_KEY = "volumia.multiview.hard_surface.quality";
+
+function isMultiviewHardSurfaceQuality(value: string): value is MultiviewHardSurfaceQuality {
+  return value === "fast" || value === "balanced" || value === "pro";
+}
+
+function resolveStoredMultiviewHardSurfaceQuality(): MultiviewHardSurfaceQuality {
+  if (typeof window === "undefined") {
+    return "balanced";
+  }
+  try {
+    const stored = window.localStorage.getItem(MULTIVIEW_HARD_SURFACE_QUALITY_KEY);
+    if (stored && isMultiviewHardSurfaceQuality(stored)) {
+      return stored;
+    }
+  } catch {
+    // No-op by design.
+  }
+  return "balanced";
+}
+
 function getProjectModel(model: ProjectModel | undefined): ProjectModel {
   return {
     sourceImages: model?.sourceImages ? [...model.sourceImages] : [],
@@ -148,6 +170,8 @@ export function ProjectPage() {
   const [generationLogPath, setGenerationLogPath] = useState("");
   const [multiviewEnabled, setMultiviewEnabled] = useState(true);
   const [multiviewPreset, setMultiviewPreset] = useState<MultiviewPreset>(resolveDefaultMultiviewPreset(settings.autoGenerationProfile));
+  const [multiviewHardSurfaceQuality, setMultiviewHardSurfaceQuality] =
+    useState<MultiviewHardSurfaceQuality>(resolveStoredMultiviewHardSurfaceQuality);
   const [imagePreviews, setImagePreviews] = useState<Record<string, string>>({});
   const [isAssistantOpen, setIsAssistantOpen] = useState(false);
   const [isNotesOpen, setIsNotesOpen] = useState(false);
@@ -394,6 +418,7 @@ export function ProjectPage() {
       autoProfile: settings.autoGenerationProfile,
       multiviewEnabled,
       multiviewPreset,
+      ...(multiviewPreset === "hard_surface" ? { multiviewHardSurfaceQuality } : {}),
       pythonPath: settings.pythonPath,
       pipeline: "depth_glb",
     });
@@ -593,6 +618,27 @@ export function ProjectPage() {
                 <option value="balanced">Balanced</option>
                 <option value="organic">Organic</option>
               </select>
+              {multiviewPreset === "hard_surface" ? (
+                <select
+                  value={multiviewHardSurfaceQuality}
+                  onChange={(event) => {
+                    const nextValue = event.target.value as MultiviewHardSurfaceQuality;
+                    setMultiviewHardSurfaceQuality(nextValue);
+                    try {
+                      window.localStorage.setItem(MULTIVIEW_HARD_SURFACE_QUALITY_KEY, nextValue);
+                    } catch {
+                      // No-op by design.
+                    }
+                  }}
+                  className={`h-9 min-w-36 appearance-none rounded-lg border px-3 text-sm outline-none transition duration-150 ease-out focus:ring-2 focus:ring-[#8c7e6d]/50 ${selectClass}`}
+                  disabled={isGenerating || !multiviewEnabled}
+                  aria-label="HardSurface quality selector"
+                >
+                  <option value="fast">Fast</option>
+                  <option value="balanced">Balanced</option>
+                  <option value="pro">Pro</option>
+                </select>
+              ) : null}
               <Button variant="primary" onClick={() => void handleRunGeneration()} disabled={selectedImages.length === 0 || isGenerating}>
                 Generar 3D
               </Button>

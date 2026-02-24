@@ -138,6 +138,7 @@ export type GenerationAutoEngine = "instantmesh" | "triposr" | "arch" | "blockou
 export type GenerationAutoPreset = "hard_surface" | "organic";
 export type GenerationAutoProfile = "auto" | "hard_surface" | "organic";
 export type GenerationMultiviewPreset = "hard_surface" | "balanced" | "organic";
+export type GenerationMultiviewHardSurfaceQuality = "fast" | "balanced" | "pro";
 
 export type ProjectModel = {
   sourceImages: string[];
@@ -229,6 +230,7 @@ export type GenerationRunPayload = {
   autoProfile?: GenerationAutoProfile;
   multiviewEnabled?: boolean;
   multiviewPreset?: GenerationMultiviewPreset;
+  multiviewHardSurfaceQuality?: GenerationMultiviewHardSurfaceQuality;
   pythonPath?: string;
   pipeline?: GenerationPipeline;
   inputs?: string[];
