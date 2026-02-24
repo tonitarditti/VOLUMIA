@@ -582,7 +582,7 @@ export function ProjectPage() {
     <div className="relative h-full min-h-0 w-full min-w-0 overflow-hidden p-4">
       <ViewportBackground glbPath={project.model?.glbPath} glbVersion={project.model?.generatedAt} />
       <UILayer>
-        <div className={`grid h-full min-h-0 w-full min-w-0 gap-4 ${isAssistantOpen ? "grid-cols-[320px_minmax(0,1fr)_340px]" : "grid-cols-[320px_minmax(0,1fr)]"}`}>
+        <div className={`pointer-events-none grid h-full min-h-0 w-full min-w-0 gap-4 ${isAssistantOpen ? "grid-cols-[320px_minmax(0,1fr)_340px]" : "grid-cols-[320px_minmax(0,1fr)]"}`}>
           <aside className={`pointer-events-auto flex min-h-0 flex-col rounded-2xl p-4 ${floatingPanelClass}`}>
           <TextField
             value={project.name}

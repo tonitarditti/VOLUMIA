@@ -87,8 +87,6 @@ type ViewportThemeConfig = {
 
 const VIEW_TARGET = new THREE.Vector3(0, 0.4, 0);
 const VIEWER_DEBUG = import.meta.env.DEV;
-const SIDEWAYS_ROTATION_X = -Math.PI / 2;
-const Y_TO_Z_NO_ROTATE_RATIO = 1.2;
 const SHADOW_CAMERA_BOUNDS = 12;
 const SHADOW_CAMERA_NEAR = 0.5;
 const SHADOW_CAMERA_FAR = 40;
@@ -230,6 +228,9 @@ function LoadedModel({
               onLoadError("GLB loaded but no scene was found.");
               return;
             }
+            model.rotation.set(0, 0, 0);
+            model.rotation.x = -Math.PI / 2;
+            model.userData.volumiaOrientationNormalized = true;
             const container = modelRef.current;
             if (!container) {
               onLoadError("Model container unavailable.");
@@ -275,20 +276,6 @@ function LoadedModel({
     }
 
     loadedModel.updateMatrixWorld(true);
-    const originalBox = new THREE.Box3().setFromObject(loadedModel);
-    if (originalBox.isEmpty()) {
-      return;
-    }
-    const originalSize = originalBox.getSize(new THREE.Vector3());
-    const isYDominant = originalSize.y > originalSize.z * Y_TO_Z_NO_ROTATE_RATIO;
-    const alreadyRotated = loadedModel.userData.volumiaOrientationNormalized === true;
-    const shouldRotate = !isYDominant && !alreadyRotated;
-    if (shouldRotate) {
-      loadedModel.rotation.x += SIDEWAYS_ROTATION_X;
-      loadedModel.userData.volumiaOrientationNormalized = true;
-      loadedModel.updateMatrixWorld(true);
-    }
-
     const box = new THREE.Box3().setFromObject(loadedModel);
     if (box.isEmpty()) {
       return;
@@ -316,7 +303,7 @@ function LoadedModel({
 
     const size = finalBox.getSize(new THREE.Vector3());
     const normalizationDebug: ModelNormalizationDebug = {
-      appliedRotation: shouldRotate,
+      appliedRotation: true,
       bboxSize: {
         x: size.x,
         y: size.y,
@@ -828,8 +815,10 @@ export function ProjectViewport({
                       camera.updateProjectionMatrix();
                       setSize({ width, height });
                     }
+                    camera.up.set(0, 1, 0);
                     cameraRef.current = camera;
                     applyCameraSnapshot(camera, controlsRef, cameraSnapshotRef.current);
+                    controlsRef.current?.update();
                   }
                 }}
               >
@@ -890,6 +879,7 @@ export function ProjectViewport({
                 />
                 <OrbitControls
                   ref={controlsRef}
+                  enabled
                   makeDefault
                   target={[0, 0.4, 0]}
                   enableDamping
