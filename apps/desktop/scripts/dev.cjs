@@ -34,10 +34,16 @@ async function findAvailablePort(startPort, limit = 50) {
 }
 
 function spawnNpm(args, options) {
-  const spawnOptions = { ...options, cwd: packageRoot };
+  const spawnOptions = {
+    ...options,
+    cwd: packageRoot,
+    shell: process.platform === "win32", // importante en Windows
+  };
+
   if (process.platform === "win32") {
-    return spawn("cmd.exe", ["/d", "/s", "/c", `npm ${args.join(" ")}`], spawnOptions);
+    return spawn("npm.cmd", args, spawnOptions);
   }
+
   return spawn("npm", args, spawnOptions);
 }
 

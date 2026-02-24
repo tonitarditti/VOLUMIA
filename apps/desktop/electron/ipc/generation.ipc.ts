@@ -775,8 +775,8 @@ function collectPythonPathCandidates(requestedPath?: string) {
     candidates.push({ path: normalized, source, priority, order: candidates.length });
   };
 
-  addPathCandidate(preferredEnvPath, "env", 1);
-  addPathCandidate(requested, "requested", 2);
+  addPathCandidate(requested, "requested", 1);
+  addPathCandidate(preferredEnvPath, "env", 2);
   for (const candidatePath of commonPaths) {
     addPathCandidate(candidatePath, "common_path", 3);
   }
