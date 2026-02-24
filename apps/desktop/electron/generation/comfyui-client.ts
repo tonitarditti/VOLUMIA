@@ -63,6 +63,8 @@ export type ComfyPresetRuntimeConfig = {
 export type RunSDXLCannyRefineSingleArgs = {
   baseUrl?: string;
   inputImagePath: string;
+  projectId?: string;
+  remoteInputName?: string;
   prompt: string;
   negative: string;
   outputDir: string;
@@ -82,6 +84,8 @@ export type RunSDXLCannyRefineSingleResult = {
 export type RunMultiviewCannyRefineArgs = {
   baseUrl?: string;
   inputImagePath: string;
+  projectId?: string;
+  remoteInputName?: string;
   outputDir?: string;
   basePrompt: string;
   negative: string;
@@ -117,6 +121,7 @@ const POLL_INTERVAL_MS = 1_200;
 const HISTORY_TIMEOUT_MS = 180_000;
 const INSTALL_DOC_PATH = path.join("docs", "README_COMFYUI_MODELS.md");
 const DEBUG_COMFYUI = process.env.VOLUMIA_DEBUG_COMFYUI === "1";
+const DEFAULT_COMFY_INPUT_FILENAME = "volumia_current.png";
 const WORKFLOW_REFERENCE_SEGMENTS = ["tools", "comfyui", "workflows", "multiview_sdxl_canny.json"] as const;
 const MAX_REPO_ROOT_ASCENT = 10;
 
@@ -342,6 +347,41 @@ function sanitizeBaseName(value: string) {
   return value.replace(/[^a-zA-Z0-9._-]/g, "_");
 }
 
+function sanitizeProjectToken(value: string) {
+  return value.replace(/[^a-zA-Z0-9_-]/g, "_").replace(/_+/g, "_").replace(/^_+|_+$/g, "");
+}
+
+function sanitizeComfyInputFilename(value: string) {
+  const sanitized = sanitizeBaseName(value).replace(/^_+|_+$/g, "");
+  if (!sanitized) {
+    return DEFAULT_COMFY_INPUT_FILENAME;
+  }
+  return sanitized.toLowerCase().endsWith(".png") ? sanitized : `${sanitized}.png`;
+}
+
+function resolveComfyInputFilename(projectId?: string, remoteInputName?: string) {
+  const explicitRemoteName = typeof remoteInputName === "string" ? remoteInputName.trim() : "";
+  if (explicitRemoteName) {
+    return sanitizeComfyInputFilename(explicitRemoteName);
+  }
+
+  const projectToken = typeof projectId === "string" ? sanitizeProjectToken(projectId.trim()) : "";
+  if (projectToken) {
+    return `volumia_${projectToken}.png`;
+  }
+
+  return DEFAULT_COMFY_INPUT_FILENAME;
+}
+
+function inferComfyInputPath(startDir: string, filename: string) {
+  try {
+    const repoRoot = findRepoRoot(startDir);
+    return path.join(repoRoot, "tools", "comfyui", "input", filename);
+  } catch {
+    return "";
+  }
+}
+
 function toInputImageReference(image: UploadedImage) {
   const normalizedSubfolder = image.subfolder ? image.subfolder.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "") : "";
   return normalizedSubfolder ? `${normalizedSubfolder}/${image.name}` : image.name;
@@ -476,11 +516,14 @@ async function resolveModelSelection(baseUrl: string): Promise<ModelSelection> {
   };
 }
 
-async function uploadImage(baseUrl: string, imagePath: string): Promise<UploadedImage> {
+async function uploadImage(baseUrl: string, imagePath: string, remoteInputName: string): Promise<UploadedImage> {
   const form = new FormData();
   const fileContent = fs.readFileSync(imagePath);
   const blob = new Blob([fileContent], { type: getMimeFromPath(imagePath) });
-  form.append("image", blob, path.basename(imagePath));
+  form.append("type", "input");
+  form.append("overwrite", "true");
+  form.append("filename", remoteInputName);
+  form.append("image", blob, remoteInputName);
 
   const response = await fetch(`${baseUrl}/upload/image`, {
     method: "POST",
@@ -711,14 +754,37 @@ export function computeDeterministicSeedFromFile(imagePath: string, salt = "") {
 export async function runSDXLCannyRefineSingle(args: RunSDXLCannyRefineSingleArgs): Promise<RunSDXLCannyRefineSingleResult> {
   const baseUrl = normalizeBaseUrl(args.baseUrl);
   const logs: string[] = [];
+  const remoteInputFilename = resolveComfyInputFilename(args.projectId, args.remoteInputName);
+  const inferredComfyInputPath = inferComfyInputPath(__dirname, remoteInputFilename);
 
   assertNotCanceled(args.isCanceled);
   await ensureComfyUiReachable(baseUrl);
 
   debugComfyLog("Base URL", baseUrl);
+  debugComfyLog("Deterministic ComfyUI input filename", {
+    filename: remoteInputFilename,
+    path: inferredComfyInputPath || undefined,
+  });
+  if (DEBUG_COMFYUI) {
+    logs.push(`[debug] comfy_input_filename=${remoteInputFilename}`);
+    if (inferredComfyInputPath) {
+      logs.push(`[debug] comfy_input_path=${inferredComfyInputPath}`);
+    }
+  }
 
-  const uploaded = await uploadImage(baseUrl, args.inputImagePath);
-  const inputImageRef = toInputImageReference(uploaded);
+  const uploaded = await uploadImage(baseUrl, args.inputImagePath, remoteInputFilename);
+  if (uploaded.name !== remoteInputFilename || (uploaded.subfolder && uploaded.subfolder.trim().length > 0)) {
+    debugComfyLog("ComfyUI upload resolved a different server-side reference", {
+      requestedFilename: remoteInputFilename,
+      returnedName: uploaded.name,
+      returnedSubfolder: uploaded.subfolder || "",
+    });
+  }
+  const inputImageRef = toInputImageReference({
+    name: remoteInputFilename,
+    subfolder: "",
+    type: "input",
+  });
 
   const workflow = buildSDXLCannyWorkflow({
     inputImage: inputImageRef,
@@ -758,6 +824,7 @@ export async function runSDXLCannyRefineSingle(args: RunSDXLCannyRefineSingleArg
 export async function runMultiviewCannyRefine(args: RunMultiviewCannyRefineArgs): Promise<RunMultiviewCannyRefineResult> {
   const multiviewStartTimeMs = Date.now();
   const baseUrl = normalizeBaseUrl(args.baseUrl);
+  const remoteInputFilename = resolveComfyInputFilename(args.projectId, args.remoteInputName);
   const views = (args.views && args.views.length > 0 ? args.views : DEFAULT_VIEWS).map((item) => ({ ...item }));
   const useSeedOffsets = Boolean(args.useSeedOffsets);
   const outputDir = resolveOutputDir(args.outputDir, args.inputImagePath);
@@ -789,6 +856,9 @@ export async function runMultiviewCannyRefine(args: RunMultiviewCannyRefineArgs)
     `[models] controlnet=${effectiveParams.controlNetName}`,
     `[seed] base=${baseSeed}`,
   ];
+  if (DEBUG_COMFYUI) {
+    logs.push(`[debug] comfy_input_filename=${remoteInputFilename}`);
+  }
 
   debugComfyLog("Multiview config", {
     baseUrl,
@@ -851,6 +921,8 @@ export async function runMultiviewCannyRefine(args: RunMultiviewCannyRefineArgs)
     const singleResult = await runSDXLCannyRefineSingle({
       baseUrl,
       inputImagePath: args.inputImagePath,
+      projectId: args.projectId,
+      remoteInputName: remoteInputFilename,
       prompt,
       negative: args.negative,
       outputDir,
