@@ -202,6 +202,75 @@ function ensureSystemPythonBridge(): VolumiaSystemPythonBridge {
   return systemPython as VolumiaSystemPythonBridge;
 }
 
+const generationProgressSubscribers = new Set<(payload: GenerationProgressPayload) => void>();
+const generationDoneSubscribers = new Set<(payload: GenerationDonePayload) => void>();
+const generationErrorSubscribers = new Set<(payload: GenerationErrorPayload) => void>();
+let generationRelayAttached = false;
+let generationRelayProgressHandler: ((payload: GenerationProgressPayload) => void) | null = null;
+let generationRelayDoneHandler: ((payload: GenerationDonePayload) => void) | null = null;
+let generationRelayErrorHandler: ((payload: GenerationErrorPayload) => void) | null = null;
+
+function ensureGenerationEventRelay() {
+  if (generationRelayAttached) {
+    return;
+  }
+
+  const generation = ensureGenerationBridge();
+  generationRelayProgressHandler = (payload) => {
+    for (const callback of generationProgressSubscribers) {
+      callback(payload);
+    }
+  };
+  generationRelayDoneHandler = (payload) => {
+    for (const callback of generationDoneSubscribers) {
+      callback(payload);
+    }
+  };
+  generationRelayErrorHandler = (payload) => {
+    for (const callback of generationErrorSubscribers) {
+      callback(payload);
+    }
+  };
+
+  generation.onProgress(generationRelayProgressHandler);
+  generation.onDone(generationRelayDoneHandler);
+  generation.onError(generationRelayErrorHandler);
+  generationRelayAttached = true;
+}
+
+function maybeDisposeGenerationEventRelay() {
+  if (!generationRelayAttached) {
+    return;
+  }
+  if (
+    generationProgressSubscribers.size > 0 ||
+    generationDoneSubscribers.size > 0 ||
+    generationErrorSubscribers.size > 0
+  ) {
+    return;
+  }
+
+  try {
+    const generation = ensureGenerationBridge();
+    if (generationRelayProgressHandler) {
+      generation.offProgress(generationRelayProgressHandler);
+    }
+    if (generationRelayDoneHandler) {
+      generation.offDone(generationRelayDoneHandler);
+    }
+    if (generationRelayErrorHandler) {
+      generation.offError(generationRelayErrorHandler);
+    }
+  } catch {
+    // No-op by design.
+  } finally {
+    generationRelayAttached = false;
+    generationRelayProgressHandler = null;
+    generationRelayDoneHandler = null;
+    generationRelayErrorHandler = null;
+  }
+}
+
 export const desktopApi = {
   exportProjectsJson(payload: ProjectsExportEnvelope): Promise<ExportProjectsResult> {
     return ensureBridge().exportJson(payload);
@@ -284,24 +353,27 @@ export const desktopApi = {
     return ensureGenerationBridge().openLogPath(logPath);
   },
   onGenerationProgress(callback: (payload: GenerationProgressPayload) => void): () => void {
-    const generation = ensureGenerationBridge();
-    generation.onProgress(callback);
+    ensureGenerationEventRelay();
+    generationProgressSubscribers.add(callback);
     return () => {
-      generation.offProgress(callback);
+      generationProgressSubscribers.delete(callback);
+      maybeDisposeGenerationEventRelay();
     };
   },
   onGenerationDone(callback: (payload: GenerationDonePayload) => void): () => void {
-    const generation = ensureGenerationBridge();
-    generation.onDone(callback);
+    ensureGenerationEventRelay();
+    generationDoneSubscribers.add(callback);
     return () => {
-      generation.offDone(callback);
+      generationDoneSubscribers.delete(callback);
+      maybeDisposeGenerationEventRelay();
     };
   },
   onGenerationError(callback: (payload: GenerationErrorPayload) => void): () => void {
-    const generation = ensureGenerationBridge();
-    generation.onError(callback);
+    ensureGenerationEventRelay();
+    generationErrorSubscribers.add(callback);
     return () => {
-      generation.offError(callback);
+      generationErrorSubscribers.delete(callback);
+      maybeDisposeGenerationEventRelay();
     };
   },
   detectPythonInterpreters(preferredPath?: string): Promise<PythonDetectResult> {

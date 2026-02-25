@@ -638,6 +638,8 @@ export function ProjectPage() {
         <ProjectViewport
           glbPath={project.model?.glbPath}
           glbVersion={project.model?.generatedAt}
+          isGenerating={isGenerating}
+          generationStage={generationStage}
           showUtilityButtons={false}
           showChrome={false}
         />
