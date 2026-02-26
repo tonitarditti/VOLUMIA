@@ -1,6 +1,12 @@
-import { BrowserWindow, app } from "electron";
+import { BrowserWindow, app, ipcMain } from "electron";
 import { existsSync } from "fs";
 import path from "path";
+import {
+  IPC_CHANNELS,
+  type BackendRunDefaultPayload,
+  type BackendRunDefaultResult,
+  type BackendStatusResponse,
+} from "./channels";
 import { registerProjectsFileHandlers } from "./ipc/projects-file.ipc";
 import { registerGenerationHandlers } from "./ipc/generation.ipc";
 import { registerSettingsFileHandlers } from "./ipc/settings-file.ipc";
@@ -16,6 +22,112 @@ const devServerUrl = process.env.VITE_DEV_SERVER_URL ?? "http://127.0.0.1:5173";
 let mainWindow: BrowserWindow | null = null;
 let windowStateController: ReturnType<typeof createWindowStateController> | null = null;
 let disposeSystemPreferencesHandlers: (() => void) | null = null;
+let backendModule: BackendRuntimeModule | null = null;
+
+type BackendRuntimeModule = {
+  initBackend: () => Promise<unknown>;
+  startBackend: (mode?: "dev" | "prod") => Promise<BackendStatusResponse>;
+  stopBackend: () => Promise<unknown>;
+  getBackendStatus: () => Promise<BackendStatusResponse>;
+  runDefaultWorkflow: (payload?: { imagePath?: string }) => Promise<{
+    promptId: string;
+    workflowPath: string;
+    message: string;
+  }>;
+};
+
+function toErrorMessage(error: unknown) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
+}
+
+function getBackendModulePath() {
+  return path.resolve(process.cwd(), "backend", "dist", "index.js");
+}
+
+function loadBackendModule() {
+  if (backendModule) {
+    return backendModule;
+  }
+  const backendPath = getBackendModulePath();
+  if (!existsSync(backendPath)) {
+    throw new Error(`Backend compilado no encontrado en: ${backendPath}`);
+  }
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  backendModule = require(backendPath) as BackendRuntimeModule;
+  return backendModule;
+}
+
+function defaultBackendStatus(message: string): BackendStatusResponse {
+  return {
+    mode: isDev ? "dev" : "prod",
+    startedAt: null,
+    workflows: {
+      sourceDir: path.resolve(process.cwd(), "backend", "workflows"),
+      targetDir: path.resolve(process.cwd(), "backend", "workflows"),
+      copied: 0,
+      replaced: 0,
+      backups: 0,
+      lastSyncAt: null,
+      error: message,
+    },
+    models: {
+      ok: false,
+      totalFiles: 0,
+      installedFiles: 0,
+      message,
+      error: message,
+    },
+    comfy: {
+      running: false,
+      url: "http://127.0.0.1:8188",
+      lastError: message,
+      state: "error",
+      host: "127.0.0.1",
+      port: 8188,
+      pid: null,
+      python: null,
+      comfyRoot: null,
+      healthy: false,
+      external: false,
+      message,
+    },
+    activeProcesses: [],
+    notes: [message],
+  };
+}
+
+async function getBackendStatusSafe() {
+  try {
+    const backend = loadBackendModule();
+    return await backend.getBackendStatus();
+  } catch (error) {
+    const message = toErrorMessage(error);
+    return defaultBackendStatus(message);
+  }
+}
+
+async function startBackendSafe() {
+  try {
+    const backend = loadBackendModule();
+    await backend.initBackend();
+    const status = await backend.startBackend("dev");
+    console.log("[VOLUMIA][backend] startBackend(dev):", status.comfy.message);
+  } catch (error) {
+    console.warn("[VOLUMIA][backend] startBackend(dev) failed:", toErrorMessage(error));
+  }
+}
+
+async function stopBackendSafe() {
+  try {
+    const backend = loadBackendModule();
+    await backend.stopBackend();
+  } catch {
+    // No-op by design.
+  }
+}
 
 function createMainWindow() {
   if (!windowStateController) {
@@ -69,6 +181,39 @@ function createMainWindow() {
   return windowInstance;
 }
 
+function registerBackendHandlers() {
+  ipcMain.handle(IPC_CHANNELS.backendStatus, async () => {
+    return await getBackendStatusSafe();
+  });
+
+  ipcMain.handle(
+    IPC_CHANNELS.backendRunDefault,
+    async (_event, payload: BackendRunDefaultPayload | undefined): Promise<BackendRunDefaultResult> => {
+      try {
+        const backend = loadBackendModule();
+        const runResult = await backend.runDefaultWorkflow(payload);
+        const status = await backend.getBackendStatus();
+        return {
+          ok: true,
+          promptId: runResult.promptId,
+          workflowPath: runResult.workflowPath,
+          message: runResult.message,
+          status,
+        };
+      } catch (error) {
+        const message = toErrorMessage(error);
+        const status = await getBackendStatusSafe();
+        return {
+          ok: false,
+          message,
+          error: message,
+          status,
+        };
+      }
+    }
+  );
+}
+
 app.whenReady().then(() => {
   if (process.env.NODE_ENV === "development") {
     console.log("UserData path:", app.getPath("userData"));
@@ -89,6 +234,11 @@ app.whenReady().then(() => {
   registerWindowSettingsHandlers(() => mainWindow, windowStateController);
   disposeSystemPreferencesHandlers = registerSystemPreferencesHandlers(() => mainWindow);
   registerSystemPythonHandlers(() => mainWindow);
+  registerBackendHandlers();
+
+  if (isDev) {
+    void startBackendSafe();
+  }
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -101,6 +251,10 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
     app.quit();
   }
+});
+
+app.on("before-quit", () => {
+  void stopBackendSafe();
 });
 
 app.on("will-quit", () => {

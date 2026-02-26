@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "node scripts/dev.cjs",
     "react": "vite --host 127.0.0.1",
-    "electron:build": "tsc -p tsconfig.electron.json",
+    "backend:status": "node scripts/backend-diag.cjs",
+    "backend:build": "tsc -p backend/tsconfig.json",
+    "electron:build": "npm run backend:build && tsc -p tsconfig.electron.json",
     "electron:dev": "node scripts/run-electron-dev.cjs",
     "build": "vite build && pnpm run electron:build",
     "package": "pnpm run build && electron-builder",

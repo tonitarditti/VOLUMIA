@@ -5,6 +5,9 @@ import {
   type ClearCacheResult,
   type ImportSettingsResult,
   type ExportProjectsResult,
+  type BackendRunDefaultPayload,
+  type BackendRunDefaultResult,
+  type BackendStatusResponse,
   type GenerationDonePayload,
   type GenerationErrorPayload,
   type GenerationCheckResult,
@@ -206,6 +209,11 @@ const bridge = {
       ipcRenderer.off(IPC_CHANNELS.pyInstallLog, wrapped);
       pythonInstallLogListeners.delete(callback);
     },
+  },
+  backend: {
+    status: () => ipcRenderer.invoke(IPC_CHANNELS.backendStatus) as Promise<BackendStatusResponse>,
+    runDefault: (payload?: BackendRunDefaultPayload) =>
+      ipcRenderer.invoke(IPC_CHANNELS.backendRunDefault, payload ?? {}) as Promise<BackendRunDefaultResult>,
   },
   // Backward compatibility for existing renderer wrappers.
   exportProjectsJson: (payload: ProjectsExportEnvelope) =>

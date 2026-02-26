@@ -29,6 +29,8 @@ export const IPC_CHANNELS = {
   pyInstallTorchCuda: "py:install-torch-cuda",
   pyInstallLog: "py:install-log",
   pyInstallDone: "py:install-done",
+  backendStatus: "backend:status",
+  backendRunDefault: "backend:run-default",
 } as const;
 
 export type LanguageMode = "system" | "manual";
@@ -122,6 +124,58 @@ export type ClearCacheResult = {
   deleted: string[];
   missing: string[];
   errors: ClearCacheError[];
+};
+
+export type BackendServiceState = "stopped" | "starting" | "running" | "error";
+
+export type BackendStatusResponse = {
+  mode: "dev" | "prod";
+  startedAt: string | null;
+  workflows: {
+    sourceDir: string;
+    targetDir: string;
+    copied: number;
+    replaced: number;
+    backups: number;
+    lastSyncAt: string | null;
+    error: string | null;
+  };
+  models: {
+    ok: boolean;
+    totalFiles: number;
+    installedFiles: number;
+    message: string;
+    error: string | null;
+  };
+  comfy: {
+    running: boolean;
+    url: string;
+    lastError: string | null;
+    state: BackendServiceState;
+    host: string;
+    port: number;
+    pid: number | null;
+    python: string | null;
+    comfyRoot: string | null;
+    healthy: boolean;
+    external?: boolean;
+    message: string;
+  };
+  activeProcesses: Array<{ name: string; pid: number }>;
+  notes: string[];
+};
+
+export type BackendRunDefaultPayload = {
+  imagePath?: string;
+};
+
+export type BackendRunDefaultResult = {
+  ok: boolean;
+  promptId?: string;
+  workflowPath?: string;
+  message: string;
+  error?: string;
+  status: BackendStatusResponse;
 };
 
 export type ChatRole = "user" | "assistant";

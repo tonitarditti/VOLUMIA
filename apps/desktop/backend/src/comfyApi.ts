@@ -1,4 +1,5 @@
 import { logger } from "./logger";
+import { getComfyBaseUrl, loadBackendConfig } from "./runtimeConfig";
 
 type RequestJsonOptions = {
   timeoutMs?: number;
@@ -185,7 +186,11 @@ export function sanitizeCheckpointLoaders(
 }
 
 export class ComfyApi {
-  constructor(private readonly baseUrl: string) {}
+  private readonly baseUrl: string;
+
+  constructor(baseUrl?: string) {
+    this.baseUrl = baseUrl ?? getComfyBaseUrl(loadBackendConfig());
+  }
 
   private normalizeRoute(route: string) {
     if (route.startsWith("/")) {

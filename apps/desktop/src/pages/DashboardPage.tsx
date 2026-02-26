@@ -1,5 +1,7 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { desktopApi, hasDesktopBridge } from "@/electron/desktopApi";
+import type { BackendStatusResponse } from "@/electron/channels";
 import { useProjects } from "@/projects/context";
 import { selectProjectsSortedByUpdatedAt } from "@/projects/selectors";
 import { EmptyState } from "@/ui/EmptyState";
@@ -25,6 +27,9 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
 
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState("");
+  const [backendStatus, setBackendStatus] = useState<BackendStatusResponse | null>(null);
+  const [backendMessage, setBackendMessage] = useState("Backend idle.");
+  const [runningWorkflowTest, setRunningWorkflowTest] = useState(false);
 
   const projects = useMemo(() => selectProjectsSortedByUpdatedAt(state.projects), [state.projects]);
 
@@ -38,6 +43,67 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
     renameProject(editingProjectId, editingName);
     setEditingProjectId(null);
     setEditingName("");
+  };
+
+  useEffect(() => {
+    if (!hasDesktopBridge()) {
+      setBackendMessage("Desktop bridge no disponible.");
+      return;
+    }
+
+    let active = true;
+    const refreshStatus = async () => {
+      try {
+        const status = await desktopApi.getBackendStatus();
+        if (!active) {
+          return;
+        }
+        setBackendStatus(status);
+        setBackendMessage(
+          status.comfy.running
+            ? `Backend OK (${status.comfy.url})`
+            : status.comfy.lastError ?? status.comfy.message
+        );
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+        const message = error instanceof Error ? error.message : "No se pudo consultar backend.";
+        setBackendMessage(message);
+      }
+    };
+
+    void refreshStatus();
+    const timer = window.setInterval(() => {
+      void refreshStatus();
+    }, 4000);
+
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  const runWorkflowTest = async () => {
+    if (!hasDesktopBridge()) {
+      setBackendMessage("Desktop bridge no disponible.");
+      return;
+    }
+    setRunningWorkflowTest(true);
+    try {
+      const result = await desktopApi.runDefaultBackendWorkflow();
+      setBackendStatus(result.status);
+      if (result.ok) {
+        setBackendMessage(`Workflow encolado. promptId=${result.promptId ?? "n/a"}`);
+      } else {
+        setBackendMessage(result.error ?? result.message);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "No se pudo ejecutar workflow de prueba.";
+      setBackendMessage(message);
+    } finally {
+      setRunningWorkflowTest(false);
+    }
   };
 
   return (
@@ -68,6 +134,42 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
               {t("dashboard.exportJson")}
             </Button>
           </div>
+        </div>
+        <div className="mt-4 rounded-xl border border-[var(--border)] bg-[var(--surface-2)] p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs font-medium text-[var(--text)]">
+              Backend: {backendStatus?.comfy.running ? "ok" : backendStatus?.comfy.state ?? "unknown"} (
+              {backendStatus?.comfy.url ?? "http://127.0.0.1:8188"})
+            </p>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="primary"
+                className="h-8 px-3 text-xs"
+                disabled={runningWorkflowTest}
+                onClick={() => void runWorkflowTest()}
+              >
+                Run workflow (test)
+              </Button>
+              <Button
+                variant="secondary"
+                className="h-8 px-3 text-xs"
+                onClick={() => {
+                  if (!hasDesktopBridge()) return;
+                  void desktopApi.getBackendStatus().then((status) => {
+                    setBackendStatus(status);
+                    setBackendMessage(
+                      status.comfy.running
+                        ? `Backend OK (${status.comfy.url})`
+                        : status.comfy.lastError ?? status.comfy.message
+                    );
+                  });
+                }}
+              >
+                Refresh status
+              </Button>
+            </div>
+          </div>
+          <p className="mt-2 text-xs text-[var(--text-muted)]">{backendMessage}</p>
         </div>
       </Card>
 
