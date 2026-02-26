@@ -9,9 +9,25 @@
     "electron:build": "tsc -p tsconfig.electron.json",
     "electron:dev": "node scripts/run-electron-dev.cjs",
     "build": "vite build && pnpm run electron:build",
+    "package": "pnpm run build && electron-builder",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.electron.json --noEmit",
     "lint": "eslint src electron vite.config.ts tailwind.config.ts vitest.config.ts --ext .ts,.tsx",
     "test": "vitest run"
+  },
+  "build": {
+    "appId": "com.volumia.desktop",
+    "productName": "Volumia",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron-dist/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "python/**/*"
+    ]
   },
   "dependencies": {
     "@react-three/drei": "^9.120.4",
@@ -34,6 +50,7 @@
     "@vitejs/plugin-react": "^4.3.4",
     "autoprefixer": "^10.4.21",
     "electron": "^33.2.1",
+    "electron-builder": "^26.0.12",
     "eslint": "^9.17.0",
     "eslint-plugin-react-hooks": "^5.1.0",
     "jsdom": "^26.1.0",
