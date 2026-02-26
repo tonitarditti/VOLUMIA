@@ -37,11 +37,17 @@ function spawnNpm(args, options) {
   const spawnOptions = {
     ...options,
     cwd: packageRoot,
-    shell: process.platform === "win32", // importante en Windows
+    shell: false,
   };
 
   if (process.platform === "win32") {
-    return spawn("npm.cmd", args, spawnOptions);
+    const quoteCmdArg = (value) => {
+      if (value.length === 0) return "\"\"";
+      if (!/[\s"]/u.test(value)) return value;
+      return `"${value.replace(/"/g, "\"\"")}"`;
+    };
+    const commandLine = `npm ${args.map((arg) => quoteCmdArg(String(arg))).join(" ")}`;
+    return spawn("cmd.exe", ["/d", "/s", "/c", commandLine], spawnOptions);
   }
 
   return spawn("npm", args, spawnOptions);

@@ -7,6 +7,7 @@
     "dev": "node scripts/dev.cjs",
     "react": "vite --host 127.0.0.1",
     "backend:status": "node scripts/backend-diag.cjs",
+    "comfy:status": "node scripts/backend-diag.cjs",
     "backend:build": "tsc -p backend/tsconfig.json",
     "electron:build": "npm run backend:build && tsc -p tsconfig.electron.json",
     "electron:dev": "node scripts/run-electron-dev.cjs",

@@ -17,11 +17,19 @@ export type ManagedProcess = {
   exit: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
 };
 
-function splitLines(buffer: string) {
-  return buffer
-    .split(/\r?\n/u)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
+type StreamLineBuffer = {
+  remaining: string;
+  lines: string[];
+};
+
+function readStreamLines(state: StreamLineBuffer, chunk: string) {
+  const merged = `${state.remaining}${chunk}`;
+  const parts = merged.split(/\r?\n/u);
+  const nextRemaining = parts.pop() ?? "";
+  const lines = parts.map((line) => line.trim()).filter((line) => line.length > 0);
+  state.remaining = nextRemaining;
+  state.lines.push(...lines);
+  return lines;
 }
 
 export async function killProcessTree(pid: number) {
@@ -108,8 +116,8 @@ export class ProcessManager {
     const child = spawn(command, args, {
       cwd: options.cwd,
       env: options.env,
-      windowsHide: true,
-      shell: false,
+      windowsHide: options.windowsHide ?? true,
+      shell: options.shell ?? false,
       stdio: "pipe",
     });
 
@@ -119,24 +127,24 @@ export class ProcessManager {
 
     const stdout: string[] = [];
     const stderr: string[] = [];
+    const stdoutBuffer: StreamLineBuffer = { remaining: "", lines: stdout };
+    const stderrBuffer: StreamLineBuffer = { remaining: "", lines: stderr };
 
     child.stdout.on("data", (chunk) => {
-      const lines = splitLines(String(chunk));
+      const lines = readStreamLines(stdoutBuffer, String(chunk));
       if (lines.length === 0) {
         return;
       }
-      stdout.push(...lines);
       for (const line of lines) {
         options.onStdoutLine?.(line);
       }
     });
 
     child.stderr.on("data", (chunk) => {
-      const lines = splitLines(String(chunk));
+      const lines = readStreamLines(stderrBuffer, String(chunk));
       if (lines.length === 0) {
         return;
       }
-      stderr.push(...lines);
       for (const line of lines) {
         options.onStderrLine?.(line);
       }
@@ -154,6 +162,16 @@ export class ProcessManager {
 
     const exit = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolvePromise) => {
       child.on("exit", (code, signal) => {
+        const stdoutTail = stdoutBuffer.remaining.trim();
+        if (stdoutTail.length > 0) {
+          stdout.push(stdoutTail);
+          options.onStdoutLine?.(stdoutTail);
+        }
+        const stderrTail = stderrBuffer.remaining.trim();
+        if (stderrTail.length > 0) {
+          stderr.push(stderrTail);
+          options.onStderrLine?.(stderrTail);
+        }
         this.processes.delete(child.pid!);
         resolvePromise({ code, signal });
       });

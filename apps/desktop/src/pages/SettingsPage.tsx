@@ -9,6 +9,7 @@ import type { AppSettings } from "@/volumia/settings/types";
 const CACHE_CLEAR_MARKER_FILE = "__clear_cache_on_next_start__.json";
 const PYTHON_PATH_STORAGE_KEY = "volumia.python.path";
 const PYTHON_SHOW_ADVANCED_STORAGE_KEY = "volumia.python.showAdvanced";
+const SHOW_LEGACY_PYTHON_PANEL = false;
 
 function readLocalStorageValue(key: string) {
   if (typeof window === "undefined") {
@@ -95,6 +96,13 @@ export function SettingsPage({
   const [isClearingCache, setIsClearingCache] = useState(false);
   const [clearCacheResult, setClearCacheResult] = useState<ClearCacheResult | null>(null);
   const [clearCacheMessage, setClearCacheMessage] = useState("");
+  const [comfyDir, setComfyDir] = useState("");
+  const [comfyEnvName, setComfyEnvName] = useState("volumia");
+  const [comfyPort, setComfyPort] = useState("8188");
+  const [comfyHook, setComfyHook] = useState("");
+  const [comfyPythonOverride, setComfyPythonOverride] = useState("");
+  const [comfyConfigMessage, setComfyConfigMessage] = useState("");
+  const [isSavingComfyConfig, setIsSavingComfyConfig] = useState(false);
 
   const fpsOptions: AppSettings["fpsLimit"][] = [30, 60, 120];
 
@@ -298,6 +306,57 @@ export function SettingsPage({
     }
   }, [t]);
 
+  const loadComfyConfig = useCallback(async () => {
+    if (!hasDesktopBridge()) {
+      return;
+    }
+    try {
+      const config = await desktopApi.getComfyConfig();
+      setComfyDir(config.comfyDir ?? "");
+      setComfyEnvName(config.condaEnvName ?? "volumia");
+      setComfyPort(String(config.port ?? 8188));
+      setComfyHook(config.condaHook ?? "");
+      setComfyPythonOverride(config.pythonExeOverride ?? "");
+      setComfyConfigMessage("");
+    } catch (error) {
+      setComfyConfigMessage(error instanceof Error ? error.message : "No se pudo leer config de ComfyUI.");
+    }
+  }, []);
+
+  const handleSaveComfyConfig = async () => {
+    if (!hasDesktopBridge()) {
+      setComfyConfigMessage(t("settings.generator.noBridge"));
+      return;
+    }
+
+    const parsedPort = Number.parseInt(comfyPort, 10);
+    if (!Number.isFinite(parsedPort) || parsedPort < 1 || parsedPort > 65535) {
+      setComfyConfigMessage("Puerto invalido. Use 1-65535.");
+      return;
+    }
+
+    setIsSavingComfyConfig(true);
+    try {
+      const saved = await desktopApi.saveComfyConfig({
+        comfyDir: comfyDir.trim(),
+        condaEnvName: comfyEnvName.trim(),
+        port: parsedPort,
+        condaHook: comfyHook.trim(),
+        pythonExeOverride: comfyPythonOverride.trim(),
+      });
+      setComfyDir(saved.comfyDir);
+      setComfyEnvName(saved.condaEnvName);
+      setComfyPort(String(saved.port));
+      setComfyHook(saved.condaHook);
+      setComfyPythonOverride(saved.pythonExeOverride);
+      setComfyConfigMessage(`Guardado. Base URL: ${saved.baseUrl}`);
+    } catch (error) {
+      setComfyConfigMessage(error instanceof Error ? error.message : "No se pudo guardar config de ComfyUI.");
+    } finally {
+      setIsSavingComfyConfig(false);
+    }
+  };
+
   useEffect(() => {
     setSelectedPythonPath(settings.pythonPath ?? "");
   }, [settings.pythonPath]);
@@ -345,6 +404,13 @@ export function SettingsPage({
 
   useEffect(() => {
     if (!hasDesktopBridge()) {
+      return;
+    }
+    void loadComfyConfig();
+  }, [loadComfyConfig]);
+
+  useEffect(() => {
+    if (!SHOW_LEGACY_PYTHON_PANEL || !hasDesktopBridge()) {
       return;
     }
 
@@ -568,103 +634,150 @@ export function SettingsPage({
       </Card>
 
       <Card padding="md" className="h-full">
-        <h2 className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">Generador 3D local (Python)</h2>
+        <h2 className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">ComfyUI (Local)</h2>
         <div className="mt-3 space-y-3">
-          <Select
-            label="Interprete de Python"
-            value={selectedPythonPath}
-            onChange={(event) => {
-              applyPythonPathSelection(event.target.value);
-              setPythonProbe(null);
-            }}
-            disabled={isInstallingTorch}
-          >
-            {pythonCandidates.length === 0 ? (
-              <option value="">Sin interpretes CUDA listos detectados</option>
-            ) : null}
-            {pythonCandidates.map((candidate) => (
-              <option key={candidate.pythonPath} value={candidate.pythonPath}>
-                {candidate.pythonPath} ({candidate.source})
-                {candidate.pythonPath === selectedPythonPath ? " - CUDA Ready (Recommended)" : ""}
-              </option>
-            ))}
-          </Select>
-
-          <Toggle
-            checked={showAdvancedPython}
-            onChange={setShowAdvancedPython}
-            label="Show advanced (CPU)"
+          <TextField
+            label="ComfyUI folder"
+            value={comfyDir}
+            onChange={(event) => setComfyDir(event.target.value)}
+            placeholder="C:\\AI\\ComfyUI_VOL"
           />
-
-          {showAdvancedPython ? (
-            <div className="space-y-2 rounded-lg border border-[var(--border)] bg-[var(--surface-2)] p-3 text-xs">
-              {pythonRejectedCandidates.length > 0 ? (
-                pythonRejectedCandidates.map((candidate) => (
-                  <div key={candidate.pythonPath} className="space-y-1">
-                    <p className="text-[var(--text)]">
-                      {candidate.pythonPath} ({candidate.source})
-                    </p>
-                    <p className="text-[var(--warning)]">
-                      Not usable (no torch/CUDA): {candidate.rejectionReason ?? "unknown"}
-                    </p>
-                  </div>
-                ))
-              ) : (
-                <p className="text-[var(--text-muted)]">No rejected interpreters detected.</p>
-              )}
-            </div>
-          ) : null}
-
+          <TextField
+            label="Conda env"
+            value={comfyEnvName}
+            onChange={(event) => setComfyEnvName(event.target.value)}
+            placeholder="volumia"
+          />
+          <TextField
+            label="Port"
+            value={comfyPort}
+            onChange={(event) => setComfyPort(event.target.value)}
+            placeholder="8188"
+          />
+          <TextField
+            label="Conda hook (optional)"
+            value={comfyHook}
+            onChange={(event) => setComfyHook(event.target.value)}
+            placeholder="C:\\ProgramData\\miniconda3\\Scripts\\activate.bat"
+          />
+          <TextField
+            label="Python override (optional)"
+            value={comfyPythonOverride}
+            onChange={(event) => setComfyPythonOverride(event.target.value)}
+            placeholder="F:\\MINICONDA\\envs\\volumia\\python.exe"
+          />
           <div className="flex flex-wrap gap-2">
-            <Button
-              variant="secondary"
-              onClick={() => void handleDetectPython()}
-              disabled={isDetectingPython || isInstallingTorch}
-            >
-              {isDetectingPython ? "Detectando..." : "Detectar"}
+            <Button variant="secondary" onClick={() => void loadComfyConfig()}>
+              Reload
             </Button>
-            <Button
-              variant="secondary"
-              onClick={() => void handleProbePython()}
-              disabled={!selectedPythonPath || isProbingPython || isInstallingTorch}
-            >
-              {isProbingPython ? "Probando..." : "Probar"}
-            </Button>
-            <Button
-              variant="primary"
-              onClick={() => void handleInstallTorchCuda()}
-              disabled={!selectedPythonPath || isInstallingTorch}
-            >
-              {isInstallingTorch ? "Instalando..." : "Instalar / Reparar PyTorch (CUDA)"}
-            </Button>
-            <Button variant="ghost" onClick={() => void handleCopyLogs()} disabled={pythonLogs.length === 0}>
-              Copy logs
+            <Button variant="primary" onClick={() => void handleSaveComfyConfig()} disabled={isSavingComfyConfig}>
+              {isSavingComfyConfig ? "Saving..." : "Save"}
             </Button>
           </div>
-
-          <div className="space-y-1 rounded-lg border border-[var(--border)] bg-[var(--surface-2)] p-3 text-sm">
-            <p className="text-[var(--text)]">Python: {pythonProbe?.executable ? "OK" : "Not found"}</p>
-            <p className="text-[var(--text-muted)]">Pip: {pythonProbe?.pip ?? "-"}</p>
-            <p className="text-[var(--text-muted)]">Torch: {pythonProbe?.torchInstalled ? "Installed" : "Not installed"}</p>
-            <p className="text-[var(--text-muted)]">CUDA: {pythonProbe?.cudaAvailable ? "Available" : "Not available"}</p>
-            <p className="text-[var(--text-muted)]">Device: {pythonProbe?.deviceName ?? "-"}</p>
-            {pythonMessage ? <p className="text-[var(--text)]">{pythonMessage}</p> : null}
-            {pythonProbe?.torchInstalled && pythonProbe.cudaAvailable === false ? (
-              <p className="text-xs text-[var(--warning)]">
-                Torch esta en modo CPU o CUDA no disponible; verifique que instalo wheels cu121/cu124 y drivers NVIDIA.
-              </p>
-            ) : null}
-          </div>
-
-          <div className="max-h-44 overflow-auto rounded-lg border border-[var(--border)] bg-[var(--surface-3)] p-3">
-            {pythonLogs.length > 0 ? (
-              <pre className="whitespace-pre-wrap text-[11px] leading-relaxed text-[var(--text-muted)]">{pythonLogs.join("\n")}</pre>
-            ) : (
-              <p className="text-xs text-[var(--text-muted)]">{t("settings.generator.noLogs")}</p>
-            )}
-          </div>
+          {comfyConfigMessage ? <p className="text-xs text-[var(--text-muted)]">{comfyConfigMessage}</p> : null}
         </div>
       </Card>
+
+      {SHOW_LEGACY_PYTHON_PANEL ? (
+        <Card padding="md" className="h-full">
+          <h2 className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">Generador 3D local (Python)</h2>
+          <div className="mt-3 space-y-3">
+            <Select
+              label="Interprete de Python"
+              value={selectedPythonPath}
+              onChange={(event) => {
+                applyPythonPathSelection(event.target.value);
+                setPythonProbe(null);
+              }}
+              disabled={isInstallingTorch}
+            >
+              {pythonCandidates.length === 0 ? (
+                <option value="">Sin interpretes CUDA listos detectados</option>
+              ) : null}
+              {pythonCandidates.map((candidate) => (
+                <option key={candidate.pythonPath} value={candidate.pythonPath}>
+                  {candidate.pythonPath} ({candidate.source})
+                  {candidate.pythonPath === selectedPythonPath ? " - CUDA Ready (Recommended)" : ""}
+                </option>
+              ))}
+            </Select>
+
+            <Toggle
+              checked={showAdvancedPython}
+              onChange={setShowAdvancedPython}
+              label="Show advanced (CPU)"
+            />
+
+            {showAdvancedPython ? (
+              <div className="space-y-2 rounded-lg border border-[var(--border)] bg-[var(--surface-2)] p-3 text-xs">
+                {pythonRejectedCandidates.length > 0 ? (
+                  pythonRejectedCandidates.map((candidate) => (
+                    <div key={candidate.pythonPath} className="space-y-1">
+                      <p className="text-[var(--text)]">
+                        {candidate.pythonPath} ({candidate.source})
+                      </p>
+                      <p className="text-[var(--warning)]">
+                        Not usable (no torch/CUDA): {candidate.rejectionReason ?? "unknown"}
+                      </p>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-[var(--text-muted)]">No rejected interpreters detected.</p>
+                )}
+              </div>
+            ) : null}
+
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="secondary"
+                onClick={() => void handleDetectPython()}
+                disabled={isDetectingPython || isInstallingTorch}
+              >
+                {isDetectingPython ? "Detectando..." : "Detectar"}
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => void handleProbePython()}
+                disabled={!selectedPythonPath || isProbingPython || isInstallingTorch}
+              >
+                {isProbingPython ? "Probando..." : "Probar"}
+              </Button>
+              <Button
+                variant="primary"
+                onClick={() => void handleInstallTorchCuda()}
+                disabled={!selectedPythonPath || isInstallingTorch}
+              >
+                {isInstallingTorch ? "Instalando..." : "Instalar / Reparar PyTorch (CUDA)"}
+              </Button>
+              <Button variant="ghost" onClick={() => void handleCopyLogs()} disabled={pythonLogs.length === 0}>
+                Copy logs
+              </Button>
+            </div>
+
+            <div className="space-y-1 rounded-lg border border-[var(--border)] bg-[var(--surface-2)] p-3 text-sm">
+              <p className="text-[var(--text)]">Python: {pythonProbe?.executable ? "OK" : "Not found"}</p>
+              <p className="text-[var(--text-muted)]">Pip: {pythonProbe?.pip ?? "-"}</p>
+              <p className="text-[var(--text-muted)]">Torch: {pythonProbe?.torchInstalled ? "Installed" : "Not installed"}</p>
+              <p className="text-[var(--text-muted)]">CUDA: {pythonProbe?.cudaAvailable ? "Available" : "Not available"}</p>
+              <p className="text-[var(--text-muted)]">Device: {pythonProbe?.deviceName ?? "-"}</p>
+              {pythonMessage ? <p className="text-[var(--text)]">{pythonMessage}</p> : null}
+              {pythonProbe?.torchInstalled && pythonProbe.cudaAvailable === false ? (
+                <p className="text-xs text-[var(--warning)]">
+                  Torch esta en modo CPU o CUDA no disponible; verifique que instalo wheels cu121/cu124 y drivers NVIDIA.
+                </p>
+              ) : null}
+            </div>
+
+            <div className="max-h-44 overflow-auto rounded-lg border border-[var(--border)] bg-[var(--surface-3)] p-3">
+              {pythonLogs.length > 0 ? (
+                <pre className="whitespace-pre-wrap text-[11px] leading-relaxed text-[var(--text-muted)]">{pythonLogs.join("\n")}</pre>
+              ) : (
+                <p className="text-xs text-[var(--text-muted)]">{t("settings.generator.noLogs")}</p>
+              )}
+            </div>
+          </div>
+        </Card>
+      ) : null}
 
       <Card padding="md" className="h-full">
         <h2 className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">{t("settings.data")}</h2>

@@ -9,6 +9,11 @@ import {
   type BackendRunDefaultResult,
   type BackendImportWorkflowResult,
   type BackendStatusResponse,
+  type ComfyConfigPatch,
+  type ComfyConfigResponse,
+  type ComfyRunWorkflowPayload,
+  type ComfyRunWorkflowResult,
+  type ComfyStatusResponse,
   type GenerationDonePayload,
   type GenerationErrorPayload,
   type GenerationCheckResult,
@@ -217,6 +222,17 @@ const bridge = {
       ipcRenderer.invoke(IPC_CHANNELS.backendRunDefault, payload ?? {}) as Promise<BackendRunDefaultResult>,
     importWorkflow: () =>
       ipcRenderer.invoke(IPC_CHANNELS.backendImportWorkflow) as Promise<BackendImportWorkflowResult>,
+  },
+  comfy: {
+    status: () => ipcRenderer.invoke(IPC_CHANNELS.comfyStatus) as Promise<ComfyStatusResponse>,
+    start: () => ipcRenderer.invoke(IPC_CHANNELS.comfyStart) as Promise<ComfyStatusResponse>,
+    stop: () => ipcRenderer.invoke(IPC_CHANNELS.comfyStop) as Promise<ComfyStatusResponse>,
+    logs: (limit?: number) => ipcRenderer.invoke(IPC_CHANNELS.comfyLogs, { limit }) as Promise<string[]>,
+    runWorkflow: (payload?: ComfyRunWorkflowPayload) =>
+      ipcRenderer.invoke(IPC_CHANNELS.comfyRunWorkflow, payload ?? {}) as Promise<ComfyRunWorkflowResult>,
+    getConfig: () => ipcRenderer.invoke(IPC_CHANNELS.comfyGetConfig) as Promise<ComfyConfigResponse>,
+    saveConfig: (patch: ComfyConfigPatch) =>
+      ipcRenderer.invoke(IPC_CHANNELS.comfySaveConfig, patch ?? {}) as Promise<ComfyConfigResponse>,
   },
   // Backward compatibility for existing renderer wrappers.
   exportProjectsJson: (payload: ProjectsExportEnvelope) =>

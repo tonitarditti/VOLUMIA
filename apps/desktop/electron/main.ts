@@ -7,6 +7,11 @@ import {
   type BackendImportWorkflowResult,
   type BackendRunDefaultResult,
   type BackendStatusResponse,
+  type ComfyConfigPatch,
+  type ComfyConfigResponse,
+  type ComfyRunWorkflowPayload,
+  type ComfyRunWorkflowResult,
+  type ComfyStatusResponse,
 } from "./channels";
 import { registerProjectsFileHandlers } from "./ipc/projects-file.ipc";
 import { registerGenerationHandlers } from "./ipc/generation.ipc";
@@ -42,6 +47,22 @@ type BackendRuntimeModule = {
     workflowPath: string;
     message: string;
   }>;
+  getComfyStatus: () => Promise<ComfyStatusResponse>;
+  startComfy: () => Promise<ComfyStatusResponse>;
+  stopComfy: () => Promise<ComfyStatusResponse>;
+  getComfyLogs: (limit?: number) => Promise<string[]>;
+  runWorkflow: (
+    workflowName?: string,
+    payload?: { imagePath?: string; imageBase64?: string }
+  ) => Promise<{
+    promptId: string;
+    workflowName: string;
+    workflowPath: string;
+    message: string;
+    outputGlbPath?: string;
+  }>;
+  getComfyConfig: () => Promise<ComfyConfigResponse>;
+  saveComfyConfig: (patch: ComfyConfigPatch) => Promise<ComfyConfigResponse>;
 };
 
 function toErrorMessage(error: unknown) {
@@ -109,6 +130,28 @@ function defaultBackendStatus(message: string): BackendStatusResponse {
   };
 }
 
+function defaultComfyStatus(message: string): ComfyStatusResponse {
+  return {
+    state: "ERROR",
+    running: false,
+    url: "http://127.0.0.1:8188",
+    pid: null,
+    startedByApp: false,
+    lastError: message,
+    lastLogs: [message],
+    message,
+    host: "127.0.0.1",
+    port: 8188,
+    config: {
+      comfyDir: "C:\\AI\\ComfyUI_VOL",
+      condaHook: "",
+      condaEnvName: "volumia",
+      pythonExeOverride: "",
+      startupTimeoutMs: 90000,
+    },
+  };
+}
+
 async function getBackendStatusSafe() {
   try {
     const backend = loadBackendModule();
@@ -116,6 +159,16 @@ async function getBackendStatusSafe() {
   } catch (error) {
     const message = toErrorMessage(error);
     return defaultBackendStatus(message);
+  }
+}
+
+async function getComfyStatusSafe() {
+  try {
+    const backend = loadBackendModule();
+    return await backend.getComfyStatus();
+  } catch (error) {
+    const message = toErrorMessage(error);
+    return defaultComfyStatus(message);
   }
 }
 
@@ -266,6 +319,92 @@ function registerBackendHandlers() {
       };
     }
   });
+
+  ipcMain.handle(IPC_CHANNELS.comfyStatus, async () => {
+    return await getComfyStatusSafe();
+  });
+
+  ipcMain.handle(IPC_CHANNELS.comfyStart, async () => {
+    try {
+      const backend = loadBackendModule();
+      return await backend.startComfy();
+    } catch (error) {
+      return defaultComfyStatus(toErrorMessage(error));
+    }
+  });
+
+  ipcMain.handle(IPC_CHANNELS.comfyStop, async () => {
+    try {
+      const backend = loadBackendModule();
+      return await backend.stopComfy();
+    } catch (error) {
+      return defaultComfyStatus(toErrorMessage(error));
+    }
+  });
+
+  ipcMain.handle(IPC_CHANNELS.comfyLogs, async (_event, payload?: { limit?: number }) => {
+    try {
+      const backend = loadBackendModule();
+      const limit = typeof payload?.limit === "number" ? payload.limit : undefined;
+      return await backend.getComfyLogs(limit);
+    } catch (error) {
+      return [toErrorMessage(error)];
+    }
+  });
+
+  ipcMain.handle(IPC_CHANNELS.comfyRunWorkflow, async (_event, payload: ComfyRunWorkflowPayload | undefined): Promise<ComfyRunWorkflowResult> => {
+    try {
+      const backend = loadBackendModule();
+      const runResult = await backend.runWorkflow(payload?.workflowId, {
+        imagePath: payload?.imagePath,
+        imageBase64: payload?.imageBase64,
+      });
+      const comfy = await backend.getComfyStatus();
+      return {
+        ok: true,
+        promptId: runResult.promptId,
+        workflowName: runResult.workflowName,
+        workflowPath: runResult.workflowPath,
+        outputGlbPath: runResult.outputGlbPath,
+        message: runResult.message,
+        comfy,
+      };
+    } catch (error) {
+      const message = toErrorMessage(error);
+      return {
+        ok: false,
+        message,
+        error: message,
+        comfy: await getComfyStatusSafe(),
+      };
+    }
+  });
+
+  ipcMain.handle(IPC_CHANNELS.comfyGetConfig, async (): Promise<ComfyConfigResponse> => {
+    try {
+      const backend = loadBackendModule();
+      return await backend.getComfyConfig();
+    } catch (error) {
+      const status = await getComfyStatusSafe();
+      return {
+        host: status.host,
+        port: status.port,
+        baseUrl: status.url,
+        comfyDir: status.config.comfyDir,
+        condaHook: status.config.condaHook,
+        condaEnvName: status.config.condaEnvName,
+        pythonExeOverride: status.config.pythonExeOverride,
+        args: ["main.py", "--listen", status.host, "--port", String(status.port)],
+        startupTimeoutMs: status.config.startupTimeoutMs,
+      };
+    }
+  });
+
+  ipcMain.handle(IPC_CHANNELS.comfySaveConfig, async (_event, patch: ComfyConfigPatch | undefined): Promise<ComfyConfigResponse> => {
+    const backend = loadBackendModule();
+    const saved = await backend.saveComfyConfig(patch ?? {});
+    return saved;
+  });
 }
 
 app.whenReady().then(() => {
@@ -290,9 +429,7 @@ app.whenReady().then(() => {
   registerSystemPythonHandlers(() => mainWindow);
   registerBackendHandlers();
 
-  if (isDev) {
-    void startBackendSafe();
-  }
+  void startBackendSafe();
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {

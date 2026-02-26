@@ -30,6 +30,11 @@ export type UploadImageResult = {
   type: string;
 };
 
+export type ComfyApiOptions = {
+  baseUrl?: string;
+  getBaseUrl?: () => string;
+};
+
 function toErrorMessage(error: unknown) {
   if (error instanceof Error) {
     return error.message;
@@ -116,10 +121,27 @@ function extractValidationError(payload: unknown) {
   return null;
 }
 export class ComfyApi {
-  private readonly baseUrl: string;
+  private readonly fixedBaseUrl: string | null;
+  private readonly baseUrlResolver: (() => string) | null;
 
-  constructor(baseUrl?: string) {
-    this.baseUrl = baseUrl ?? getComfyBaseUrl(loadBackendConfig());
+  constructor(options?: string | ComfyApiOptions) {
+    if (typeof options === "string") {
+      this.fixedBaseUrl = options;
+      this.baseUrlResolver = null;
+      return;
+    }
+    this.fixedBaseUrl = options?.baseUrl ?? null;
+    this.baseUrlResolver = options?.getBaseUrl ?? null;
+  }
+
+  private getBaseUrl() {
+    if (this.baseUrlResolver) {
+      return this.baseUrlResolver();
+    }
+    if (this.fixedBaseUrl) {
+      return this.fixedBaseUrl;
+    }
+    return getComfyBaseUrl(loadBackendConfig());
   }
 
   private normalizeRoute(route: string) {
@@ -134,6 +156,7 @@ export class ComfyApi {
     const retries = options?.retries ?? 0;
     const retryDelayMs = options?.retryDelayMs ?? 600;
     const normalizedRoute = this.normalizeRoute(route);
+    const baseUrl = this.getBaseUrl();
 
     let lastError: unknown;
     for (let attempt = 0; attempt <= retries; attempt += 1) {
@@ -141,7 +164,7 @@ export class ComfyApi {
       const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs);
 
       try {
-        return await fetch(`${this.baseUrl}${normalizedRoute}`, {
+        return await fetch(`${baseUrl}${normalizedRoute}`, {
           ...init,
           signal: controller.signal,
         });
@@ -168,6 +191,14 @@ export class ComfyApi {
     return await response.json();
   }
 
+  async getObjectInfo() {
+    return await this.requestJson("/object_info", undefined, {
+      timeoutMs: 6_000,
+      retries: 1,
+      retryDelayMs: 400,
+    });
+  }
+
   async getAvailableCheckpoints() {
     try {
       const objectInfo = await this.requestJson("/object_info/CheckpointLoaderSimple", undefined, {
@@ -183,11 +214,7 @@ export class ComfyApi {
       // Try fallback endpoint below.
     }
 
-    const fallbackObjectInfo = await this.requestJson("/object_info", undefined, {
-      timeoutMs: 6_000,
-      retries: 1,
-      retryDelayMs: 400,
-    });
+    const fallbackObjectInfo = await this.getObjectInfo();
     return extractCheckpointOptions(fallbackObjectInfo);
   }
 
@@ -230,17 +257,18 @@ export class ComfyApi {
   }
 
   async health(): Promise<ComfyHealthResult> {
+    const baseUrl = this.getBaseUrl();
     try {
       await this.requestJson("/system_stats", undefined, { retries: 2, timeoutMs: 4_000, retryDelayMs: 500 });
-      return { ok: true, message: `Backend OK (${this.baseUrl})` };
+      return { ok: true, message: `Backend OK (${baseUrl})` };
     } catch (systemStatsError) {
       try {
         await this.requestJson("/queue", undefined, { retries: 1, timeoutMs: 3_500, retryDelayMs: 300 });
-        return { ok: true, message: `Backend OK (${this.baseUrl})` };
+        return { ok: true, message: `Backend OK (${baseUrl})` };
       } catch {
         return {
           ok: false,
-          message: `ComfyUI no responde en ${this.baseUrl} (esta corriendo?). Error: ${toErrorMessage(systemStatsError)}`,
+          message: `ComfyUI no responde en ${baseUrl} (esta corriendo?). Error: ${toErrorMessage(systemStatsError)}`,
         };
       }
     }

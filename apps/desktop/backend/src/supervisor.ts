@@ -5,18 +5,42 @@ import { logger } from "./logger";
 import { checkModelsInstalled, ensureModels } from "./modelRegistry";
 import { getOutputsDir, getWorkflowsDir } from "./paths";
 import { killProcessTree, ProcessManager, waitForPort, type ManagedProcess } from "./processManager";
-import { loadBackendConfig } from "./runtimeConfig";
+import { loadBackendConfig, resolveComfyLaunchPlan, saveComfyUserConfig, type ComfyRuntimeConfig } from "./runtimeConfig";
 import {
   applyImageInputToWorkflow,
   getActiveWorkflowInfo,
   getCheckpointUsages,
+  getWorkflowPath,
   importWorkflowFromDisk,
   loadWorkflowJson,
+  patchWorkflowCheckpoints,
   syncWorkflows,
+  type WorkflowCheckpointUsage,
 } from "./workflowManager";
 
 export type BackendMode = "dev" | "prod";
 export type BackendServiceState = "stopped" | "starting" | "running" | "error";
+export type ComfySupervisorState = "STOPPED" | "STARTING" | "READY" | "ERROR";
+
+export type ComfyStatus = {
+  state: ComfySupervisorState;
+  running: boolean;
+  url: string;
+  pid: number | null;
+  startedByApp: boolean;
+  lastError: string | null;
+  lastLogs: string[];
+  message: string;
+  host: string;
+  port: number;
+  config: {
+    comfyDir: string;
+    condaHook: string;
+    condaEnvName: string;
+    pythonExeOverride: string;
+    startupTimeoutMs: number;
+  };
+};
 
 export type BackendStatus = {
   mode: BackendMode;
@@ -89,11 +113,116 @@ function ensurePathExists(targetPath: string, label: string) {
   }
 }
 
+function toLegacyState(state: ComfySupervisorState): BackendServiceState {
+  if (state === "READY") {
+    return "running";
+  }
+  if (state === "STARTING") {
+    return "starting";
+  }
+  if (state === "ERROR") {
+    return "error";
+  }
+  return "stopped";
+}
+
+type FileSnapshot = {
+  name: string;
+  fullPath: string;
+  mtimeMs: number;
+  size: number;
+};
+
+function listFilesSafe(dirPath: string): FileSnapshot[] {
+  try {
+    if (!fs.existsSync(dirPath)) {
+      return [];
+    }
+    const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+    return entries
+      .filter((entry) => entry.isFile())
+      .map((entry) => {
+        const fullPath = path.join(dirPath, entry.name);
+        try {
+          const stats = fs.statSync(fullPath);
+          return {
+            name: entry.name,
+            fullPath,
+            mtimeMs: stats.mtimeMs,
+            size: stats.size,
+          };
+        } catch {
+          return null;
+        }
+      })
+      .filter((item): item is FileSnapshot => Boolean(item));
+  } catch {
+    return [];
+  }
+}
+
+function newestGlb(files: FileSnapshot[]) {
+  const candidates = files.filter(
+    (file) => file.size > 0 && file.name.toLowerCase().endsWith(".glb")
+  );
+  if (candidates.length === 0) {
+    return null;
+  }
+  return candidates.sort((a, b) => b.mtimeMs - a.mtimeMs)[0] ?? null;
+}
+
+function waitForNewGlbFile(params: {
+  outputDir: string;
+  before: FileSnapshot[];
+  startedAtMs: number;
+  timeoutMs: number;
+  pollMs: number;
+}) {
+  const { outputDir, before, startedAtMs, timeoutMs, pollMs } = params;
+  const beforeByName = new Map(before.map((item) => [item.name, item]));
+  const startedThreshold = startedAtMs - 250;
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const nowFiles = listFilesSafe(outputDir);
+    const candidates = nowFiles.filter((file) => {
+      if (!file.name.toLowerCase().endsWith(".glb") || file.size <= 0) {
+        return false;
+      }
+      if (file.mtimeMs < startedThreshold) {
+        return false;
+      }
+      const previous = beforeByName.get(file.name);
+      if (!previous) {
+        return true;
+      }
+      return file.mtimeMs > previous.mtimeMs || file.size !== previous.size;
+    });
+
+    const newest = newestGlb(candidates);
+    if (newest) {
+      return newest;
+    }
+
+    const end = Date.now() + pollMs;
+    while (Date.now() < end) {
+      // busy wait (sync-only requirement)
+    }
+  }
+
+  return null;
+}
+
 export class BackendSupervisor {
   private readonly processManager = new ProcessManager();
-  private readonly config = loadBackendConfig();
-  private readonly comfyApi = new ComfyApi();
-  private readonly comfyUrl = this.config.comfy.baseUrl;
+  private readonly comfyLogs: string[] = [];
+  private readonly comfyLogLimit = 500;
+  private comfyState: ComfySupervisorState = "STOPPED";
+  private comfyLastError: string | null = null;
+  private config = loadBackendConfig();
+  private readonly comfyApi = new ComfyApi({
+    getBaseUrl: () => this.config.comfy.baseUrl,
+  });
 
   private started = false;
   private comfyProcess: ManagedProcess | null = null;
@@ -103,7 +232,7 @@ export class BackendSupervisor {
     mode: "dev",
     startedAt: null,
     workflows: {
-      sourceDir: path.resolve(process.cwd(), "backend", "workflows"),
+      sourceDir: path.resolve(process.cwd(), "electron", "generation", "comfyui-workflows"),
       targetDir: getWorkflowsDir(),
       copied: 0,
       replaced: 0,
@@ -122,14 +251,14 @@ export class BackendSupervisor {
     },
     comfy: {
       running: false,
-      url: this.comfyUrl,
+      url: this.config.comfy.baseUrl,
       pid: null,
       lastError: null,
       state: "stopped",
       host: this.config.comfy.host,
       port: this.config.comfy.port,
       python: null,
-      comfyRoot: null,
+      comfyRoot: this.config.comfy.comfyDir,
       healthy: false,
       external: false,
       message: "ComfyUI no iniciado.",
@@ -137,6 +266,18 @@ export class BackendSupervisor {
     activeProcesses: [],
     notes: [],
   };
+
+  private refreshConfig(reload = false) {
+    this.config = loadBackendConfig({ reload });
+  }
+
+  private appendComfyLog(line: string, level: "info" | "warn" = "info") {
+    const formatted = `${new Date().toISOString()} [${level.toUpperCase()}] ${line}`;
+    this.comfyLogs.push(formatted);
+    if (this.comfyLogs.length > this.comfyLogLimit) {
+      this.comfyLogs.splice(0, this.comfyLogs.length - this.comfyLogLimit);
+    }
+  }
 
   private refreshProcessSnapshot() {
     this.status.activeProcesses = this.processManager.getActiveProcesses();
@@ -161,23 +302,32 @@ export class BackendSupervisor {
     this.status.notes = [...this.status.notes, note].slice(-25);
   }
 
-  private setComfyError(message: string) {
-    this.status.comfy.state = "error";
-    this.status.comfy.running = false;
-    this.status.comfy.healthy = false;
-    this.status.comfy.lastError = message;
-    this.status.comfy.message = message;
-    this.pushNote(`comfy-error: ${message}`);
+  private updateLegacyComfyFromSnapshot(snapshot: ComfyStatus) {
+    this.status.comfy.running = snapshot.running;
+    this.status.comfy.url = snapshot.url;
+    this.status.comfy.pid = snapshot.pid;
+    this.status.comfy.lastError = snapshot.lastError;
+    this.status.comfy.state = toLegacyState(snapshot.state);
+    this.status.comfy.host = snapshot.host;
+    this.status.comfy.port = snapshot.port;
+    this.status.comfy.python = snapshot.config.pythonExeOverride.trim() || null;
+    this.status.comfy.comfyRoot = snapshot.config.comfyDir;
+    this.status.comfy.healthy = snapshot.running;
+    this.status.comfy.external = snapshot.running && !snapshot.startedByApp;
+    this.status.comfy.message = snapshot.message;
   }
 
   private async refreshComfyHealth() {
     const health = await this.comfyApi.health();
-    this.status.comfy.healthy = health.ok;
-    this.status.comfy.running = health.ok;
-    this.status.comfy.state = health.ok ? "running" : "error";
-    this.status.comfy.message = health.message;
-    if (!health.ok) {
-      this.status.comfy.lastError = health.message;
+    if (health.ok && this.comfyState !== "STARTING") {
+      this.comfyState = "READY";
+      this.comfyLastError = null;
+      this.status.comfy.message = health.message;
+    }
+    if (!health.ok && this.comfyState === "READY") {
+      this.comfyState = "ERROR";
+      this.comfyLastError = health.message;
+      this.status.comfy.message = health.message;
     }
     return health;
   }
@@ -211,22 +361,8 @@ export class BackendSupervisor {
     return null;
   }
 
-  private async validateWorkflowCheckpoints(workflowJson: unknown) {
-    const checkpointUsages = getCheckpointUsages(workflowJson);
-    if (checkpointUsages.length === 0) {
-      return;
-    }
-
-    let availableCheckpoints: string[];
-    try {
-      availableCheckpoints = await this.comfyApi.getAvailableCheckpoints();
-    } catch (error) {
-      logger.warn("No se pudo consultar /object_info para validar checkpoints.", errorMessage(error));
-      return;
-    }
-
-    if (availableCheckpoints.length === 0) {
-      logger.warn("ComfyUI no devolvio lista de checkpoints; se omite validacion previa.");
+  private async validateCheckpointsAfterPatch(checkpointUsages: WorkflowCheckpointUsage[], availableCheckpoints: string[]) {
+    if (checkpointUsages.length === 0 || availableCheckpoints.length === 0) {
       return;
     }
 
@@ -283,77 +419,89 @@ export class BackendSupervisor {
     return candidates[0] ?? null;
   }
 
-  private async stopComfyUI(reason = "manual-stop") {
+  async stopComfyUI(reason = "manual-stop", force = false) {
     this.stoppingComfy = true;
     try {
-      if (this.comfyProcess?.pid) {
-        try {
-          this.comfyProcess.child.kill("SIGTERM");
-        } catch {
-          // best effort
-        }
-        await killProcessTree(this.comfyProcess.pid);
+      if (!this.comfyProcess?.pid) {
+        this.comfyState = "STOPPED";
+        this.comfyLastError = null;
+        this.updateLegacyComfyFromSnapshot(this.getComfyStatus());
+        return this.getComfyStatus();
       }
+
+      if (!force && !this.getComfyStatus().startedByApp) {
+        return this.getComfyStatus();
+      }
+
+      try {
+        this.comfyProcess.child.kill("SIGTERM");
+      } catch {
+        // best effort
+      }
+      await killProcessTree(this.comfyProcess.pid);
       await this.processManager.stopAll(`stop-comfyui:${reason}`);
       this.comfyProcess = null;
       this.refreshProcessSnapshot();
-      this.status.comfy.pid = null;
-      this.status.comfy.running = false;
-      this.status.comfy.healthy = false;
-      this.status.comfy.external = false;
-      this.status.comfy.state = "stopped";
+      this.comfyState = "STOPPED";
+      this.comfyLastError = null;
       this.status.comfy.message = "ComfyUI detenido.";
-      this.status.comfy.lastError = null;
+      this.appendComfyLog(`ComfyUI detenido (${reason}).`);
+      this.updateLegacyComfyFromSnapshot(this.getComfyStatus());
+      return this.getComfyStatus();
     } finally {
       this.stoppingComfy = false;
     }
   }
 
-  private async startComfyUI() {
+  async startComfyUI() {
+    this.refreshConfig(true);
     const health = await this.comfyApi.health();
     if (health.ok) {
-      this.status.comfy.running = true;
-      this.status.comfy.healthy = true;
-      this.status.comfy.external = this.comfyProcess === null;
-      this.status.comfy.state = "running";
-      this.status.comfy.message = `ComfyUI ya responde en ${this.comfyUrl}`;
-      this.status.comfy.lastError = null;
-      this.status.comfy.pid = this.comfyProcess?.pid ?? null;
-      return;
+      this.comfyState = "READY";
+      this.comfyLastError = null;
+      this.status.comfy.message = health.message;
+      this.updateLegacyComfyFromSnapshot(this.getComfyStatus());
+      return this.getComfyStatus();
     }
 
-    ensurePathExists(this.config.comfy.pythonExe, "Python de ComfyUI");
-    ensurePathExists(this.config.comfy.rootDir, "Carpeta raiz de ComfyUI");
-    ensurePathExists(path.join(this.config.comfy.rootDir, "main.py"), "Archivo main.py de ComfyUI");
+    ensurePathExists(this.config.comfy.comfyDir, "Carpeta raiz de ComfyUI");
+    ensurePathExists(path.join(this.config.comfy.comfyDir, "main.py"), "Archivo main.py de ComfyUI");
+    this.comfyState = "STARTING";
+    this.comfyLastError = null;
+    this.status.comfy.message = `Iniciando ComfyUI en ${this.config.comfy.baseUrl}...`;
+    this.updateLegacyComfyFromSnapshot(this.getComfyStatus());
 
-    this.status.comfy.state = "starting";
-    this.status.comfy.running = false;
-    this.status.comfy.healthy = false;
-    this.status.comfy.external = false;
-    this.status.comfy.lastError = null;
-    this.status.comfy.python = this.config.comfy.pythonExe;
-    this.status.comfy.comfyRoot = this.config.comfy.rootDir;
-    this.status.comfy.message = `Iniciando ComfyUI en ${this.comfyUrl}...`;
+    const launchPlan = resolveComfyLaunchPlan(this.config);
 
     logger.info("Starting ComfyUI process.", {
-      pythonExe: this.config.comfy.pythonExe,
-      args: this.config.comfy.args,
-      cwd: this.config.comfy.rootDir,
+      command: launchPlan.command,
+      args: launchPlan.args,
+      cwd: launchPlan.cwd,
+      mode: launchPlan.mode,
+      details: launchPlan.details,
       shell: false,
     });
+    this.appendComfyLog(`Launching ComfyUI (${launchPlan.mode}) ${launchPlan.details}`);
 
-    const managed = this.processManager.spawn(this.config.comfy.pythonExe, this.config.comfy.args, {
+    const managed = this.processManager.spawn(launchPlan.command, launchPlan.args, {
       name: "comfyui",
-      cwd: this.config.comfy.rootDir,
+      cwd: launchPlan.cwd,
       env: process.env,
       windowsHide: true,
-      onStdoutLine: (line) => logger.info(`[ComfyUI][stdout] ${line}`),
-      onStderrLine: (line) => logger.warn(`[ComfyUI][stderr] ${line}`),
+      shell: false,
+      onStdoutLine: (line) => {
+        this.appendComfyLog(`[ComfyUI][stdout] ${line}`);
+        logger.info(`[ComfyUI][stdout] ${line}`);
+      },
+      onStderrLine: (line) => {
+        this.appendComfyLog(`[ComfyUI][stderr] ${line}`, "warn");
+        logger.warn(`[ComfyUI][stderr] ${line}`);
+      },
     });
 
     this.comfyProcess = managed;
-    this.status.comfy.pid = managed.pid;
     this.refreshProcessSnapshot();
+    this.updateLegacyComfyFromSnapshot(this.getComfyStatus());
 
     void managed.exit.then(({ code, signal }) => {
       this.refreshProcessSnapshot();
@@ -361,25 +509,37 @@ export class BackendSupervisor {
         return;
       }
       const message = `ComfyUI process exited (code=${String(code)} signal=${String(signal)})`;
-      this.setComfyError(message);
+      this.comfyState = "ERROR";
+      this.comfyLastError = message;
+      this.appendComfyLog(message, "warn");
+      this.updateLegacyComfyFromSnapshot(this.getComfyStatus());
       logger.warn(message);
     });
 
     const opened = await waitForPort(this.config.comfy.host, this.config.comfy.port, this.config.comfy.startupTimeoutMs);
     if (!opened) {
-      await this.stopComfyUI("startup-timeout");
-      throw new Error(
+      await this.stopComfyUI("startup-timeout", true);
+      const message =
         `ComfyUI no abrio puerto ${this.config.comfy.host}:${this.config.comfy.port} dentro de ${this.config.comfy.startupTimeoutMs}ms.`
-      );
+      this.comfyState = "ERROR";
+      this.comfyLastError = message;
+      this.updateLegacyComfyFromSnapshot(this.getComfyStatus());
+      throw new Error(message);
     }
 
-    const startedHealth = await this.refreshComfyHealth();
+    const startedHealth = await this.comfyApi.health();
     if (!startedHealth.ok) {
-      await this.stopComfyUI("healthcheck-failed-after-spawn");
+      await this.stopComfyUI("healthcheck-failed-after-spawn", true);
+      this.comfyState = "ERROR";
+      this.comfyLastError = startedHealth.message;
+      this.updateLegacyComfyFromSnapshot(this.getComfyStatus());
       throw new Error(startedHealth.message);
     }
-    this.status.comfy.external = false;
-    this.status.comfy.lastError = null;
+    this.comfyState = "READY";
+    this.comfyLastError = null;
+    this.status.comfy.message = startedHealth.message;
+    this.updateLegacyComfyFromSnapshot(this.getComfyStatus());
+    return this.getComfyStatus();
   }
 
   private async ensureComfyRunning(mode: BackendMode) {
@@ -388,7 +548,10 @@ export class BackendSupervisor {
       return;
     } catch (error) {
       const message = errorMessage(error);
-      this.setComfyError(message);
+      this.comfyState = "ERROR";
+      this.comfyLastError = message;
+      this.appendComfyLog(message, "warn");
+      this.updateLegacyComfyFromSnapshot(this.getComfyStatus());
       logger.warn("ComfyUI start failed.", message);
       if (mode === "prod") {
         throw error;
@@ -404,7 +567,7 @@ export class BackendSupervisor {
 
     try {
       const syncResult = await syncWorkflows();
-      this.status.workflows.sourceDir = path.resolve(process.cwd(), "backend", "workflows");
+      this.status.workflows.sourceDir = path.resolve(process.cwd(), "electron", "generation", "comfyui-workflows");
       this.status.workflows.targetDir = getWorkflowsDir();
       this.status.workflows.copied = syncResult.copied.length;
       this.status.workflows.replaced = syncResult.replaced.length;
@@ -454,43 +617,54 @@ export class BackendSupervisor {
   }
 
   async stopAll() {
-    await this.stopComfyUI("backend-stop");
+    if (this.getComfyStatus().startedByApp) {
+      await this.stopComfyUI("backend-stop", true);
+    }
     this.refreshProcessSnapshot();
     return await this.getStatus();
   }
 
-  async runDefaultWorkflow(input?: RunWorkflowInput): Promise<RunWorkflowResult> {
+  private resolveWorkflowByName(workflowName?: string) {
+    if (typeof workflowName === "string" && workflowName.trim().length > 0) {
+      const normalizedName = workflowName.trim();
+      const workflowPath = getWorkflowPath(normalizedName);
+      if (!fs.existsSync(workflowPath)) {
+        throw new Error(`Workflow no encontrado: ${workflowPath}`);
+      }
+      return {
+        name: normalizedName,
+        path: workflowPath,
+      };
+    }
+
+    let activeWorkflow = this.refreshActiveWorkflowStatus();
+    if (!activeWorkflow) {
+      throw new Error("No hay workflow activo para ejecutar.");
+    }
+    return activeWorkflow;
+  }
+
+  async runWorkflow(workflowName?: string, input?: RunWorkflowInput): Promise<RunWorkflowResult> {
     if (!this.started) {
       await this.startAll({ mode: "dev" });
     }
 
     await this.ensureComfyRunning("dev");
-    if (!this.status.comfy.running) {
+    if (!this.getComfyStatus().running) {
       throw new Error(
         [
           "ComfyUI no esta disponible para ejecutar workflow.",
-          `URL esperada: ${this.comfyUrl}`,
-          `Python esperado: ${this.config.comfy.pythonExe}`,
-          `ComfyUI root esperado: ${this.config.comfy.rootDir}`,
-          this.status.comfy.lastError ? `Detalle: ${this.status.comfy.lastError}` : "",
+          `URL esperada: ${this.config.comfy.baseUrl}`,
+          this.comfyLastError ? `Detalle: ${this.comfyLastError}` : "",
         ]
           .filter(Boolean)
           .join("\n")
       );
     }
 
-    let activeWorkflow = this.refreshActiveWorkflowStatus();
-    if (!activeWorkflow) {
-      await syncWorkflows();
-      activeWorkflow = this.refreshActiveWorkflowStatus();
-    }
-    if (!activeWorkflow) {
-      throw new Error(
-        `No hay workflow activo para ejecutar. Importa un JSON o agrega ${path.join(this.status.workflows.sourceDir, "hunyuan_image_to_3d.json")}.`
-      );
-    }
+    const targetWorkflow = this.resolveWorkflowByName(workflowName);
 
-    let workflowJson = loadWorkflowJson(activeWorkflow.path);
+    let workflowJson = loadWorkflowJson(targetWorkflow.path);
     const imageInputPath = await this.resolveWorkflowInputImagePath(input);
     if (imageInputPath) {
       const uploaded = await this.comfyApi.uploadImage(imageInputPath);
@@ -498,48 +672,99 @@ export class BackendSupervisor {
       workflowJson = injected.workflowJson;
       if (injected.appliedNodeIds.length > 0) {
         logger.info("Imagen de entrada aplicada en workflow.", {
-          workflow: activeWorkflow.name,
+          workflow: targetWorkflow.name,
           nodes: injected.appliedNodeIds,
           image: injected.imageValue,
         });
       } else {
         logger.warn("Se subio imagen pero el workflow no tiene nodos LoadImage para aplicar entrada dinamica.", {
-          workflow: activeWorkflow.name,
+          workflow: targetWorkflow.name,
           image: uploaded.name,
         });
       }
     }
 
-    await this.validateWorkflowCheckpoints(workflowJson);
+    let availableCheckpoints: string[] = [];
+    try {
+      availableCheckpoints = await this.comfyApi.getAvailableCheckpoints();
+    } catch (error) {
+      this.appendComfyLog(`No se pudo leer checkpoints desde ComfyUI: ${errorMessage(error)}`, "warn");
+    }
+
+    const patchResult = patchWorkflowCheckpoints(workflowJson, availableCheckpoints);
+    workflowJson = patchResult.workflowJson;
+    for (const replacement of patchResult.replaced) {
+      const line = `Patched ckpt_name -> ${replacement.to} (node=${replacement.nodeId}, from=${replacement.from})`;
+      this.appendComfyLog(line, "warn");
+      logger.warn(line);
+    }
+
+    await this.validateCheckpointsAfterPatch(getCheckpointUsages(workflowJson), patchResult.availableCheckpoints);
+    const comfyOutputDir = path.join(this.config.comfy.comfyDir, "output");
+    const outputBefore = listFilesSafe(comfyOutputDir);
+    const startedAtMs = Date.now();
     const queue = await this.comfyApi.queuePrompt(workflowJson);
 
     let outputGlbPath: string | undefined;
-    try {
-      const completion = await this.comfyApi.waitForCompletion(queue.promptId, 45_000);
-      const glbCandidate = this.extractGlbPathFromHistory(completion.history);
-      if (glbCandidate) {
-        outputGlbPath = glbCandidate;
+    if (!fs.existsSync(comfyOutputDir)) {
+      logger.warn(`ComfyUI output dir no encontrado: ${comfyOutputDir}`);
+    } else {
+      const detected = waitForNewGlbFile({
+        outputDir: comfyOutputDir,
+        before: outputBefore,
+        startedAtMs,
+        timeoutMs: 6 * 60 * 1000,
+        pollMs: 1000,
+      });
+
+      if (detected) {
+        const runId = `${queue.promptId}-${startedAtMs}`;
+        const projectAssetsRoot = path.join(getOutputsDir(), "..", "project-assets");
+        const runDir = path.join(projectAssetsRoot, runId);
+        const runLatest = path.join(runDir, "latest.glb");
+        const globalLatest = path.join(projectAssetsRoot, "latest.glb");
+
+        try {
+          fs.mkdirSync(runDir, { recursive: true });
+          fs.mkdirSync(projectAssetsRoot, { recursive: true });
+          fs.copyFileSync(detected.fullPath, runLatest);
+          fs.copyFileSync(detected.fullPath, globalLatest);
+          outputGlbPath = runLatest;
+          logger.info("GLB detectado y copiado desde ComfyUI output.", {
+            promptId: queue.promptId,
+            detected: detected.fullPath,
+            runLatest,
+            globalLatest,
+          });
+        } catch (error) {
+          logger.warn("No se pudo copiar GLB detectado.", errorMessage(error));
+        }
+      } else {
+        logger.warn("No se detecto GLB nuevo dentro del timeout en output/.");
       }
-    } catch (error) {
-      logger.warn("No se pudo resolver salida final del workflow dentro del timeout (se devuelve promptId).", errorMessage(error));
     }
 
     const message = outputGlbPath
       ? `Workflow encolado/completado. promptId=${queue.promptId}. GLB=${outputGlbPath}`
       : `Workflow encolado en ComfyUI con promptId=${queue.promptId}`;
     logger.info(message, {
-      workflowName: activeWorkflow.name,
-      workflowPath: activeWorkflow.path,
+      workflowName: targetWorkflow.name,
+      workflowPath: targetWorkflow.path,
       outputGlbPath: outputGlbPath ?? null,
     });
     this.pushNote(message);
+    this.appendComfyLog(message);
     return {
       promptId: queue.promptId,
-      workflowName: activeWorkflow.name,
-      workflowPath: activeWorkflow.path,
+      workflowName: targetWorkflow.name,
+      workflowPath: targetWorkflow.path,
       message,
       outputGlbPath,
     };
+  }
+
+  async runDefaultWorkflow(input?: RunWorkflowInput): Promise<RunWorkflowResult> {
+    return await this.runWorkflow(undefined, input);
   }
 
   importWorkflowFromPath(sourcePath: string): ImportWorkflowResult {
@@ -555,22 +780,55 @@ export class BackendSupervisor {
     };
   }
 
+  getComfyStatus(): ComfyStatus {
+    this.refreshConfig();
+    const startedByApp = Boolean(this.comfyProcess?.pid);
+    return {
+      state: this.comfyState,
+      running: this.comfyState === "READY",
+      url: this.config.comfy.baseUrl,
+      pid: this.comfyProcess?.pid ?? null,
+      startedByApp,
+      lastError: this.comfyLastError,
+      lastLogs: this.getComfyLogs(),
+      message: this.status.comfy.message,
+      host: this.config.comfy.host,
+      port: this.config.comfy.port,
+      config: {
+        comfyDir: this.config.comfy.comfyDir,
+        condaHook: this.config.comfy.condaHook,
+        condaEnvName: this.config.comfy.condaEnvName,
+        pythonExeOverride: this.config.comfy.pythonExeOverride,
+        startupTimeoutMs: this.config.comfy.startupTimeoutMs,
+      },
+    };
+  }
+
+  getComfyLogs(limit = 200) {
+    const parsedLimit = Number.isFinite(limit) ? Math.max(1, Math.min(this.comfyLogLimit, Math.floor(limit))) : 200;
+    return this.comfyLogs.slice(-parsedLimit);
+  }
+
+  getComfyConfig() {
+    this.refreshConfig(true);
+    return this.config.comfy;
+  }
+
+  saveComfyConfig(patch: Partial<ComfyRuntimeConfig>) {
+    const updated = saveComfyUserConfig(patch);
+    this.config = updated;
+    return updated.comfy;
+  }
+
   async getStatus(): Promise<BackendStatus> {
     this.refreshProcessSnapshot();
     this.refreshActiveWorkflowStatus();
     try {
-      const health = await this.comfyApi.health();
-      this.status.comfy.running = health.ok;
-      this.status.comfy.healthy = health.ok;
-      this.status.comfy.state = health.ok ? "running" : this.status.comfy.state === "starting" ? "starting" : "error";
-      this.status.comfy.message = health.message;
-      this.status.comfy.lastError = health.ok ? null : health.message;
-      if (health.ok && !this.status.comfy.pid) {
-        this.status.comfy.external = true;
-      }
+      await this.refreshComfyHealth();
     } catch {
       // keep last known status
     }
+    this.updateLegacyComfyFromSnapshot(this.getComfyStatus());
     return JSON.parse(JSON.stringify(this.status)) as BackendStatus;
   }
 }

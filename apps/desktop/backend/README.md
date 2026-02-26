@@ -12,11 +12,15 @@ Backend en `apps/desktop/backend` para ejecutar workflows de ComfyUI directament
 
 ## Como levantar ComfyUI
 
-Configurado en `apps/desktop/backend/config/default.json`:
+Configurado en `apps/desktop/backend/config/comfy.default.json` (y override en `%APPDATA%\\volumia\\config\\comfy.user.json`):
 
+- `comfy.host`: `127.0.0.1`
+- `comfy.port`: `8188`
 - `comfy.baseUrl`: `http://127.0.0.1:8188`
-- `comfy.rootDir`: `C:\AI\ComfyUI_VOL`
-- `comfy.pythonExe`: `F:\MINICONDA\envs\volumia\python.exe`
+- `comfy.comfyDir`: `C:\AI\ComfyUI_VOL`
+- `comfy.condaHook`: `C:\ProgramData\miniconda3\Scripts\activate.bat`
+- `comfy.condaEnvName`: `volumia`
+- `comfy.pythonExeOverride`: opcional (si existe, se usa directo y evita activar conda)
 - `comfy.args`: `["main.py","--listen","127.0.0.1","--port","8188"]`
 
 Comando manual equivalente:
@@ -27,7 +31,7 @@ cd /d C:\AI\ComfyUI_VOL
 python main.py --listen 127.0.0.1 --port 8188
 ```
 
-No usa `conda run` ni `shell:true`.
+No usa `conda run` ni `shell:true`. Usa `spawn(..., { shell: false })` y fallback controlado a `cmd.exe /c call activate.bat ...`.
 
 ## Workflows
 
@@ -58,4 +62,11 @@ npm run dev
 En Dashboard:
 
 - `Refresh status` para comprobar ComfyUI.
+- `Start` / `Stop` para controlar el supervisor.
 - `Run workflow (test)` para encolar el workflow activo.
+
+## Workflows en repo
+
+- Fuente principal soportada: `apps/desktop/electron/generation/comfyui-workflows/`
+- Fallback/compat: `apps/desktop/backend/workflows/`
+- El backend sincroniza al iniciar hacia `%APPDATA%\\volumia\\workflows`.

@@ -1,15 +1,43 @@
 const fs = require("fs");
 const path = require("path");
+const os = require("os");
 
 const packageRoot = path.resolve(__dirname, "..");
-const configPath = path.join(packageRoot, "backend", "config", "default.json");
+const defaultConfigPath = path.join(packageRoot, "backend", "config", "comfy.default.json");
+const legacyConfigPath = path.join(packageRoot, "backend", "config", "default.json");
+const userConfigPath = path.join(process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming"), "volumia", "config", "comfy.user.json");
+
+function readJson(filePath) {
+  if (!fs.existsSync(filePath)) {
+    return null;
+  }
+  const raw = fs.readFileSync(filePath, "utf8");
+  return JSON.parse(raw);
+}
 
 function loadConfig() {
-  if (!fs.existsSync(configPath)) {
-    throw new Error(`Backend config not found: ${configPath}`);
-  }
-  const raw = fs.readFileSync(configPath, "utf8");
-  return JSON.parse(raw);
+  const base = readJson(defaultConfigPath) || readJson(legacyConfigPath) || {};
+  const user = readJson(userConfigPath) || {};
+  const comfyBase = base.comfy || {};
+  const comfyUser = user.comfy || {};
+
+  const host = comfyUser.host || comfyBase.host || "127.0.0.1";
+  const port = Number.parseInt(String(comfyUser.port || comfyBase.port || 8188), 10) || 8188;
+  const baseUrl = comfyUser.baseUrl || comfyBase.baseUrl || `http://${host}:${port}`;
+
+  return {
+    comfy: {
+      host,
+      port,
+      baseUrl,
+      comfyDir: comfyUser.comfyDir || comfyBase.comfyDir || comfyBase.rootDir || "",
+      condaHook: comfyUser.condaHook || comfyBase.condaHook || "",
+      condaEnvName: comfyUser.condaEnvName || comfyBase.condaEnvName || "",
+      pythonExeOverride: comfyUser.pythonExeOverride || comfyBase.pythonExeOverride || comfyBase.pythonExe || "",
+      args: comfyUser.args || comfyBase.args || [],
+      startupTimeoutMs: comfyUser.startupTimeoutMs || comfyBase.startupTimeoutMs || 90000,
+    },
+  };
 }
 
 async function checkComfy(url) {
@@ -48,7 +76,8 @@ async function main() {
     // keep defaults
   }
 
-  console.log("[backend:status] configPath:", configPath);
+  console.log("[backend:status] configPath:", defaultConfigPath);
+  console.log("[backend:status] userOverridePath:", userConfigPath);
   console.log(
     "[backend:status] comfy config:",
     JSON.stringify(
@@ -56,8 +85,10 @@ async function main() {
         baseUrl: url,
         host,
         port,
-        rootDir: comfy.rootDir,
-        pythonExe: comfy.pythonExe,
+        comfyDir: comfy.comfyDir,
+        condaHook: comfy.condaHook,
+        condaEnvName: comfy.condaEnvName,
+        pythonExeOverride: comfy.pythonExeOverride,
         args: comfy.args,
         startupTimeoutMs: comfy.startupTimeoutMs,
       },

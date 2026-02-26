@@ -49,7 +49,51 @@ export async function runDefaultWorkflow(input?: { imagePath?: string; imageBase
   return await instance.runDefaultWorkflow(input);
 }
 
+export async function runWorkflow(workflowName?: string, input?: { imagePath?: string; imageBase64?: string }) {
+  const instance = getSupervisor();
+  return await instance.runWorkflow(workflowName, input);
+}
+
 export async function importWorkflowFromPath(sourcePath: string) {
   const instance = getSupervisor();
   return instance.importWorkflowFromPath(sourcePath);
+}
+
+export async function getComfyStatus() {
+  const instance = getSupervisor();
+  return instance.getComfyStatus();
+}
+
+export async function startComfy() {
+  const instance = getSupervisor();
+  return await instance.startComfyUI();
+}
+
+export async function stopComfy() {
+  const instance = getSupervisor();
+  return await instance.stopComfyUI("ipc-stop", false);
+}
+
+export async function getComfyLogs(limit?: number) {
+  const instance = getSupervisor();
+  return instance.getComfyLogs(limit);
+}
+
+export async function getComfyConfig() {
+  const instance = getSupervisor();
+  return instance.getComfyConfig();
+}
+
+export async function saveComfyConfig(patch: {
+  host?: string;
+  port?: number;
+  baseUrl?: string;
+  comfyDir?: string;
+  condaHook?: string;
+  condaEnvName?: string;
+  pythonExeOverride?: string;
+  startupTimeoutMs?: number;
+}) {
+  const instance = getSupervisor();
+  return instance.saveComfyConfig(patch);
 }

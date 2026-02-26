@@ -32,6 +32,13 @@ export const IPC_CHANNELS = {
   backendStatus: "backend:status",
   backendRunDefault: "backend:run-default",
   backendImportWorkflow: "backend:import-workflow",
+  comfyStatus: "comfy:status",
+  comfyStart: "comfy:start",
+  comfyStop: "comfy:stop",
+  comfyLogs: "comfy:logs",
+  comfyRunWorkflow: "comfy:runWorkflow",
+  comfyGetConfig: "comfy:get-config",
+  comfySaveConfig: "comfy:save-config",
 } as const;
 
 export type LanguageMode = "system" | "manual";
@@ -128,6 +135,7 @@ export type ClearCacheResult = {
 };
 
 export type BackendServiceState = "stopped" | "starting" | "running" | "error";
+export type ComfySupervisorState = "STOPPED" | "STARTING" | "READY" | "ERROR";
 
 export type BackendStatusResponse = {
   mode: "dev" | "prod";
@@ -166,6 +174,66 @@ export type BackendStatusResponse = {
   };
   activeProcesses: Array<{ name: string; pid: number }>;
   notes: string[];
+};
+
+export type ComfyConfigResponse = {
+  host: string;
+  port: number;
+  baseUrl: string;
+  comfyDir: string;
+  condaHook: string;
+  condaEnvName: string;
+  pythonExeOverride: string;
+  args: string[];
+  startupTimeoutMs: number;
+};
+
+export type ComfyConfigPatch = Partial<{
+  host: string;
+  port: number;
+  baseUrl: string;
+  comfyDir: string;
+  condaHook: string;
+  condaEnvName: string;
+  pythonExeOverride: string;
+  startupTimeoutMs: number;
+}>;
+
+export type ComfyStatusResponse = {
+  state: ComfySupervisorState;
+  running: boolean;
+  url: string;
+  pid: number | null;
+  startedByApp: boolean;
+  lastError: string | null;
+  lastLogs: string[];
+  message: string;
+  host: string;
+  port: number;
+  config: {
+    comfyDir: string;
+    condaHook: string;
+    condaEnvName: string;
+    pythonExeOverride: string;
+    startupTimeoutMs: number;
+  };
+};
+
+export type ComfyRunWorkflowPayload = {
+  workflowId?: string;
+  imagePath?: string;
+  imageBase64?: string;
+};
+
+export type ComfyRunWorkflowResult = {
+  ok: boolean;
+  promptId?: string;
+  workflowName?: string;
+  workflowPath?: string;
+  outputGlbPath?: string;
+  message: string;
+  error?: string;
+  comfy: ComfyStatusResponse;
 };
 
 export type BackendRunDefaultPayload = {

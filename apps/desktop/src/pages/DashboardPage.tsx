@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { desktopApi, hasDesktopBridge } from "@/electron/desktopApi";
-import type { BackendStatusResponse } from "@/electron/channels";
+import type { BackendStatusResponse, ComfyStatusResponse } from "@/electron/channels";
 import { useProjects } from "@/projects/context";
 import { selectProjectsSortedByUpdatedAt } from "@/projects/selectors";
 import { EmptyState } from "@/ui/EmptyState";
@@ -28,9 +28,12 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState("");
   const [backendStatus, setBackendStatus] = useState<BackendStatusResponse | null>(null);
+  const [comfyStatus, setComfyStatus] = useState<ComfyStatusResponse | null>(null);
   const [backendMessage, setBackendMessage] = useState("Backend idle.");
   const [runningWorkflowTest, setRunningWorkflowTest] = useState(false);
   const [importingWorkflow, setImportingWorkflow] = useState(false);
+  const [startingComfy, setStartingComfy] = useState(false);
+  const [stoppingComfy, setStoppingComfy] = useState(false);
   const [workflowImagePath, setWorkflowImagePath] = useState("");
 
   const projects = useMemo(() => selectProjectsSortedByUpdatedAt(state.projects), [state.projects]);
@@ -56,15 +59,19 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
     let active = true;
     const refreshStatus = async () => {
       try {
-        const status = await desktopApi.getBackendStatus();
+        const [status, comfy] = await Promise.all([
+          desktopApi.getBackendStatus(),
+          desktopApi.getComfyStatus(),
+        ]);
         if (!active) {
           return;
         }
         setBackendStatus(status);
+        setComfyStatus(comfy);
         setBackendMessage(
-          status.comfy.running
-            ? `Backend OK (${status.comfy.url})`
-            : status.comfy.lastError ?? status.comfy.message
+          comfy.running
+            ? `Backend OK (${comfy.url})`
+            : comfy.lastError ?? comfy.message
         );
       } catch (error) {
         if (!active) {
@@ -93,10 +100,10 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
     }
     setRunningWorkflowTest(true);
     try {
-      const result = await desktopApi.runDefaultBackendWorkflow({
+      const result = await desktopApi.runComfyWorkflow({
         imagePath: workflowImagePath.trim() || undefined,
       });
-      setBackendStatus(result.status);
+      setComfyStatus(result.comfy);
       if (result.ok) {
         setBackendMessage(
           result.outputGlbPath
@@ -138,6 +145,61 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
     }
   };
 
+  const refreshComfyStatus = async () => {
+    if (!hasDesktopBridge()) {
+      setBackendMessage("Desktop bridge no disponible.");
+      return;
+    }
+    try {
+      const [status, comfy] = await Promise.all([
+        desktopApi.getBackendStatus(),
+        desktopApi.getComfyStatus(),
+      ]);
+      setBackendStatus(status);
+      setComfyStatus(comfy);
+      setBackendMessage(comfy.running ? `Backend OK (${comfy.url})` : comfy.lastError ?? comfy.message);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "No se pudo consultar backend.";
+      setBackendMessage(message);
+    }
+  };
+
+  const startComfy = async () => {
+    if (!hasDesktopBridge()) {
+      setBackendMessage("Desktop bridge no disponible.");
+      return;
+    }
+    setStartingComfy(true);
+    try {
+      const comfy = await desktopApi.startComfy();
+      setComfyStatus(comfy);
+      setBackendMessage(comfy.running ? `Backend OK (${comfy.url})` : comfy.lastError ?? comfy.message);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "No se pudo iniciar ComfyUI.";
+      setBackendMessage(message);
+    } finally {
+      setStartingComfy(false);
+    }
+  };
+
+  const stopComfy = async () => {
+    if (!hasDesktopBridge()) {
+      setBackendMessage("Desktop bridge no disponible.");
+      return;
+    }
+    setStoppingComfy(true);
+    try {
+      const comfy = await desktopApi.stopComfy();
+      setComfyStatus(comfy);
+      setBackendMessage(comfy.running ? `Backend OK (${comfy.url})` : comfy.lastError ?? comfy.message);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "No se pudo detener ComfyUI.";
+      setBackendMessage(message);
+    } finally {
+      setStoppingComfy(false);
+    }
+  };
+
   return (
     <div className="flex h-full min-h-0 w-full flex-col gap-5">
       <Card padding="md">
@@ -170,13 +232,28 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
         <div className="mt-4 rounded-xl border border-[var(--border)] bg-[var(--surface-2)] p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-xs font-medium text-[var(--text)]">
-              Backend: {backendStatus?.comfy.running ? "ok" : backendStatus?.comfy.state ?? "unknown"} (
-              {backendStatus?.comfy.url ?? "http://127.0.0.1:8188"})
+              ComfyUI: {comfyStatus?.state ?? "UNKNOWN"} ({comfyStatus?.url ?? "http://127.0.0.1:8188"})
             </p>
             <p className="text-xs text-[var(--text-muted)]">
               Workflow activo: {backendStatus?.workflows.activeName ?? "n/a"}
             </p>
             <div className="flex items-center gap-2">
+              <Button
+                variant="secondary"
+                className="h-8 px-3 text-xs"
+                disabled={startingComfy}
+                onClick={() => void startComfy()}
+              >
+                {startingComfy ? "Starting..." : "Start"}
+              </Button>
+              <Button
+                variant="secondary"
+                className="h-8 px-3 text-xs"
+                disabled={stoppingComfy}
+                onClick={() => void stopComfy()}
+              >
+                {stoppingComfy ? "Stopping..." : "Stop"}
+              </Button>
               <Button
                 variant="primary"
                 className="h-8 px-3 text-xs"
@@ -196,17 +273,7 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
               <Button
                 variant="secondary"
                 className="h-8 px-3 text-xs"
-                onClick={() => {
-                  if (!hasDesktopBridge()) return;
-                  void desktopApi.getBackendStatus().then((status) => {
-                    setBackendStatus(status);
-                    setBackendMessage(
-                      status.comfy.running
-                        ? `Backend OK (${status.comfy.url})`
-                        : status.comfy.lastError ?? status.comfy.message
-                    );
-                  });
-                }}
+                onClick={() => void refreshComfyStatus()}
               >
                 Refresh status
               </Button>
@@ -221,6 +288,13 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
             />
           </div>
           <p className="mt-2 text-xs text-[var(--text-muted)]">{backendMessage}</p>
+          <div className="mt-2 max-h-28 overflow-auto rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-2">
+            {(comfyStatus?.lastLogs ?? []).slice(-8).map((line, index) => (
+              <p key={`${index}-${line}`} className="font-mono text-[10px] leading-relaxed text-[var(--text-muted)]">
+                {line}
+              </p>
+            ))}
+          </div>
         </div>
       </Card>
 

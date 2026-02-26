@@ -2,6 +2,7 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { logger } from "./logger";
+import { readModelRegistry } from "./modelRegistry";
 import { getRepoWorkflowDir, getUserDataRoot, getWorkflowsDir } from "./paths";
 
 export type WorkflowSyncResult = {
@@ -32,6 +33,18 @@ export type WorkflowCheckpointUsage = {
   ckptName: string;
 };
 
+export type WorkflowCheckpointPatchResult = {
+  workflowJson: unknown;
+  replaced: Array<{
+    nodeId: string;
+    classType: string;
+    from: string;
+    to: string;
+  }>;
+  selectedDefault: string | null;
+  availableCheckpoints: string[];
+};
+
 function listJsonFilesRecursive(dirPath: string, baseDir: string, collector: string[]) {
   const entries = fs.readdirSync(dirPath, { withFileTypes: true });
   for (const entry of entries) {
@@ -48,6 +61,21 @@ function listJsonFilesRecursive(dirPath: string, baseDir: string, collector: str
     }
     collector.push(path.relative(baseDir, absolutePath));
   }
+}
+
+function resolveRepoWorkflowSourceDirs() {
+  const candidates = [
+    path.resolve(process.cwd(), "electron", "generation", "comfyui-workflows"),
+    path.resolve(process.cwd(), "..", "electron", "generation", "comfyui-workflows"),
+    getRepoWorkflowDir(),
+  ];
+  const uniqueExisting = new Set<string>();
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) {
+      uniqueExisting.add(path.resolve(candidate));
+    }
+  }
+  return Array.from(uniqueExisting.values());
 }
 
 async function sha256OfFile(filePath: string) {
@@ -113,7 +141,7 @@ function writeWorkflowState(state: WorkflowState) {
   fs.writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
 }
 
-function listAvailableWorkflows() {
+export function listAvailableWorkflows() {
   const workflowsDir = getWorkflowsDir();
   if (!fs.existsSync(workflowsDir)) {
     return [] as string[];
@@ -168,22 +196,29 @@ function buildUniqueWorkflowName(baseName: string) {
 }
 
 export async function syncWorkflows(): Promise<WorkflowSyncResult> {
-  const sourceRoot = getRepoWorkflowDir();
+  const sourceRoots = resolveRepoWorkflowSourceDirs();
   const targetRoot = getWorkflowsDir();
 
-  if (!fs.existsSync(sourceRoot)) {
-    throw new Error(`No existe carpeta de workflows en repo: ${sourceRoot}`);
+  if (sourceRoots.length === 0) {
+    throw new Error(`No existe carpeta de workflows en repo: ${getRepoWorkflowDir()}`);
   }
 
-  const workflowFiles: string[] = [];
-  listJsonFilesRecursive(sourceRoot, sourceRoot, workflowFiles);
+  const workflowFilesBySource = new Map<string, string>();
+  for (const sourceRoot of sourceRoots) {
+    const workflowFiles: string[] = [];
+    listJsonFilesRecursive(sourceRoot, sourceRoot, workflowFiles);
+    for (const relPath of workflowFiles) {
+      workflowFilesBySource.set(relPath, sourceRoot);
+    }
+  }
+
   const result: WorkflowSyncResult = {
     copied: [],
     replaced: [],
     backups: [],
   };
 
-  for (const relPath of workflowFiles) {
+  for (const [relPath, sourceRoot] of workflowFilesBySource.entries()) {
     const sourcePath = path.join(sourceRoot, relPath);
     const targetPath = path.join(targetRoot, relPath);
     fs.mkdirSync(path.dirname(targetPath), { recursive: true });
@@ -209,6 +244,7 @@ export async function syncWorkflows(): Promise<WorkflowSyncResult> {
   }
 
   logger.info("Workflows sincronizados.", {
+    sourceDirs: sourceRoots,
     copied: result.copied.length,
     replaced: result.replaced.length,
     backups: result.backups.length,
@@ -362,4 +398,109 @@ export function getCheckpointUsages(workflowJson: unknown): WorkflowCheckpointUs
     usages.push({ nodeId, ckptName });
   }
   return usages;
+}
+
+function getPreferredCheckpointsFromRegistry() {
+  try {
+    const registry = readModelRegistry();
+    const preferred = new Set<string>();
+    for (const model of registry.models) {
+      for (const file of model.files) {
+        if (typeof file.relPath !== "string") {
+          continue;
+        }
+        const normalized = file.relPath.replace(/\\/g, "/").toLowerCase();
+        if (!normalized.startsWith("checkpoints/")) {
+          continue;
+        }
+        preferred.add(path.basename(file.relPath));
+      }
+    }
+    return Array.from(preferred.values());
+  } catch {
+    return [] as string[];
+  }
+}
+
+function resolvePreferredCheckpoint(availableCheckpoints: string[]) {
+  if (availableCheckpoints.length === 0) {
+    return null;
+  }
+  const registryCandidates = getPreferredCheckpointsFromRegistry();
+  for (const candidate of ["hunyuan_3d_v2.1.safetensors", ...registryCandidates]) {
+    if (availableCheckpoints.includes(candidate)) {
+      return candidate;
+    }
+  }
+  const hunyuanByContains = availableCheckpoints.find((item) => item.toLowerCase().includes("hunyuan"));
+  if (hunyuanByContains) {
+    return hunyuanByContains;
+  }
+  return availableCheckpoints[0] ?? null;
+}
+
+function isCheckpointNode(nodeValue: Record<string, unknown>) {
+  const classType = String(nodeValue.class_type ?? "").toLowerCase();
+  if (!classType) {
+    return false;
+  }
+  if (classType === "checkpointloadersimple") {
+    return true;
+  }
+  return classType.includes("checkpointloader");
+}
+
+export function patchWorkflowCheckpoints(workflowJson: unknown, availableCheckpoints: string[]): WorkflowCheckpointPatchResult {
+  const selectedDefault = resolvePreferredCheckpoint(availableCheckpoints);
+  if (!isRecord(workflowJson) || !selectedDefault || availableCheckpoints.length === 0) {
+    return {
+      workflowJson,
+      replaced: [],
+      selectedDefault,
+      availableCheckpoints,
+    };
+  }
+
+  const cloned = JSON.parse(JSON.stringify(workflowJson)) as Record<string, unknown>;
+  const replaced: WorkflowCheckpointPatchResult["replaced"] = [];
+
+  for (const [nodeId, nodeValue] of Object.entries(cloned)) {
+    if (!isRecord(nodeValue) || !isCheckpointNode(nodeValue)) {
+      continue;
+    }
+    const classType = String(nodeValue.class_type ?? "");
+    const inputs = isRecord(nodeValue.inputs) ? { ...nodeValue.inputs } : {};
+    const ckptName = typeof inputs.ckpt_name === "string" ? inputs.ckpt_name.trim() : "";
+    if (!ckptName) {
+      continue;
+    }
+    if (availableCheckpoints.includes(ckptName)) {
+      continue;
+    }
+    inputs.ckpt_name = selectedDefault;
+    nodeValue.inputs = inputs;
+    replaced.push({
+      nodeId,
+      classType,
+      from: ckptName,
+      to: selectedDefault,
+    });
+  }
+
+  return {
+    workflowJson: cloned,
+    replaced,
+    selectedDefault,
+    availableCheckpoints,
+  };
+}
+
+export function getWorkflowRegistry() {
+  const workflows = listAvailableWorkflows();
+  const activeName = resolveActiveWorkflowName();
+  return workflows.map((name) => ({
+    name,
+    path: getWorkflowPath(name),
+    active: name === activeName,
+  }));
 }

@@ -3,6 +3,11 @@ import {
   type BackendRunDefaultResult,
   type BackendImportWorkflowResult,
   type BackendStatusResponse,
+  type ComfyConfigPatch,
+  type ComfyConfigResponse,
+  type ComfyRunWorkflowPayload,
+  type ComfyRunWorkflowResult,
+  type ComfyStatusResponse,
   type ExportSettingsResult,
   type ImportSettingsResult,
   type ExportProjectsResult,
@@ -92,6 +97,16 @@ export type VolumiaBackendBridge = {
   importWorkflow: () => Promise<BackendImportWorkflowResult>;
 };
 
+export type VolumiaComfyBridge = {
+  status: () => Promise<ComfyStatusResponse>;
+  start: () => Promise<ComfyStatusResponse>;
+  stop: () => Promise<ComfyStatusResponse>;
+  logs: (limit?: number) => Promise<string[]>;
+  runWorkflow: (payload?: ComfyRunWorkflowPayload) => Promise<ComfyRunWorkflowResult>;
+  getConfig: () => Promise<ComfyConfigResponse>;
+  saveConfig: (patch: ComfyConfigPatch) => Promise<ComfyConfigResponse>;
+};
+
 export type VolumiaDesktopBridge = {
   exportJson: (payload: ProjectsExportEnvelope) => Promise<ExportProjectsResult>;
   importJson: () => Promise<ImportProjectsResult>;
@@ -104,6 +119,7 @@ export type VolumiaDesktopBridge = {
   generation?: Partial<VolumiaGenerationBridge>;
   systemPython?: Partial<VolumiaSystemPythonBridge>;
   backend?: Partial<VolumiaBackendBridge>;
+  comfy?: Partial<VolumiaComfyBridge>;
 };
 
 export function hasDesktopBridge() {
@@ -219,6 +235,14 @@ function ensureBackendBridge(): VolumiaBackendBridge {
     throw new Error("Desktop backend bridge is unavailable.");
   }
   return backend as VolumiaBackendBridge;
+}
+
+function ensureComfyBridge(): VolumiaComfyBridge {
+  const comfy = ensureBridge().comfy;
+  if (!comfy?.status || !comfy.start || !comfy.stop || !comfy.logs || !comfy.runWorkflow || !comfy.getConfig || !comfy.saveConfig) {
+    throw new Error("Desktop comfy bridge is unavailable.");
+  }
+  return comfy as VolumiaComfyBridge;
 }
 
 const generationProgressSubscribers = new Set<(payload: GenerationProgressPayload) => void>();
@@ -419,6 +443,27 @@ export const desktopApi = {
   },
   importBackendWorkflow(): Promise<BackendImportWorkflowResult> {
     return ensureBackendBridge().importWorkflow();
+  },
+  getComfyStatus(): Promise<ComfyStatusResponse> {
+    return ensureComfyBridge().status();
+  },
+  startComfy(): Promise<ComfyStatusResponse> {
+    return ensureComfyBridge().start();
+  },
+  stopComfy(): Promise<ComfyStatusResponse> {
+    return ensureComfyBridge().stop();
+  },
+  getComfyLogs(limit?: number): Promise<string[]> {
+    return ensureComfyBridge().logs(limit);
+  },
+  runComfyWorkflow(payload?: ComfyRunWorkflowPayload): Promise<ComfyRunWorkflowResult> {
+    return ensureComfyBridge().runWorkflow(payload);
+  },
+  getComfyConfig(): Promise<ComfyConfigResponse> {
+    return ensureComfyBridge().getConfig();
+  },
+  saveComfyConfig(patch: ComfyConfigPatch): Promise<ComfyConfigResponse> {
+    return ensureComfyBridge().saveConfig(patch);
   },
 };
 
