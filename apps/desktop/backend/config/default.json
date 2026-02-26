@@ -1,7 +1,6 @@
 {
   "comfy": {
-    "host": "127.0.0.1",
-    "port": 8188,
+    "baseUrl": "http://127.0.0.1:8188",
     "rootDir": "C:\\AI\\ComfyUI_VOL",
     "pythonExe": "F:\\MINICONDA\\envs\\volumia\\python.exe",
     "args": [

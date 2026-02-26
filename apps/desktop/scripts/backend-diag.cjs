@@ -37,15 +37,25 @@ async function checkComfy(url) {
 async function main() {
   const config = loadConfig();
   const comfy = config.comfy ?? {};
-  const url = `http://${comfy.host}:${comfy.port}`;
+  const url = typeof comfy.baseUrl === "string" ? comfy.baseUrl : `http://${comfy.host ?? "127.0.0.1"}:${comfy.port ?? 8188}`;
+  let host = "127.0.0.1";
+  let port = 8188;
+  try {
+    const parsed = new URL(url);
+    host = parsed.hostname || host;
+    port = Number.parseInt(parsed.port || "8188", 10);
+  } catch {
+    // keep defaults
+  }
 
   console.log("[backend:status] configPath:", configPath);
   console.log(
     "[backend:status] comfy config:",
     JSON.stringify(
       {
-        host: comfy.host,
-        port: comfy.port,
+        baseUrl: url,
+        host,
+        port,
         rootDir: comfy.rootDir,
         pythonExe: comfy.pythonExe,
         args: comfy.args,

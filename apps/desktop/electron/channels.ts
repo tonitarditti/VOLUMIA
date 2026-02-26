@@ -31,6 +31,7 @@ export const IPC_CHANNELS = {
   pyInstallDone: "py:install-done",
   backendStatus: "backend:status",
   backendRunDefault: "backend:run-default",
+  backendImportWorkflow: "backend:import-workflow",
 } as const;
 
 export type LanguageMode = "system" | "manual";
@@ -139,6 +140,8 @@ export type BackendStatusResponse = {
     backups: number;
     lastSyncAt: string | null;
     error: string | null;
+    activeName: string | null;
+    activePath: string | null;
   };
   models: {
     ok: boolean;
@@ -167,11 +170,24 @@ export type BackendStatusResponse = {
 
 export type BackendRunDefaultPayload = {
   imagePath?: string;
+  imageBase64?: string;
 };
 
 export type BackendRunDefaultResult = {
   ok: boolean;
   promptId?: string;
+  workflowName?: string;
+  workflowPath?: string;
+  outputGlbPath?: string;
+  message: string;
+  error?: string;
+  status: BackendStatusResponse;
+};
+
+export type BackendImportWorkflowResult = {
+  ok: boolean;
+  canceled: boolean;
+  workflowName?: string;
   workflowPath?: string;
   message: string;
   error?: string;

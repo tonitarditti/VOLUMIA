@@ -3,6 +3,7 @@ import path from "path";
 import { getRepoConfigDir } from "./paths";
 
 export type ComfyRuntimeConfig = {
+  baseUrl: string;
   host: string;
   port: number;
   rootDir: string;
@@ -17,6 +18,7 @@ export type BackendRuntimeConfig = {
 
 const DEFAULT_CONFIG: BackendRuntimeConfig = {
   comfy: {
+    baseUrl: "http://127.0.0.1:8188",
     host: "127.0.0.1",
     port: 8188,
     rootDir: "C:\\AI\\ComfyUI_VOL",
@@ -28,7 +30,29 @@ const DEFAULT_CONFIG: BackendRuntimeConfig = {
 
 let cachedConfig: BackendRuntimeConfig | null = null;
 
+function parseBaseUrl(baseUrl: string) {
+  const parsed = new URL(baseUrl);
+  if (!parsed.hostname) {
+    throw new Error("config.comfy.baseUrl invalido: hostname vacio.");
+  }
+  if (!parsed.port) {
+    throw new Error("config.comfy.baseUrl invalido: puerto faltante.");
+  }
+  const port = Number.parseInt(parsed.port, 10);
+  if (!Number.isFinite(port) || port <= 0 || port > 65535) {
+    throw new Error("config.comfy.baseUrl invalido: puerto fuera de rango.");
+  }
+  return {
+    host: parsed.hostname,
+    port,
+    normalizedBaseUrl: `${parsed.protocol}//${parsed.hostname}:${port}`,
+  };
+}
+
 function ensureValidComfyConfig(config: ComfyRuntimeConfig) {
+  if (!config.baseUrl || typeof config.baseUrl !== "string") {
+    throw new Error("config.comfy.baseUrl invalido.");
+  }
   if (!config.host || typeof config.host !== "string") {
     throw new Error("config.comfy.host invalido.");
   }
@@ -56,17 +80,25 @@ function mergeConfig(rawConfig: unknown): BackendRuntimeConfig {
 
   const root = rawConfig as Record<string, unknown>;
   const rawComfy = (root.comfy ?? {}) as Record<string, unknown>;
+  const inferredBaseUrl =
+    typeof rawComfy.baseUrl === "string"
+      ? rawComfy.baseUrl
+      : `http://${typeof rawComfy.host === "string" ? rawComfy.host : DEFAULT_CONFIG.comfy.host}:${
+          typeof rawComfy.port === "number" ? rawComfy.port : DEFAULT_CONFIG.comfy.port
+        }`;
+  const parsedBaseUrl = parseBaseUrl(inferredBaseUrl);
 
   const merged: BackendRuntimeConfig = {
     comfy: {
-      host: typeof rawComfy.host === "string" ? rawComfy.host : DEFAULT_CONFIG.comfy.host,
-      port: typeof rawComfy.port === "number" ? rawComfy.port : DEFAULT_CONFIG.comfy.port,
+      baseUrl: parsedBaseUrl.normalizedBaseUrl,
+      host: parsedBaseUrl.host,
+      port: parsedBaseUrl.port,
       rootDir: typeof rawComfy.rootDir === "string" ? rawComfy.rootDir : DEFAULT_CONFIG.comfy.rootDir,
       pythonExe: typeof rawComfy.pythonExe === "string" ? rawComfy.pythonExe : DEFAULT_CONFIG.comfy.pythonExe,
       args:
         Array.isArray(rawComfy.args) && rawComfy.args.every((item) => typeof item === "string")
           ? (rawComfy.args as string[])
-          : DEFAULT_CONFIG.comfy.args,
+          : ["main.py", "--listen", parsedBaseUrl.host, "--port", String(parsedBaseUrl.port)],
       startupTimeoutMs:
         typeof rawComfy.startupTimeoutMs === "number"
           ? rawComfy.startupTimeoutMs
@@ -99,6 +131,5 @@ export function loadBackendConfig() {
 }
 
 export function getComfyBaseUrl(config = loadBackendConfig()) {
-  return `http://${config.comfy.host}:${config.comfy.port}`;
+  return config.comfy.baseUrl;
 }
-

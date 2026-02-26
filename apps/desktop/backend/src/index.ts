@@ -24,7 +24,7 @@ function detectMode(): BackendMode {
 
 export async function initBackend() {
   const instance = getSupervisor();
-  return instance.getStatus();
+  return await instance.getStatus();
 }
 
 export async function startBackend(mode?: BackendMode) {
@@ -41,11 +41,15 @@ export async function stopBackend() {
 
 export async function getBackendStatus(): Promise<BackendStatus> {
   const instance = getSupervisor();
-  return instance.getStatus();
+  return await instance.getStatus();
 }
 
-export async function runDefaultWorkflow(input?: { imagePath?: string }) {
+export async function runDefaultWorkflow(input?: { imagePath?: string; imageBase64?: string }) {
   const instance = getSupervisor();
   return await instance.runDefaultWorkflow(input);
 }
 
+export async function importWorkflowFromPath(sourcePath: string) {
+  const instance = getSupervisor();
+  return instance.importWorkflowFromPath(sourcePath);
+}

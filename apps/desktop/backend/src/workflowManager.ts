@@ -2,8 +2,7 @@ import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { logger } from "./logger";
-import { readModelRegistry } from "./modelRegistry";
-import { getRepoWorkflowDir, getWorkflowsDir } from "./paths";
+import { getRepoWorkflowDir, getUserDataRoot, getWorkflowsDir } from "./paths";
 
 export type WorkflowSyncResult = {
   copied: string[];
@@ -11,12 +10,26 @@ export type WorkflowSyncResult = {
   backups: string[];
 };
 
-export type WorkflowCheckpointPatchResult = {
-  patched: boolean;
-  appliedCheckpoint: string | null;
-  availableCheckpoints: string[];
-  replacements: Array<{ nodeId: string; previous: string; next: string }>;
+export type ActiveWorkflowInfo = {
+  name: string;
+  path: string;
+};
+
+export type WorkflowImportResult = {
+  workflowName: string;
+  workflowPath: string;
+  replacedExisting: boolean;
+};
+
+export type WorkflowImageInjectionResult = {
   workflowJson: unknown;
+  appliedNodeIds: string[];
+  imageValue: string;
+};
+
+export type WorkflowCheckpointUsage = {
+  nodeId: string;
+  ckptName: string;
 };
 
 function listJsonFilesRecursive(dirPath: string, baseDir: string, collector: string[]) {
@@ -54,31 +67,104 @@ function ensureSafeWorkflowName(name: string) {
   if (name.includes("..")) {
     throw new Error(`Nombre de workflow invalido: ${name}`);
   }
+  if (!name.toLowerCase().endsWith(".json")) {
+    throw new Error(`Nombre de workflow invalido (debe terminar en .json): ${name}`);
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-function getCheckpointCandidatesFromRegistry() {
-  const registry = readModelRegistry();
-  const checkpoints: string[] = [];
-  for (const model of registry.models) {
-    if (model.type !== "checkpoint") {
-      continue;
-    }
-    for (const file of model.files) {
-      checkpoints.push(path.basename(file.relPath));
-    }
-  }
-  return Array.from(new Set(checkpoints.filter((item) => item.trim().length > 0)));
+const DEFAULT_WORKFLOW_NAME = "hunyuan_image_to_3d.json";
+
+type WorkflowState = {
+  activeWorkflowName: string | null;
+};
+
+function getWorkflowStatePath() {
+  return path.join(getUserDataRoot(), "workflow-state.json");
 }
 
-function pickPreferredCheckpoint(checkpoints: string[]) {
-  if (checkpoints.includes("hunyuan_3d_v2.1.safetensors")) {
-    return "hunyuan_3d_v2.1.safetensors";
+function readWorkflowState(): WorkflowState {
+  const statePath = getWorkflowStatePath();
+  if (!fs.existsSync(statePath)) {
+    return { activeWorkflowName: null };
   }
-  return checkpoints[0] ?? null;
+  try {
+    const raw = fs.readFileSync(statePath, "utf8");
+    const parsed = JSON.parse(raw) as unknown;
+    if (!isRecord(parsed)) {
+      return { activeWorkflowName: null };
+    }
+    const activeWorkflowNameRaw = parsed.activeWorkflowName;
+    if (typeof activeWorkflowNameRaw !== "string" || activeWorkflowNameRaw.trim().length === 0) {
+      return { activeWorkflowName: null };
+    }
+    return { activeWorkflowName: activeWorkflowNameRaw.trim() };
+  } catch {
+    return { activeWorkflowName: null };
+  }
+}
+
+function writeWorkflowState(state: WorkflowState) {
+  const statePath = getWorkflowStatePath();
+  fs.mkdirSync(path.dirname(statePath), { recursive: true });
+  fs.writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+}
+
+function listAvailableWorkflows() {
+  const workflowsDir = getWorkflowsDir();
+  if (!fs.existsSync(workflowsDir)) {
+    return [] as string[];
+  }
+  return fs
+    .readdirSync(workflowsDir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith(".json"))
+    .map((entry) => entry.name)
+    .sort((a, b) => a.localeCompare(b));
+}
+
+function ensureWorkflowJsonShape(value: unknown, workflowPathForError: string) {
+  if (!isRecord(value)) {
+    throw new Error(`Workflow invalido (raiz no es objeto): ${workflowPathForError}`);
+  }
+}
+
+function resolveActiveWorkflowName() {
+  const state = readWorkflowState();
+  const available = listAvailableWorkflows();
+  if (state.activeWorkflowName && available.includes(state.activeWorkflowName)) {
+    return state.activeWorkflowName;
+  }
+  if (available.includes(DEFAULT_WORKFLOW_NAME)) {
+    return DEFAULT_WORKFLOW_NAME;
+  }
+  return available[0] ?? null;
+}
+
+function normalizeImportedWorkflowName(sourcePath: string) {
+  const parsed = path.parse(sourcePath);
+  const base = parsed.name
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  const normalized = `${base || "imported_workflow"}.json`;
+  ensureSafeWorkflowName(normalized);
+  return normalized;
+}
+
+function buildUniqueWorkflowName(baseName: string) {
+  const workflowsDir = getWorkflowsDir();
+  const parsed = path.parse(baseName);
+  let candidate = `${parsed.name}${parsed.ext || ".json"}`;
+  let counter = 1;
+  while (fs.existsSync(path.join(workflowsDir, candidate))) {
+    candidate = `${parsed.name}_${counter}${parsed.ext || ".json"}`;
+    counter += 1;
+  }
+  return candidate;
 }
 
 export async function syncWorkflows(): Promise<WorkflowSyncResult> {
@@ -130,57 +216,150 @@ export async function syncWorkflows(): Promise<WorkflowSyncResult> {
   return result;
 }
 
+export function getDefaultWorkflowName() {
+  return DEFAULT_WORKFLOW_NAME;
+}
+
 export function getWorkflowPath(name: string) {
   ensureSafeWorkflowName(name);
   return path.join(getWorkflowsDir(), name);
 }
 
-export function patchWorkflowCheckpoint(workflowJson: unknown): WorkflowCheckpointPatchResult {
-  const availableCheckpoints = getCheckpointCandidatesFromRegistry();
-  const preferredCheckpoint = pickPreferredCheckpoint(availableCheckpoints);
-  const replacements: Array<{ nodeId: string; previous: string; next: string }> = [];
+export function getActiveWorkflowInfo(): ActiveWorkflowInfo {
+  const activeName = resolveActiveWorkflowName();
+  if (!activeName) {
+    throw new Error(
+      `No hay workflows disponibles en ${getWorkflowsDir()}. Importa un workflow JSON o agrega ${DEFAULT_WORKFLOW_NAME}.`
+    );
+  }
+  return {
+    name: activeName,
+    path: getWorkflowPath(activeName),
+  };
+}
 
-  if (!isRecord(workflowJson) || !preferredCheckpoint) {
+export function setActiveWorkflowByName(name: string): ActiveWorkflowInfo {
+  ensureSafeWorkflowName(name);
+  const workflowPath = getWorkflowPath(name);
+  if (!fs.existsSync(workflowPath)) {
+    throw new Error(`Workflow no encontrado para activar: ${workflowPath}`);
+  }
+  writeWorkflowState({ activeWorkflowName: name });
+  return { name, path: workflowPath };
+}
+
+export function importWorkflowFromDisk(sourcePath: string): WorkflowImportResult {
+  const absoluteSourcePath = path.resolve(sourcePath);
+  if (!fs.existsSync(absoluteSourcePath)) {
+    throw new Error(`Workflow source no encontrado: ${absoluteSourcePath}`);
+  }
+  if (!absoluteSourcePath.toLowerCase().endsWith(".json")) {
+    throw new Error(`El archivo importado debe ser .json: ${absoluteSourcePath}`);
+  }
+
+  const raw = fs.readFileSync(absoluteSourcePath, "utf8");
+  const parsed = JSON.parse(raw) as unknown;
+  ensureWorkflowJsonShape(parsed, absoluteSourcePath);
+
+  const normalizedName = normalizeImportedWorkflowName(absoluteSourcePath);
+  const workflowsDir = getWorkflowsDir();
+  fs.mkdirSync(workflowsDir, { recursive: true });
+  const preferredPath = path.join(workflowsDir, normalizedName);
+  const targetName = fs.existsSync(preferredPath) ? buildUniqueWorkflowName(normalizedName) : normalizedName;
+  const targetPath = path.join(workflowsDir, targetName);
+  const replacedExisting = fs.existsSync(targetPath);
+
+  fs.writeFileSync(targetPath, `${JSON.stringify(parsed, null, 2)}\n`, "utf8");
+  setActiveWorkflowByName(targetName);
+
+  logger.info("Workflow importado y activado.", {
+    sourcePath: absoluteSourcePath,
+    workflowName: targetName,
+    workflowPath: targetPath,
+  });
+
+  return {
+    workflowName: targetName,
+    workflowPath: targetPath,
+    replacedExisting,
+  };
+}
+
+export function loadWorkflowJson(workflowPath: string): unknown {
+  const absoluteWorkflowPath = path.resolve(workflowPath);
+  if (!fs.existsSync(absoluteWorkflowPath)) {
+    throw new Error(`Workflow no encontrado: ${absoluteWorkflowPath}`);
+  }
+  const raw = fs.readFileSync(absoluteWorkflowPath, "utf8");
+  const parsed = JSON.parse(raw) as unknown;
+  ensureWorkflowJsonShape(parsed, absoluteWorkflowPath);
+  return parsed;
+}
+
+export function applyImageInputToWorkflow(
+  workflowJson: unknown,
+  uploadedImageName: string,
+  uploadedSubfolder = ""
+): WorkflowImageInjectionResult {
+  if (!isRecord(workflowJson)) {
     return {
-      patched: false,
-      appliedCheckpoint: preferredCheckpoint,
-      availableCheckpoints,
-      replacements,
       workflowJson,
+      appliedNodeIds: [],
+      imageValue: uploadedImageName,
     };
   }
 
+  const normalizedImageValue = uploadedSubfolder
+    ? `${uploadedSubfolder.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "")}/${uploadedImageName}`
+    : uploadedImageName;
   const cloned = JSON.parse(JSON.stringify(workflowJson)) as Record<string, unknown>;
-  for (const [nodeId, nodeValue] of Object.entries(cloned)) {
-    if (!isRecord(nodeValue) || nodeValue.class_type !== "CheckpointLoaderSimple") {
-      continue;
-    }
-    const inputs = isRecord(nodeValue.inputs) ? nodeValue.inputs : {};
-    const current = typeof inputs.ckpt_name === "string" ? inputs.ckpt_name : "";
-    if (availableCheckpoints.includes(current)) {
-      continue;
-    }
-    inputs.ckpt_name = preferredCheckpoint;
-    nodeValue.inputs = inputs;
-    replacements.push({
-      nodeId,
-      previous: current || "<missing>",
-      next: preferredCheckpoint,
-    });
-  }
+  const appliedNodeIds: string[] = [];
 
-  if (replacements.length > 0) {
-    logger.warn(`Patched ckpt_name -> ${preferredCheckpoint}`, {
-      replacements,
-      availableCheckpoints,
-    });
+  for (const [nodeId, nodeValue] of Object.entries(cloned)) {
+    if (!isRecord(nodeValue)) {
+      continue;
+    }
+
+    const classType = String(nodeValue.class_type ?? "");
+    if (!classType.toLowerCase().includes("loadimage")) {
+      continue;
+    }
+
+    const inputs = isRecord(nodeValue.inputs) ? { ...nodeValue.inputs } : {};
+    if (typeof inputs.image !== "string") {
+      continue;
+    }
+    inputs.image = normalizedImageValue;
+    nodeValue.inputs = inputs;
+    appliedNodeIds.push(nodeId);
   }
 
   return {
-    patched: replacements.length > 0,
-    appliedCheckpoint: preferredCheckpoint,
-    availableCheckpoints,
-    replacements,
+    imageValue: normalizedImageValue,
+    appliedNodeIds,
     workflowJson: cloned,
   };
+}
+
+export function getCheckpointUsages(workflowJson: unknown): WorkflowCheckpointUsage[] {
+  if (!isRecord(workflowJson)) {
+    return [];
+  }
+
+  const usages: WorkflowCheckpointUsage[] = [];
+  for (const [nodeId, nodeValue] of Object.entries(workflowJson)) {
+    if (!isRecord(nodeValue)) {
+      continue;
+    }
+    if (nodeValue.class_type !== "CheckpointLoaderSimple") {
+      continue;
+    }
+    const inputs = isRecord(nodeValue.inputs) ? nodeValue.inputs : {};
+    const ckptName = typeof inputs.ckpt_name === "string" ? inputs.ckpt_name.trim() : "";
+    if (!ckptName) {
+      continue;
+    }
+    usages.push({ nodeId, ckptName });
+  }
+  return usages;
 }

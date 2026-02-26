@@ -10,15 +10,19 @@ const ROTATED_LOG_FILE_NAME = "backend.log.1";
 const MAX_LOG_SIZE_BYTES = 5 * 1024 * 1024;
 
 function levelToConsole(level: LogLevel, line: string) {
-  if (level === "error") {
-    console.error(line);
-    return;
+  try {
+    if (level === "error") {
+      console.error(line);
+      return;
+    }
+    if (level === "warn") {
+      console.warn(line);
+      return;
+    }
+    console.log(line);
+  } catch {
+    // Ignore console pipe errors (e.g. EPIPE when parent stream closes).
   }
-  if (level === "warn") {
-    console.warn(line);
-    return;
-  }
-  console.log(line);
 }
 
 export class BackendLogger {
@@ -94,4 +98,3 @@ export class BackendLogger {
 }
 
 export const logger = new BackendLogger();
-

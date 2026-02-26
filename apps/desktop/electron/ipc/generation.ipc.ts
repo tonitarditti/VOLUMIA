@@ -938,69 +938,17 @@ function buildBackgroundRemovalWarning(reason: string) {
 }
 
 async function removeBackgroundForImage(
-  pythonCommand: ResolvedPythonCommand,
-  removeBgScriptPath: string,
+  _pythonCommand: ResolvedPythonCommand,
+  _removeBgScriptPath: string,
   inputPath: string,
-  outputImagePath: string,
-  outputMaskPath: string
+  _outputImagePath: string,
+  _outputMaskPath: string
 ): Promise<BackgroundRemovalResult> {
-  const spawnEnv: NodeJS.ProcessEnv = {
-    ...process.env,
-    PYTHONUNBUFFERED: "1",
-    TQDM_DISABLE: "1",
-    HF_HUB_DISABLE_PROGRESS_BARS: "1",
+  return {
+    outputImagePath: inputPath,
+    usedBackgroundRemoval: false,
+    warning: "Background removal deshabilitado por configuracion.",
   };
-  const args = [
-    "--input",
-    inputPath,
-    "--output",
-    outputImagePath,
-    "--mask-output",
-    outputMaskPath,
-  ];
-
-  try {
-    const { stdout, stderr } = await runPython(
-      pythonCommand.cmd,
-      removeBgScriptPath,
-      args,
-      spawnEnv,
-      undefined,
-      pythonCommand.prefixArgs
-    );
-    if (!fs.existsSync(outputImagePath)) {
-      const combined = `${stdout}\n${stderr}`;
-      return {
-        outputImagePath: inputPath,
-        usedBackgroundRemoval: false,
-        warning: buildBackgroundRemovalWarning(
-          `El script no genero salida RGBA. ${combined.trim() || "Sin detalle."}`
-        ),
-      };
-    }
-
-    logInfo("[gen][bg-remove] source:", inputPath, "masked:", outputImagePath, "mask:", outputMaskPath);
-    return {
-      outputImagePath,
-      maskPath: fs.existsSync(outputMaskPath) ? outputMaskPath : undefined,
-      usedBackgroundRemoval: true,
-    };
-  } catch (error) {
-    const pyError = error as PythonRunError;
-    const stdout = typeof pyError.stdout === "string" ? pyError.stdout : "";
-    const stderr = typeof pyError.stderr === "string" ? pyError.stderr : "";
-    const combined = `${stdout}\n${stderr}\n${asErrorMessage(error)}`;
-    const missingDeps = hasMissingBackgroundRemovalDeps(combined);
-    const warning = missingDeps
-      ? buildBackgroundRemovalWarning("Faltan dependencias de background removal.")
-      : `No se pudo remover fondo, el resultado puede incluir fondo. ${asErrorMessage(error)}`;
-    logErr("[gen][bg-remove] failed:", inputPath, warning, combined);
-    return {
-      outputImagePath: inputPath,
-      usedBackgroundRemoval: false,
-      warning,
-    };
-  }
 }
 
 function validateRunPayload(payload: unknown): payload is GenerationRunPayload {
@@ -1876,65 +1824,16 @@ async function runGenerationJob(
     throw new Error(message);
   }
 
-  const removeBgScriptPath = resolveBackgroundRemovalScriptPath();
-  const generationInputImages: string[] = [];
+  const generationInputImages: string[] = [...copiedImages];
   const backgroundRemovalWarnings: string[] = [];
-  let removedBackgroundCount = 0;
-  const maskedImagesDir = path.join(baseDir, "images-masked");
-  const masksDir = path.join(baseDir, "masks");
-  fs.mkdirSync(maskedImagesDir, { recursive: true });
-  fs.mkdirSync(masksDir, { recursive: true });
-
-  if (!removeBgScriptPath) {
-    const warning = buildBackgroundRemovalWarning("Script no encontrado (tools/bg_remove/remove_bg.py).");
-    backgroundRemovalWarnings.push(warning);
-    generationInputImages.push(...copiedImages);
-    logErr("[gen][bg-remove] script missing:", warning);
-  } else {
-    for (let index = 0; index < copiedImages.length; index += 1) {
-      if (job.canceled) {
-        sendError(getWindow, { projectId, message: "Generacion cancelada." });
-        throw new Error("Generacion cancelada.");
-      }
-
-      const sourceImagePath = copiedImages[index]!;
-      const stem = sanitizeImageStem(sourceImagePath);
-      const outputImagePath = path.join(maskedImagesDir, `${stem}_masked.png`);
-      const outputMaskPath = path.join(masksDir, `${stem}_mask.png`);
-      const progressPercent = 46 + Math.round(((index + 1) / Math.max(1, copiedImages.length)) * 7);
-      sendProgress(getWindow, {
-        projectId,
-        stage: "preprocess",
-        percent: progressPercent,
-        message: `Removiendo fondo ${index + 1}/${copiedImages.length}...`,
-      });
-
-      const backgroundResult = await removeBackgroundForImage(
-        resolvedPython,
-        removeBgScriptPath,
-        sourceImagePath,
-        outputImagePath,
-        outputMaskPath
-      );
-      generationInputImages.push(backgroundResult.outputImagePath);
-      if (backgroundResult.warning) {
-        backgroundRemovalWarnings.push(backgroundResult.warning);
-      } else if (backgroundResult.usedBackgroundRemoval) {
-        removedBackgroundCount += 1;
-        logInfo("[gen][bg-remove] using masked image:", backgroundResult.outputImagePath);
-      }
-    }
-  }
-
-  if (generationInputImages.length === 0) {
-    generationInputImages.push(...copiedImages);
-  }
+  const removedBackgroundCount = 0;
+  logInfo("[gen][bg-remove] disabled: using original input images without rembg/tools/bg_remove.");
 
   sendProgress(getWindow, {
     projectId,
     stage: "preprocess",
     percent: 53,
-    message: `Background removal: ${removedBackgroundCount}/${generationInputImages.length} imagen(es) con alpha.`,
+    message: `Background removal disabled: ${removedBackgroundCount}/${generationInputImages.length} imagen(es) procesadas con rembg.`,
   });
 
   const localContext: LocalGenerationContext = {
@@ -2119,7 +2018,6 @@ async function runGenerationJob(
 
 function buildGeneratorCheckResult(pythonPath?: string): GenerationCheckResult {
   const scriptPath = resolveGeneratorScriptPath();
-  const bgRemoveScriptPath = resolveBackgroundRemovalScriptPath();
   const furnitureScriptPath = resolveFurnitureScriptPath();
   const genSkpScriptPath = resolveGenSkpScriptPath();
   const resolvedPython = resolvePythonCommand(pythonPath);
@@ -2130,7 +2028,6 @@ function buildGeneratorCheckResult(pythonPath?: string): GenerationCheckResult {
   const source = resolvedPython?.source ?? "none";
   const logs = [
     `script: ${scriptPath ?? "not found"}`,
-    `bg_remove_script: ${bgRemoveScriptPath ?? "not found"}`,
     `furniture_script: ${furnitureScriptPath ?? "not found"}`,
     `gen_skp_script: ${genSkpScriptPath ?? "not found"}`,
     `python: ${pythonCommand}`,

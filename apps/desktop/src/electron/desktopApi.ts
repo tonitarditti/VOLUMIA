@@ -1,6 +1,7 @@
 import {
   type BackendRunDefaultPayload,
   type BackendRunDefaultResult,
+  type BackendImportWorkflowResult,
   type BackendStatusResponse,
   type ExportSettingsResult,
   type ImportSettingsResult,
@@ -88,6 +89,7 @@ export type VolumiaSystemPythonBridge = {
 export type VolumiaBackendBridge = {
   status: () => Promise<BackendStatusResponse>;
   runDefault: (payload?: BackendRunDefaultPayload) => Promise<BackendRunDefaultResult>;
+  importWorkflow: () => Promise<BackendImportWorkflowResult>;
 };
 
 export type VolumiaDesktopBridge = {
@@ -213,7 +215,7 @@ function ensureSystemPythonBridge(): VolumiaSystemPythonBridge {
 
 function ensureBackendBridge(): VolumiaBackendBridge {
   const backend = ensureBridge().backend;
-  if (!backend?.status || !backend.runDefault) {
+  if (!backend?.status || !backend.runDefault || !backend.importWorkflow) {
     throw new Error("Desktop backend bridge is unavailable.");
   }
   return backend as VolumiaBackendBridge;
@@ -414,6 +416,9 @@ export const desktopApi = {
   },
   runDefaultBackendWorkflow(payload?: BackendRunDefaultPayload): Promise<BackendRunDefaultResult> {
     return ensureBackendBridge().runDefault(payload);
+  },
+  importBackendWorkflow(): Promise<BackendImportWorkflowResult> {
+    return ensureBackendBridge().importWorkflow();
   },
 };
 

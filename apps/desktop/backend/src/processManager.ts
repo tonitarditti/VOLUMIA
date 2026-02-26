@@ -142,6 +142,16 @@ export class ProcessManager {
       }
     });
 
+    child.stdout.on("error", (error) => {
+      const errorCode = (error as NodeJS.ErrnoException).code ?? "unknown";
+      logger.warn(`stdout stream error for ${options.name}.`, { code: errorCode, message: String(error) });
+    });
+
+    child.stderr.on("error", (error) => {
+      const errorCode = (error as NodeJS.ErrnoException).code ?? "unknown";
+      logger.warn(`stderr stream error for ${options.name}.`, { code: errorCode, message: String(error) });
+    });
+
     const exit = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolvePromise) => {
       child.on("exit", (code, signal) => {
         this.processes.delete(child.pid!);
@@ -184,4 +194,3 @@ export class ProcessManager {
     }));
   }
 }
-

@@ -1,9 +1,10 @@
-import { BrowserWindow, app, ipcMain } from "electron";
+import { BrowserWindow, app, dialog, ipcMain } from "electron";
 import { existsSync } from "fs";
 import path from "path";
 import {
   IPC_CHANNELS,
   type BackendRunDefaultPayload,
+  type BackendImportWorkflowResult,
   type BackendRunDefaultResult,
   type BackendStatusResponse,
 } from "./channels";
@@ -29,8 +30,15 @@ type BackendRuntimeModule = {
   startBackend: (mode?: "dev" | "prod") => Promise<BackendStatusResponse>;
   stopBackend: () => Promise<unknown>;
   getBackendStatus: () => Promise<BackendStatusResponse>;
-  runDefaultWorkflow: (payload?: { imagePath?: string }) => Promise<{
+  runDefaultWorkflow: (payload?: { imagePath?: string; imageBase64?: string }) => Promise<{
     promptId: string;
+    workflowName: string;
+    workflowPath: string;
+    message: string;
+    outputGlbPath?: string;
+  }>;
+  importWorkflowFromPath: (sourcePath: string) => Promise<{
+    workflowName: string;
     workflowPath: string;
     message: string;
   }>;
@@ -72,6 +80,8 @@ function defaultBackendStatus(message: string): BackendStatusResponse {
       backups: 0,
       lastSyncAt: null,
       error: message,
+      activeName: null,
+      activePath: null,
     },
     models: {
       ok: false,
@@ -196,7 +206,9 @@ function registerBackendHandlers() {
         return {
           ok: true,
           promptId: runResult.promptId,
+          workflowName: runResult.workflowName,
           workflowPath: runResult.workflowPath,
+          outputGlbPath: runResult.outputGlbPath,
           message: runResult.message,
           status,
         };
@@ -212,6 +224,48 @@ function registerBackendHandlers() {
       }
     }
   );
+
+  ipcMain.handle(IPC_CHANNELS.backendImportWorkflow, async (): Promise<BackendImportWorkflowResult> => {
+    try {
+      const picker = await dialog.showOpenDialog({
+        properties: ["openFile"],
+        filters: [
+          { name: "Workflow JSON", extensions: ["json"] },
+          { name: "All Files", extensions: ["*"] },
+        ],
+        title: "Import workflow JSON",
+      });
+      if (picker.canceled || picker.filePaths.length === 0) {
+        return {
+          ok: false,
+          canceled: true,
+          message: "Import canceled.",
+          status: await getBackendStatusSafe(),
+        };
+      }
+
+      const backend = loadBackendModule();
+      const importResult = await backend.importWorkflowFromPath(picker.filePaths[0]!);
+      const status = await backend.getBackendStatus();
+      return {
+        ok: true,
+        canceled: false,
+        workflowName: importResult.workflowName,
+        workflowPath: importResult.workflowPath,
+        message: importResult.message,
+        status,
+      };
+    } catch (error) {
+      const message = toErrorMessage(error);
+      return {
+        ok: false,
+        canceled: false,
+        message,
+        error: message,
+        status: await getBackendStatusSafe(),
+      };
+    }
+  });
 }
 
 app.whenReady().then(() => {

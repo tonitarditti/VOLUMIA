@@ -1,3 +1,5 @@
+import fs from "fs";
+import path from "path";
 import { logger } from "./logger";
 import { getComfyBaseUrl, loadBackendConfig } from "./runtimeConfig";
 
@@ -22,20 +24,11 @@ export type CompletionResult = {
   history: unknown;
 };
 
-export type CheckpointReplacement = {
-  nodeId: string;
-  previous: string;
-  next: string;
+export type UploadImageResult = {
+  name: string;
+  subfolder: string;
+  type: string;
 };
-
-export type CheckpointSanitizationResult = {
-  workflowJson: unknown;
-  availableCheckpoints: string[];
-  fallbackCheckpoint: string | null;
-  replacements: CheckpointReplacement[];
-};
-
-const DEFAULT_CHECKPOINT_FALLBACK = "hunyuan_3d_v2.1.safetensors";
 
 function toErrorMessage(error: unknown) {
   if (error instanceof Error) {
@@ -91,16 +84,6 @@ function extractCheckpointOptions(payload: unknown): string[] {
   return Array.from(found);
 }
 
-function pickFallbackCheckpoint(availableCheckpoints: string[], preferred: string) {
-  if (availableCheckpoints.includes(preferred)) {
-    return preferred;
-  }
-  if (availableCheckpoints.length > 0) {
-    return availableCheckpoints[0] ?? null;
-  }
-  return null;
-}
-
 function extractValidationError(payload: unknown) {
   if (!isRecord(payload)) {
     return null;
@@ -132,59 +115,6 @@ function extractValidationError(payload: unknown) {
 
   return null;
 }
-
-export function sanitizeCheckpointLoaders(
-  workflowJson: unknown,
-  availableCheckpoints: string[],
-  preferredCheckpoint = DEFAULT_CHECKPOINT_FALLBACK
-): CheckpointSanitizationResult {
-  const normalizedAvailable = Array.from(
-    new Set(availableCheckpoints.map((item) => item.trim()).filter((item) => item.length > 0))
-  );
-  const fallbackCheckpoint = pickFallbackCheckpoint(normalizedAvailable, preferredCheckpoint);
-  const replacements: CheckpointReplacement[] = [];
-
-  if (!isRecord(workflowJson) || !fallbackCheckpoint) {
-    return {
-      workflowJson,
-      availableCheckpoints: normalizedAvailable,
-      fallbackCheckpoint,
-      replacements,
-    };
-  }
-
-  const cloned = JSON.parse(JSON.stringify(workflowJson)) as Record<string, unknown>;
-  for (const [nodeId, nodeValue] of Object.entries(cloned)) {
-    if (!isRecord(nodeValue)) {
-      continue;
-    }
-    if (nodeValue.class_type !== "CheckpointLoaderSimple") {
-      continue;
-    }
-    const inputs = isRecord(nodeValue.inputs) ? nodeValue.inputs : {};
-    const currentCheckpoint = typeof inputs.ckpt_name === "string" ? inputs.ckpt_name : "";
-    if (normalizedAvailable.includes(currentCheckpoint)) {
-      continue;
-    }
-
-    const nextCheckpoint = fallbackCheckpoint;
-    inputs.ckpt_name = nextCheckpoint;
-    nodeValue.inputs = inputs;
-    replacements.push({
-      nodeId,
-      previous: currentCheckpoint || "<missing>",
-      next: nextCheckpoint,
-    });
-  }
-
-  return {
-    workflowJson: cloned,
-    availableCheckpoints: normalizedAvailable,
-    fallbackCheckpoint,
-    replacements,
-  };
-}
-
 export class ComfyApi {
   private readonly baseUrl: string;
 
@@ -199,7 +129,7 @@ export class ComfyApi {
     return `/${route}`;
   }
 
-  private async requestJson(route: string, init?: RequestInit, options?: RequestJsonOptions): Promise<unknown> {
+  private async request(route: string, init?: RequestInit, options?: RequestJsonOptions): Promise<Response> {
     const timeoutMs = options?.timeoutMs ?? 10_000;
     const retries = options?.retries ?? 0;
     const retryDelayMs = options?.retryDelayMs ?? 600;
@@ -211,17 +141,10 @@ export class ComfyApi {
       const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs);
 
       try {
-        const response = await fetch(`${this.baseUrl}${normalizedRoute}`, {
+        return await fetch(`${this.baseUrl}${normalizedRoute}`, {
           ...init,
           signal: controller.signal,
         });
-        if (!response.ok) {
-          const body = await response.text().catch(() => "");
-          throw new Error(
-            `ComfyUI ${normalizedRoute} respondio ${response.status}: ${body || response.statusText || "sin detalle"}`
-          );
-        }
-        return await response.json();
       } catch (error) {
         lastError = error;
         if (attempt < retries) {
@@ -235,53 +158,95 @@ export class ComfyApi {
     throw lastError;
   }
 
-  private async getAvailableCheckpoints() {
-    const objectInfo = await this.requestJson("/object_info/CheckpointLoaderSimple", undefined, {
+  private async requestJson(route: string, init?: RequestInit, options?: RequestJsonOptions): Promise<unknown> {
+    const normalizedRoute = this.normalizeRoute(route);
+    const response = await this.request(route, init, options);
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      throw new Error(`ComfyUI ${normalizedRoute} respondio ${response.status}: ${body || response.statusText || "sin detalle"}`);
+    }
+    return await response.json();
+  }
+
+  async getAvailableCheckpoints() {
+    try {
+      const objectInfo = await this.requestJson("/object_info/CheckpointLoaderSimple", undefined, {
+        timeoutMs: 6_000,
+        retries: 1,
+        retryDelayMs: 400,
+      });
+      const options = extractCheckpointOptions(objectInfo);
+      if (options.length > 0) {
+        return options;
+      }
+    } catch {
+      // Try fallback endpoint below.
+    }
+
+    const fallbackObjectInfo = await this.requestJson("/object_info", undefined, {
       timeoutMs: 6_000,
       retries: 1,
       retryDelayMs: 400,
     });
-    return extractCheckpointOptions(objectInfo);
+    return extractCheckpointOptions(fallbackObjectInfo);
+  }
+
+  async uploadImage(imagePath: string): Promise<UploadImageResult> {
+    const absolutePath = path.resolve(imagePath);
+    if (!fs.existsSync(absolutePath)) {
+      throw new Error(`Imagen no encontrada para upload: ${absolutePath}`);
+    }
+
+    const fileBuffer = fs.readFileSync(absolutePath);
+    const fileName = path.basename(absolutePath);
+    const formData = new FormData();
+    formData.set("image", new Blob([fileBuffer]), fileName);
+    formData.set("overwrite", "true");
+
+    const payload = await this.requestJson(
+      "/upload/image",
+      {
+        method: "POST",
+        body: formData,
+      },
+      { timeoutMs: 20_000, retries: 1, retryDelayMs: 500 }
+    );
+
+    if (!isRecord(payload)) {
+      throw new Error("ComfyUI /upload/image devolvio un payload invalido.");
+    }
+    const name = String(payload.name ?? "").trim();
+    if (!name) {
+      throw new Error("ComfyUI /upload/image no devolvio 'name'.");
+    }
+
+    const result: UploadImageResult = {
+      name,
+      subfolder: String(payload.subfolder ?? "").trim(),
+      type: String(payload.type ?? "input").trim() || "input",
+    };
+    logger.info("Imagen subida a ComfyUI.", { imagePath: absolutePath, name: result.name, subfolder: result.subfolder });
+    return result;
   }
 
   async health(): Promise<ComfyHealthResult> {
     try {
       await this.requestJson("/system_stats", undefined, { retries: 2, timeoutMs: 4_000, retryDelayMs: 500 });
-      return { ok: true, message: "ComfyUI reachable via /system_stats." };
+      return { ok: true, message: `Backend OK (${this.baseUrl})` };
     } catch (systemStatsError) {
       try {
-        await this.requestJson("/", undefined, { retries: 1, timeoutMs: 3_500, retryDelayMs: 300 });
-        return { ok: true, message: "ComfyUI reachable via /." };
+        await this.requestJson("/queue", undefined, { retries: 1, timeoutMs: 3_500, retryDelayMs: 300 });
+        return { ok: true, message: `Backend OK (${this.baseUrl})` };
       } catch {
         return {
           ok: false,
-          message: `ComfyUI no responde en ${this.baseUrl}. Error: ${toErrorMessage(systemStatsError)}`,
+          message: `ComfyUI no responde en ${this.baseUrl} (esta corriendo?). Error: ${toErrorMessage(systemStatsError)}`,
         };
       }
     }
   }
 
   async queuePrompt(workflowJson: unknown): Promise<QueuePromptResult> {
-    let sanitizedWorkflow = workflowJson;
-    try {
-      const availableCheckpoints = await this.getAvailableCheckpoints();
-      const sanitization = sanitizeCheckpointLoaders(
-        workflowJson,
-        availableCheckpoints,
-        DEFAULT_CHECKPOINT_FALLBACK
-      );
-      sanitizedWorkflow = sanitization.workflowJson;
-      if (sanitization.replacements.length > 0) {
-        logger.warn("Checkpoint de workflow reemplazado antes de /prompt.", {
-          replacements: sanitization.replacements,
-          fallbackCheckpoint: sanitization.fallbackCheckpoint,
-          availableCheckpoints: sanitization.availableCheckpoints,
-        });
-      }
-    } catch (error) {
-      logger.warn("No se pudo ejecutar sanitizer de checkpoints antes de /prompt.", toErrorMessage(error));
-    }
-
     const payload = await this.requestJson(
       "/prompt",
       {
@@ -289,7 +254,7 @@ export class ComfyApi {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ prompt: sanitizedWorkflow }),
+        body: JSON.stringify({ prompt: workflowJson }),
       },
       { timeoutMs: 15_000, retries: 1, retryDelayMs: 500 }
     );

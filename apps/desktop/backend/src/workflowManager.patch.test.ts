@@ -1,22 +1,36 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { patchWorkflowCheckpoint } from "./workflowManager";
+import { applyImageInputToWorkflow, getCheckpointUsages } from "./workflowManager";
 
-test("patchWorkflowCheckpoint reemplaza checkpoint invalido por hunyuan_3d_v2.1.safetensors", () => {
+test("applyImageInputToWorkflow actualiza nodos LoadImage", () => {
   const workflow = {
     "4": {
-      class_type: "CheckpointLoaderSimple",
+      class_type: "LoadImage",
       inputs: {
-        ckpt_name: "sd_xl_base_1.0.safetensors",
+        image: "placeholder.png",
       },
     },
   };
 
-  const result = patchWorkflowCheckpoint(workflow);
+  const result = applyImageInputToWorkflow(workflow, "uploaded.png", "volumia");
   const node = (result.workflowJson as Record<string, unknown>)["4"] as Record<string, unknown>;
   const inputs = node.inputs as Record<string, unknown>;
 
-  assert.equal(inputs.ckpt_name, "hunyuan_3d_v2.1.safetensors");
-  assert.equal(result.patched, true);
-  assert.ok(result.replacements.length > 0);
+  assert.equal(inputs.image, "volumia/uploaded.png");
+  assert.equal(result.appliedNodeIds.length, 1);
+});
+
+test("getCheckpointUsages lee ckpt_name sin override", () => {
+  const workflow = {
+    "4": {
+      class_type: "CheckpointLoaderSimple",
+      inputs: {
+        ckpt_name: "hunyuan_3d_v2.1.safetensors",
+      },
+    },
+  };
+
+  const usages = getCheckpointUsages(workflow);
+  assert.equal(usages.length, 1);
+  assert.equal(usages[0]?.ckptName, "hunyuan_3d_v2.1.safetensors");
 });

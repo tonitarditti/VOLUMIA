@@ -7,6 +7,7 @@ import {
   type ExportProjectsResult,
   type BackendRunDefaultPayload,
   type BackendRunDefaultResult,
+  type BackendImportWorkflowResult,
   type BackendStatusResponse,
   type GenerationDonePayload,
   type GenerationErrorPayload,
@@ -214,6 +215,8 @@ const bridge = {
     status: () => ipcRenderer.invoke(IPC_CHANNELS.backendStatus) as Promise<BackendStatusResponse>,
     runDefault: (payload?: BackendRunDefaultPayload) =>
       ipcRenderer.invoke(IPC_CHANNELS.backendRunDefault, payload ?? {}) as Promise<BackendRunDefaultResult>,
+    importWorkflow: () =>
+      ipcRenderer.invoke(IPC_CHANNELS.backendImportWorkflow) as Promise<BackendImportWorkflowResult>,
   },
   // Backward compatibility for existing renderer wrappers.
   exportProjectsJson: (payload: ProjectsExportEnvelope) =>

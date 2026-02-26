@@ -30,6 +30,8 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
   const [backendStatus, setBackendStatus] = useState<BackendStatusResponse | null>(null);
   const [backendMessage, setBackendMessage] = useState("Backend idle.");
   const [runningWorkflowTest, setRunningWorkflowTest] = useState(false);
+  const [importingWorkflow, setImportingWorkflow] = useState(false);
+  const [workflowImagePath, setWorkflowImagePath] = useState("");
 
   const projects = useMemo(() => selectProjectsSortedByUpdatedAt(state.projects), [state.projects]);
 
@@ -91,10 +93,16 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
     }
     setRunningWorkflowTest(true);
     try {
-      const result = await desktopApi.runDefaultBackendWorkflow();
+      const result = await desktopApi.runDefaultBackendWorkflow({
+        imagePath: workflowImagePath.trim() || undefined,
+      });
       setBackendStatus(result.status);
       if (result.ok) {
-        setBackendMessage(`Workflow encolado. promptId=${result.promptId ?? "n/a"}`);
+        setBackendMessage(
+          result.outputGlbPath
+            ? `Workflow OK. promptId=${result.promptId ?? "n/a"} GLB=${result.outputGlbPath}`
+            : `Workflow encolado. promptId=${result.promptId ?? "n/a"}`
+        );
       } else {
         setBackendMessage(result.error ?? result.message);
       }
@@ -103,6 +111,30 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
       setBackendMessage(message);
     } finally {
       setRunningWorkflowTest(false);
+    }
+  };
+
+  const importWorkflowJson = async () => {
+    if (!hasDesktopBridge()) {
+      setBackendMessage("Desktop bridge no disponible.");
+      return;
+    }
+    setImportingWorkflow(true);
+    try {
+      const result = await desktopApi.importBackendWorkflow();
+      setBackendStatus(result.status);
+      if (result.ok) {
+        setBackendMessage(result.message);
+      } else if (result.canceled) {
+        setBackendMessage("Import canceled.");
+      } else {
+        setBackendMessage(result.error ?? result.message);
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "No se pudo importar workflow.";
+      setBackendMessage(message);
+    } finally {
+      setImportingWorkflow(false);
     }
   };
 
@@ -141,6 +173,9 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
               Backend: {backendStatus?.comfy.running ? "ok" : backendStatus?.comfy.state ?? "unknown"} (
               {backendStatus?.comfy.url ?? "http://127.0.0.1:8188"})
             </p>
+            <p className="text-xs text-[var(--text-muted)]">
+              Workflow activo: {backendStatus?.workflows.activeName ?? "n/a"}
+            </p>
             <div className="flex items-center gap-2">
               <Button
                 variant="primary"
@@ -149,6 +184,14 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
                 onClick={() => void runWorkflowTest()}
               >
                 Run workflow (test)
+              </Button>
+              <Button
+                variant="secondary"
+                className="h-8 px-3 text-xs"
+                disabled={importingWorkflow}
+                onClick={() => void importWorkflowJson()}
+              >
+                Import workflow JSON
               </Button>
               <Button
                 variant="secondary"
@@ -168,6 +211,14 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
                 Refresh status
               </Button>
             </div>
+          </div>
+          <div className="mt-2 max-w-xl">
+            <TextField
+              value={workflowImagePath}
+              onChange={(event) => setWorkflowImagePath(event.target.value)}
+              placeholder="Image path for LoadImage (optional)"
+              aria-label="Workflow image path"
+            />
           </div>
           <p className="mt-2 text-xs text-[var(--text-muted)]">{backendMessage}</p>
         </div>
