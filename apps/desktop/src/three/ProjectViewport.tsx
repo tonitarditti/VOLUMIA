@@ -117,13 +117,97 @@ const VIEWPORT_CAPTURE_DEBUG = import.meta.env.VITE_VOLUMIA_DEBUG_VIEWPORT === "
 const SHADOW_CAMERA_BOUNDS = 12;
 const SHADOW_CAMERA_NEAR = 0.5;
 const SHADOW_CAMERA_FAR = 40;
-const MODEL_GROUND_EXTRA_Y = 2;
+const FLOOR_Y = 0;
+const EPS = 0.002;
+const MODEL_GROUND_TOLERANCE = EPS * 0.25;
 const DEFAULT_CAMERA_SNAPSHOT: CameraSnapshot = {
   position: new THREE.Vector3(2.8, 2.2, 2.8),
   target: VIEW_TARGET.clone(),
   near: 0.1,
   far: 200,
 };
+
+function computeVisibleBoundingBox(root: THREE.Object3D): THREE.Box3 | null {
+  root.updateMatrixWorld(true);
+  const box = new THREE.Box3().makeEmpty();
+  const meshBox = new THREE.Box3();
+  root.traverse((child) => {
+    if (!(child instanceof THREE.Mesh) || !child.visible) {
+      return;
+    }
+
+    const geometry = child.geometry;
+    if (!geometry) {
+      return;
+    }
+    if (!geometry.boundingBox) {
+      geometry.computeBoundingBox();
+    }
+    if (!geometry.boundingBox) {
+      return;
+    }
+
+    meshBox.copy(geometry.boundingBox).applyMatrix4(child.matrixWorld);
+    box.union(meshBox);
+  });
+
+  return box.isEmpty() ? null : box;
+}
+
+function hideLikelyEmbeddedBaseMeshes(root: THREE.Object3D) {
+  const globalBox = computeVisibleBoundingBox(root);
+  if (!globalBox) {
+    return { removed: 0, debug: [] as string[] };
+  }
+
+  const globalSize = globalBox.getSize(new THREE.Vector3());
+  const globalMinY = globalBox.min.y;
+  const maxDim = Math.max(globalSize.x, globalSize.y, globalSize.z);
+  const thinThreshold = maxDim * 0.03;
+  const nearMinThreshold = maxDim * 0.05;
+  const footprintThreshold = maxDim * 0.7;
+  const meshBox = new THREE.Box3();
+  const debug: string[] = [];
+  let removed = 0;
+
+  root.updateMatrixWorld(true);
+  root.traverse((child) => {
+    if (!(child instanceof THREE.Mesh) || !child.visible) {
+      return;
+    }
+
+    const geometry = child.geometry;
+    if (!geometry) {
+      return;
+    }
+    if (!geometry.boundingBox) {
+      geometry.computeBoundingBox();
+    }
+    if (!geometry.boundingBox) {
+      return;
+    }
+
+    meshBox.copy(geometry.boundingBox).applyMatrix4(child.matrixWorld);
+    const size = meshBox.getSize(new THREE.Vector3());
+    const center = meshBox.getCenter(new THREE.Vector3());
+    const isThin = size.y <= thinThreshold;
+    const isNearGlobalMin = Math.abs(center.y - globalMinY) <= nearMinThreshold;
+    const hasLargeFootprint = size.x >= footprintThreshold && size.z >= footprintThreshold;
+    if (!isThin || !isNearGlobalMin || !hasLargeFootprint) {
+      return;
+    }
+
+    child.visible = false;
+    removed += 1;
+    debug.push(`${child.name || "(unnamed)"} size=(${size.x.toFixed(3)},${size.y.toFixed(3)},${size.z.toFixed(3)})`);
+  });
+
+  if (removed > 0) {
+    root.updateMatrixWorld(true);
+  }
+
+  return { removed, debug };
+}
 
 function extractErrorMessage(error: unknown): string {
   if (typeof error === "string" && error.trim().length > 0) {
@@ -174,6 +258,7 @@ type GroundingResult = {
   minYAfter: number;
   centeredX: number;
   centeredZ: number;
+  removedBaseMeshes: number;
 };
 
 function resolveFitKey(glbPath?: string, glbVersion?: number, modelUrl?: string) {
@@ -187,9 +272,15 @@ function resolveFitKey(glbPath?: string, glbVersion?: number, modelUrl?: string)
 }
 
 function normalizeAndGround(root: THREE.Object3D): GroundingResult | null {
+  // Keep normalization idempotent between repeated runs for the same loaded scene.
+  // We intentionally do not reset scale to avoid breaking valid authored GLB scaling.
+  root.position.set(0, 0, 0);
+  root.rotation.set(0, 0, 0);
   root.updateMatrixWorld(true);
-  const bbox = new THREE.Box3().setFromObject(root);
-  if (bbox.isEmpty()) {
+
+  const stripResult = hideLikelyEmbeddedBaseMeshes(root);
+  const bbox = computeVisibleBoundingBox(root);
+  if (!bbox || bbox.isEmpty()) {
     return null;
   }
 
@@ -198,24 +289,44 @@ function normalizeAndGround(root: THREE.Object3D): GroundingResult | null {
   root.position.z -= center.z;
   root.updateMatrixWorld(true);
 
-  const bbox2 = new THREE.Box3().setFromObject(root);
-  if (bbox2.isEmpty()) {
+  const bbox2 = computeVisibleBoundingBox(root);
+  if (!bbox2 || bbox2.isEmpty()) {
     return null;
   }
 
-  const minYBefore = bbox2.min.y;
-  const minYTranslation = -minYBefore;
-  root.position.y += minYTranslation + MODEL_GROUND_EXTRA_Y;
-  root.updateMatrixWorld(true);
+  const groundedBox = bbox2;
+  const minYBefore = groundedBox.min.y;
+  const targetMinY = FLOOR_Y + EPS;
+  let minYTranslation = (FLOOR_Y + EPS) - groundedBox.min.y;
+  if (Math.abs(minYTranslation) > MODEL_GROUND_TOLERANCE) {
+    root.position.y += minYTranslation;
+    root.updateMatrixWorld(true);
+  } else {
+    minYTranslation = 0;
+  }
 
-  const finalBox = new THREE.Box3().setFromObject(root);
-  if (finalBox.isEmpty()) {
+  let finalBox = computeVisibleBoundingBox(root);
+  if (!finalBox || finalBox.isEmpty()) {
     return null;
+  }
+
+  const postMoveMinY = finalBox.min.y;
+  if (Math.abs(postMoveMinY - targetMinY) > MODEL_GROUND_TOLERANCE) {
+    const correction = targetMinY - postMoveMinY;
+    root.position.y += correction;
+    minYTranslation += correction;
+    root.updateMatrixWorld(true);
+    finalBox = computeVisibleBoundingBox(root);
+    if (!finalBox || finalBox.isEmpty()) {
+      return null;
+    }
   }
 
   const size = finalBox.getSize(new THREE.Vector3());
   const minYAfter = finalBox.min.y;
-  console.debug("[ProjectViewport][ground] minY before", minYBefore, "dy", minYTranslation, "after", minYAfter);
+  if (VIEWER_DEBUG) {
+    console.debug("[ProjectViewport][ground] minY before", minYBefore, "dy", minYTranslation, "after", minYAfter);
+  }
   return {
     bboxSize: size,
     minYTranslation,
@@ -223,6 +334,7 @@ function normalizeAndGround(root: THREE.Object3D): GroundingResult | null {
     minYAfter,
     centeredX: center.x,
     centeredZ: center.z,
+    removedBaseMeshes: stripResult.removed,
   };
 }
 
@@ -385,32 +497,33 @@ function LoadedModel({
               onModelReady(null);
               return;
             }
-            const fitKey = resolveFitKey(glbPath, glbVersion, modelUrl);
-            const shouldNormalize = Boolean(fitKey) && fittedForUrlRef.current !== fitKey;
-            let normalizationDebug: ModelNormalizationDebug | null = null;
 
-            if (shouldNormalize) {
-              const grounding = normalizeAndGround(model);
-              if (grounding) {
-                normalizationDebug = {
-                  bboxSize: {
-                    x: grounding.bboxSize.x,
-                    y: grounding.bboxSize.y,
-                    z: grounding.bboxSize.z,
-                  },
-                  minYTranslation: grounding.minYTranslation,
-                  minYBefore: grounding.minYBefore,
-                  minYAfter: grounding.minYAfter,
-                  centeredX: grounding.centeredX,
-                  centeredZ: grounding.centeredZ,
-                };
-              }
-              if (VIEWER_DEBUG && grounding) {
+            const fitKey = resolveFitKey(glbPath, glbVersion, modelUrl);
+            let normalizationDebug: ModelNormalizationDebug | null = null;
+            const grounding = normalizeAndGround(model);
+
+            if (grounding) {
+              normalizationDebug = {
+                bboxSize: {
+                  x: grounding.bboxSize.x,
+                  y: grounding.bboxSize.y,
+                  z: grounding.bboxSize.z,
+                },
+                minYTranslation: grounding.minYTranslation,
+                minYBefore: grounding.minYBefore,
+                minYAfter: grounding.minYAfter,
+                centeredX: grounding.centeredX,
+                centeredZ: grounding.centeredZ,
+              };
+              if (VIEWER_DEBUG) {
                 console.debug("[ProjectViewport][normalize] bbox", {
                   size: grounding.bboxSize,
                   minYTranslation: grounding.minYTranslation,
+                  removedBaseMeshes: grounding.removedBaseMeshes,
                 });
               }
+            }
+            if (fitKey) {
               fittedForUrlRef.current = fitKey;
             }
 
@@ -1153,7 +1266,7 @@ export function ProjectViewport({
                   gridOpacity={themeConfig.gridOpacity}
                 />
                 <ContactShadows
-                  position={[0, 0.001, 0]}
+                  position={[0, 0.002, 0]}
                   opacity={themeConfig.isDark ? 0.5 : 0.4}
                   scale={14}
                   blur={2.2}
