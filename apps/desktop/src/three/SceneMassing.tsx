@@ -44,18 +44,12 @@ export function SceneMassing({ showMassing, groundColor, gridMain, gridSub, grid
 
   return (
     <>
-      <primitive object={grid} position={[0, 0, 0]} />
-      <mesh position={[0, 0.05, 0]} receiveShadow>
-        <boxGeometry args={[18, 0.1, 18]} />
+      <primitive object={grid} position={[0, 0.0005, 0]} />
+      <mesh position={[0, 0.01, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+        <planeGeometry args={[18, 18]} />
         <meshStandardMaterial color={groundColor} roughness={0.95} metalness={0.0} />
       </mesh>
-      {showMassing ? (
-        <mesh position={[0, MASSING_CENTER_Y, 0]} castShadow receiveShadow>
-          <boxGeometry args={MASSING_SIZE} />
-          <meshStandardMaterial color="#8f8679" metalness={0.12} roughness={0.72} />
-        </mesh>
-      ) : null}
-    </>
+          </>
   );
 }
 

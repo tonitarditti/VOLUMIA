@@ -89,6 +89,8 @@ type ModelNormalizationDebug = {
     z: number;
   };
   minYTranslation: number;
+  minYBefore: number;
+  minYAfter: number;
   centeredX: number;
   centeredZ: number;
 };
@@ -167,6 +169,8 @@ function asOrbitControls(value: unknown): OrbitControlsImpl | null {
 type GroundingResult = {
   bboxSize: THREE.Vector3;
   minYTranslation: number;
+  minYBefore: number;
+  minYAfter: number;
   centeredX: number;
   centeredZ: number;
 };
@@ -178,67 +182,7 @@ function resolveFitKey(glbPath?: string, glbVersion?: number, modelUrl?: string)
   return modelUrl ?? "";
 }
 
-function disposeMeshResources(mesh: THREE.Mesh) {
-  if (mesh.geometry) {
-    mesh.geometry.dispose();
-  }
-  const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-  for (const material of materials) {
-    if (material) {
-      material.dispose();
-    }
-  }
-}
-
-function stripGeneratedGroundPlane(root: THREE.Object3D): { removed: number } {
-  root.updateMatrixWorld(true);
-  const modelBox = new THREE.Box3().setFromObject(root);
-  if (modelBox.isEmpty()) {
-    return { removed: 0 };
-  }
-
-  const modelSize = modelBox.getSize(new THREE.Vector3());
-  const modelHeight = modelSize.y;
-  const maxDim = Math.max(modelSize.x, modelSize.z);
-  const bottomThreshold = modelBox.min.y + modelHeight * 0.1;
-
-  const toRemove: THREE.Mesh[] = [];
-
-  root.traverseVisible((obj) => {
-    const mesh = obj as THREE.Mesh;
-    if (!mesh || !(mesh as any).isMesh) {
-      return;
-    }
-    const meshBox = new THREE.Box3().setFromObject(mesh);
-    if (meshBox.isEmpty()) {
-      return;
-    }
-    const size = meshBox.getSize(new THREE.Vector3());
-    const width = size.x;
-    const depth = size.z;
-    const height = size.y;
-    const flat = height < 0.05 * Math.max(width, depth);
-    const large = Math.max(width, depth) > 0.6 * maxDim;
-    const low = meshBox.max.y <= bottomThreshold;
-
-    if (flat && large && low) {
-      toRemove.push(mesh);
-    }
-  });
-
-  for (const mesh of toRemove) {
-    mesh.parent?.remove(mesh);
-    disposeMeshResources(mesh);
-  }
-
-  if (VIEWER_DEBUG && toRemove.length > 0) {
-    console.debug("[ProjectViewport][normalize] removed ground meshes:", toRemove.length);
-  }
-
-  return { removed: toRemove.length };
-}
-
-function normalizeAndGround(root: THREE.Object3D, epsilon = 0.002): GroundingResult | null {
+function normalizeAndGround(root: THREE.Object3D): GroundingResult | null {
   root.updateMatrixWorld(true);
   const bbox = new THREE.Box3().setFromObject(root);
   if (bbox.isEmpty()) {
@@ -255,7 +199,8 @@ function normalizeAndGround(root: THREE.Object3D, epsilon = 0.002): GroundingRes
     return null;
   }
 
-  const minYTranslation = -bbox2.min.y + epsilon;
+  const minYBefore = bbox2.min.y;
+  const minYTranslation = -minYBefore;
   root.position.y += minYTranslation;
   root.updateMatrixWorld(true);
 
@@ -265,9 +210,13 @@ function normalizeAndGround(root: THREE.Object3D, epsilon = 0.002): GroundingRes
   }
 
   const size = finalBox.getSize(new THREE.Vector3());
+  const minYAfter = finalBox.min.y;
+  console.debug("[ProjectViewport][ground] minY before", minYBefore, "dy", minYTranslation, "after", minYAfter);
   return {
     bboxSize: size,
     minYTranslation,
+    minYBefore,
+    minYAfter,
     centeredX: center.x,
     centeredZ: center.z,
   };
@@ -437,8 +386,7 @@ function LoadedModel({
             let normalizationDebug: ModelNormalizationDebug | null = null;
 
             if (shouldNormalize) {
-              const removal = stripGeneratedGroundPlane(model);
-              const grounding = normalizeAndGround(model, 0.002);
+              const grounding = normalizeAndGround(model);
               if (grounding) {
                 normalizationDebug = {
                   bboxSize: {
@@ -447,18 +395,17 @@ function LoadedModel({
                     z: grounding.bboxSize.z,
                   },
                   minYTranslation: grounding.minYTranslation,
+                  minYBefore: grounding.minYBefore,
+                  minYAfter: grounding.minYAfter,
                   centeredX: grounding.centeredX,
                   centeredZ: grounding.centeredZ,
                 };
               }
-              if (VIEWER_DEBUG) {
-                console.debug("[ProjectViewport][normalize] removed", removal.removed);
-                if (grounding) {
-                  console.debug("[ProjectViewport][normalize] bbox", {
-                    size: grounding.bboxSize,
-                    minYTranslation: grounding.minYTranslation,
-                  });
-                }
+              if (VIEWER_DEBUG && grounding) {
+                console.debug("[ProjectViewport][normalize] bbox", {
+                  size: grounding.bboxSize,
+                  minYTranslation: grounding.minYTranslation,
+                });
               }
               fittedForUrlRef.current = fitKey;
             }
@@ -1202,7 +1149,7 @@ export function ProjectViewport({
                   gridOpacity={themeConfig.gridOpacity}
                 />
                 <ContactShadows
-                  position={[0, 0.002, 0]}
+                  position={[0, 0.001, 0]}
                   opacity={themeConfig.isDark ? 0.5 : 0.4}
                   scale={14}
                   blur={2.2}
