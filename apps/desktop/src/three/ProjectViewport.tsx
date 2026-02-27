@@ -117,6 +117,7 @@ const VIEWPORT_CAPTURE_DEBUG = import.meta.env.VITE_VOLUMIA_DEBUG_VIEWPORT === "
 const SHADOW_CAMERA_BOUNDS = 12;
 const SHADOW_CAMERA_NEAR = 0.5;
 const SHADOW_CAMERA_FAR = 40;
+const MODEL_GROUND_EXTRA_Y = 2;
 const DEFAULT_CAMERA_SNAPSHOT: CameraSnapshot = {
   position: new THREE.Vector3(2.8, 2.2, 2.8),
   target: VIEW_TARGET.clone(),
@@ -176,10 +177,13 @@ type GroundingResult = {
 };
 
 function resolveFitKey(glbPath?: string, glbVersion?: number, modelUrl?: string) {
+  if (modelUrl) {
+    return modelUrl;
+  }
   if (glbPath) {
     return typeof glbVersion === "number" ? `${glbPath}::${glbVersion}` : glbPath;
   }
-  return modelUrl ?? "";
+  return "";
 }
 
 function normalizeAndGround(root: THREE.Object3D): GroundingResult | null {
@@ -201,7 +205,7 @@ function normalizeAndGround(root: THREE.Object3D): GroundingResult | null {
 
   const minYBefore = bbox2.min.y;
   const minYTranslation = -minYBefore;
-  root.position.y += minYTranslation;
+  root.position.y += minYTranslation + MODEL_GROUND_EXTRA_Y;
   root.updateMatrixWorld(true);
 
   const finalBox = new THREE.Box3().setFromObject(root);

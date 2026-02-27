@@ -10,14 +10,16 @@ type SceneMassingProps = {
   gridOpacity: number;
 };
 
-const DEFAULT_MASSING_SCALE = 0.25;
-const MASSING_BASE_SIZE: [number, number, number] = [4.6, 3.2, 2.8];
+const DEFAULT_MASSING_SCALE = 0.5;
+const MASSING_BASE_SIZE: [number, number, number] = [4.6, 3, 2.8];
 const MASSING_SIZE: [number, number, number] = [
-  MASSING_BASE_SIZE[0] * DEFAULT_MASSING_SCALE,
-  MASSING_BASE_SIZE[1] * DEFAULT_MASSING_SCALE,
-  MASSING_BASE_SIZE[2] * DEFAULT_MASSING_SCALE,
+  MASSING_BASE_SIZE[0] * DEFAULT_MASSING_SCALE, 
+  MASSING_BASE_SIZE[1] * DEFAULT_MASSING_SCALE, 
+  MASSING_BASE_SIZE[2] * DEFAULT_MASSING_SCALE, 
 ];
-const MASSING_CENTER_Y = MASSING_SIZE[1] * 0.5;
+const MASSING_CENTER_Y = MASSING_SIZE[1];
+const GROUND_Y = 0.0001;
+const GRID_Y = 0.0005;
 
 function applyGridOpacity(grid: THREE.GridHelper, opacity: number) {
   const materials = Array.isArray(grid.material) ? grid.material : [grid.material];
@@ -44,13 +46,17 @@ export function SceneMassing({ showMassing, groundColor, gridMain, gridSub, grid
 
   return (
     <>
-      <primitive object={grid} position={[0, 0.0005, 0]} />
-      <mesh position={[0, 0.01, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+      <primitive object={grid} position={[0, GRID_Y, 0]} />
+      <mesh position={[0, GROUND_Y, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
         <planeGeometry args={[18, 18]} />
         <meshStandardMaterial color={groundColor} roughness={0.95} metalness={0.0} />
       </mesh>
-          </>
+      {showMassing ? (
+        <mesh position={[0, MASSING_CENTER_Y, 0]} castShadow receiveShadow>
+          <boxGeometry args={MASSING_SIZE} />
+          <meshStandardMaterial color="#534f43" metalness={0.12} roughness={0.72} />
+        </mesh>
+      ) : null}
+    </>
   );
 }
-
-
