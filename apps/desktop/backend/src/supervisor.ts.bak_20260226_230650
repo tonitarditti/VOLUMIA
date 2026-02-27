@@ -700,7 +700,7 @@ export class BackendSupervisor {
     }
 
     await this.validateCheckpointsAfterPatch(getCheckpointUsages(workflowJson), patchResult.availableCheckpoints);
-    const comfyOutputDir = path.join(this.config.comfy.comfyDir, "output", "mesh");
+    const comfyOutputDir = path.join(this.config.comfy.comfyDir, "output");
     const outputBefore = listFilesSafe(comfyOutputDir);
     const startedAtMs = Date.now();
     const queue = await this.comfyApi.queuePrompt(workflowJson);

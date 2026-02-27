@@ -32,37 +32,6 @@ function filenameFromPath(value: string) {
   return parts[parts.length - 1] ?? value;
 }
 
-function sanitizePathSegment(value: string) {
-  const normalized = value.trim().replace(/[<>:"/\\|?*\u0000-\u001F]/g, "_");
-  return normalized || "project";
-}
-
-function shortDeviceName(value: string) {
-  if (value.length <= 24) {
-    return value;
-  }
-  return `${value.slice(0, 24)}...`;
-}
-
-function parseDeviceLine(value: string): GenerationDevice | null {
-  const fullMatch = value.match(/^\[VOLUMIA_DEVICE\]\s+device=(cuda|cpu)\s+index=-?\d+\s+name="([^"]*)"$/);
-  if (fullMatch) {
-    return {
-      device: fullMatch[1] as "cuda" | "cpu",
-      name: fullMatch[2],
-    };
-  }
-
-  const shortMatch = value.match(/^\[VOLUMIA_DEVICE\]\s+device=(cuda|cpu)$/);
-  if (!shortMatch) {
-    return null;
-  }
-  return {
-    device: shortMatch[1] as "cuda" | "cpu",
-    name: shortMatch[1] === "cuda" ? "CUDA" : "CPU",
-  };
-}
-
 function formatAutoEngineLabel(engine: AutoEngine) {
   if (engine === "instantmesh") {
     return "InstantMesh";
@@ -313,46 +282,12 @@ export function ProjectPage() {
     };
   }, [selectedImages]);
 
-  const handleGenerationProgress = useCallback((payload: {
-    projectId: string;
-    stage: string;
-    percent: number;
-    message: string;
-    device?: "cuda" | "cpu";
-  }) => {
-    const currentProject = projectRef.current;
-    if (!currentProject || payload.projectId !== currentProject.id) {
-      return;
-    }
-
-    setIsGenerating(true);
-    setGenerationStage(payload.stage);
-    setGenerationPercent(Math.max(0, Math.min(100, payload.percent)));
-    setGenerationMessage(payload.message);
-    if (payload.stage !== "error") {
-      setGenerationLogPath("");
-    }
-    if (payload.stage !== "done") {
-      setAutoUsedEngine(null);
-      setAutoUsedPreset(null);
-    }
-    if (payload.device) {
-      setGenerationDevice({
-        device: payload.device,
-        name: payload.device === "cuda" ? "CUDA" : "CPU",
-      });
-    }
-    const progressDevice = parseDeviceLine(payload.message);
-    if (progressDevice) {
-      setGenerationDevice(progressDevice);
-    }
-  }, []);
-
   const handleGenerationDone = useCallback((payload: {
     projectId: string;
     pipeline?: "depth_glb" | "gen_skp";
     glbPath?: string;
     skpPath?: string;
+    message?: string;
     sourceImages?: string[];
     preset?: GenerationPreset;
     mode?: "auto" | "neural" | "architectural";
@@ -366,11 +301,12 @@ export function ProjectPage() {
       return;
     }
 
-    if (payload.pipeline === "gen_skp") {
+    if (payload.pipeline === "gen_skp" && payload.skpPath) {
       setIsGenerating(false);
       setGenerationStage("done");
       setGenerationPercent(100);
-      setGenerationMessage(payload.skpPath ? `SKP generado: ${payload.skpPath}` : "SKP generado correctamente.");
+      const skpMessage = payload.message ?? (payload.skpPath ? `SKP generado: ${payload.skpPath}` : "SKP generado correctamente.");
+      setGenerationMessage(skpMessage);
       setAutoUsedEngine(null);
       setAutoUsedPreset(null);
       setGenerationLogPath("");
@@ -392,11 +328,12 @@ export function ProjectPage() {
     setGenerationStage("done");
     setGenerationPercent(100);
     const baseMessage =
-      payload.autoUsed === "blockout" && payload.autoPreset === "hard_surface"
+      payload.message ??
+      (payload.autoUsed === "blockout" && payload.autoPreset === "hard_surface"
         ? "Modelo 3D generado correctamente. AUTO used: BLOCKOUT (hard-surface fallback)"
         : payload.autoUsed
           ? `Modelo 3D generado correctamente. AUTO used: ${formatAutoEngineLabel(payload.autoUsed)}${payload.autoPreset ? ` / ${formatAutoPresetLabel(payload.autoPreset)}` : ""}`
-          : "Modelo 3D generado correctamente.";
+          : "Modelo 3D generado correctamente.");
     const warningSuffix =
       Array.isArray(payload.warnings) && payload.warnings.length > 0
         ? ` Aviso: ${payload.warnings.join(" | ")}`
@@ -426,43 +363,55 @@ export function ProjectPage() {
     setGenerationLogPath(payload.logPath ?? "");
   }, []);
 
-  const handleGenerationProgressRef = useRef(handleGenerationProgress);
-  const handleGenerationDoneRef = useRef(handleGenerationDone);
-  const handleGenerationErrorRef = useRef(handleGenerationError);
+  const runComfyWorkflow = useCallback(
+    async (payload: { imagePath: string; sourceImages: string[]; pipeline?: "depth_glb" | "gen_skp"; label: string }) => {
+      console.info("[gen][renderer] ComfyUI runWorkflow requested. Local Python pipeline disabled.", {
+        label: payload.label,
+        imagePath: payload.imagePath,
+      });
 
-  useEffect(() => {
-    handleGenerationProgressRef.current = handleGenerationProgress;
-  }, [handleGenerationProgress]);
+      try {
+        const result = await desktopApi.runComfyWorkflow({ imagePath: payload.imagePath });
+        if (!result.ok) {
+          handleGenerationError({
+            projectId: project.id,
+            message: result.error ?? result.message,
+          });
+          return;
+        }
 
-  useEffect(() => {
-    handleGenerationDoneRef.current = handleGenerationDone;
-  }, [handleGenerationDone]);
+        if (result.outputGlbPath) {
+          handleGenerationDone({
+            projectId: project.id,
+            pipeline: payload.pipeline,
+            glbPath: result.outputGlbPath,
+            sourceImages: payload.sourceImages,
+            preset,
+            mode: "auto",
+            message: result.message,
+          });
+          return;
+        }
 
-  useEffect(() => {
-    handleGenerationErrorRef.current = handleGenerationError;
-  }, [handleGenerationError]);
+        setIsGenerating(false);
+        setGenerationStage("queued");
+        setGenerationPercent(60);
+        setGenerationMessage(result.message);
+        setGenerationDevice(null);
+        setAutoUsedEngine(null);
+        setAutoUsedPreset(null);
+        setGenerationLogPath("");
+      } catch (error) {
+        handleGenerationError({
+          projectId: project.id,
+          message: error instanceof Error ? error.message : "Error ejecutando ComfyUI.",
+        });
+      }
+    },
+    [handleGenerationDone, handleGenerationError, preset, project.id]
+  );
 
-  useEffect(() => {
-    if (!hasDesktopBridge()) {
-      return;
-    }
-
-    const cleanupProgress = desktopApi.onGenerationProgress((payload) => {
-      handleGenerationProgressRef.current(payload);
-    });
-    const cleanupDone = desktopApi.onGenerationDone((payload) => {
-      handleGenerationDoneRef.current(payload);
-    });
-    const cleanupError = desktopApi.onGenerationError((payload) => {
-      handleGenerationErrorRef.current(payload);
-    });
-
-    return () => {
-      cleanupProgress();
-      cleanupDone();
-      cleanupError();
-    };
-  }, []);
+  // TODO(cleanup): remove legacy local generation IPC + python pipeline once Comfy-only flow is stable.
 
   if (!hydrated) {
     return null;
@@ -519,39 +468,30 @@ export function ProjectPage() {
 
     setIsGenerating(true);
     setGenerationStage("running");
-    setGenerationPercent(1);
-    setGenerationMessage("Iniciando generacion...");
+    setGenerationPercent(5);
+    setGenerationMessage("Iniciando generacion en ComfyUI...");
     setGenerationDevice(null);
     setAutoUsedEngine(null);
     setGenerationLogPath("");
 
-    const result = await desktopApi.runGeneration({
-      projectId: project.id,
-      imagePaths: selectedImages,
-      preset,
-      mode: "auto",
-      autoProfile: settings.autoGenerationProfile,
-      reconstructionTier,
-      multiviewEnabled,
-      multiviewPreset,
-      ...(multiviewPreset === "hard_surface" ? { multiviewHardSurfaceQuality } : {}),
-      pythonPath: settings.pythonPath,
-      pipeline: "depth_glb",
-    });
-
-    if (!result.ok) {
+    const imagePath = selectedImages[0];
+    if (!imagePath) {
       setIsGenerating(false);
       setGenerationStage("error");
-      setGenerationMessage(result.logPath ? `${result.error} Ver log: ${result.logPath}` : result.error);
-      setGenerationLogPath(result.logPath ?? "");
+      setGenerationMessage("No hay imagen valida para ComfyUI.");
       return;
     }
+    if (selectedImages.length > 1) {
+      console.info("[gen][renderer] ComfyUI usa solo la primera imagen seleccionada.", {
+        count: selectedImages.length,
+      });
+    }
 
-    updateProjectModel(project.id, {
-      ...projectModel,
+    await runComfyWorkflow({
+      imagePath,
       sourceImages: selectedImages,
-      preset,
-      mode: "auto",
+      pipeline: "depth_glb",
+      label: "Generar 3D",
     });
   };
 
@@ -564,51 +504,33 @@ export function ProjectPage() {
       return;
     }
 
-    const projectName = project.name.trim() || "Untitled Project";
-    const userDataPath = await desktopApi.getUserDataPath();
-    const safeId = sanitizePathSegment(project.id);
-    const workDir = `${userDataPath}\\skp-work\\${safeId}`;
-    const outputDir = `${userDataPath}\\skp-output`;
-
     setIsGenerating(true);
     setGenerationStage("running");
-    setGenerationPercent(1);
-    setGenerationMessage("Iniciando generacion SKP IA...");
+    setGenerationPercent(5);
+    setGenerationMessage("Iniciando generacion ComfyUI (SKP)...");
     setGenerationDevice(null);
     setAutoUsedEngine(null);
     setGenerationLogPath("");
 
-    const result = await desktopApi.runGeneration({
-      projectId: project.id,
-      imagePaths: selectedImages,
-      preset,
-      pythonPath: settings.pythonPath,
-      pipeline: "gen_skp",
-      inputs: selectedImages,
-      projectName,
-      workDir,
-      outputDir,
-      quality: preset === "fast" ? "fast" : "high",
-      reconstructionTier,
-    });
-
-    if (!result.ok) {
+    const imagePath = selectedImages[0];
+    if (!imagePath) {
       setIsGenerating(false);
       setGenerationStage("error");
-      setGenerationMessage(result.logPath ? `${result.error} Ver log: ${result.logPath}` : result.error);
-      setGenerationLogPath(result.logPath ?? "");
-    }
-  };
-
-  const handleCancelGeneration = async () => {
-    if (!hasDesktopBridge() || !isGenerating) {
+      setGenerationMessage("No hay imagen valida para ComfyUI.");
       return;
     }
+    if (selectedImages.length > 1) {
+      console.info("[gen][renderer] ComfyUI usa solo la primera imagen seleccionada.", {
+        count: selectedImages.length,
+      });
+    }
 
-    await desktopApi.cancelGeneration(project.id);
-    setIsGenerating(false);
-    setGenerationStage("cancelled");
-    setGenerationMessage("Cancelando generacion...");
+    await runComfyWorkflow({
+      imagePath,
+      sourceImages: selectedImages,
+      pipeline: "gen_skp",
+      label: "Generar SKP",
+    });
   };
 
   const handleOpenOutputFolder = async () => {
@@ -631,6 +553,7 @@ export function ProjectPage() {
     : `${getSurfaceClass(false, "panel")} text-[var(--text)]`;
   const panelSoftClass = getSurfaceClass(false, "soft");
   const selectClass = "pointer-events-auto border-[var(--border)] bg-[var(--surface-3)] text-[var(--text)] hover:border-[var(--accent)] focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--focus-ring)]";
+  const localGeneratorDisabled = true; // ComfyUI-only: disable legacy local generator controls.
 
   return (
     <div className="relative flex h-full min-h-0 w-full min-w-0 overflow-hidden">
@@ -663,120 +586,128 @@ export function ProjectPage() {
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
-              <select
-                value={preset}
-                onChange={(event) => setPreset(event.currentTarget.value as GenerationPreset)}
-                className={`pointer-events-auto h-9 min-w-32 appearance-none rounded-lg border px-3 text-sm outline-none transition duration-150 ease-out focus:ring-2 focus:ring-[#8c7e6d]/50 ${selectClass}`}
-                disabled={isGenerating}
+              <fieldset
+                className="flex flex-wrap items-center gap-2"
+                disabled={isGenerating || localGeneratorDisabled}
               >
-                <option value="fast">Fast</option>
-                <option value="balanced">Balanced</option>
-                <option value="quality">Quality</option>
-              </select>
-
-              <select
-                value={settings.autoGenerationProfile}
-                onChange={(event) => setAutoGenerationProfile(event.currentTarget.value as AutoProfile)}
-                className={`pointer-events-auto h-9 min-w-48 appearance-none rounded-lg border px-3 text-sm outline-none transition duration-150 ease-out focus:ring-2 focus:ring-[#8c7e6d]/50 ${selectClass}`}
-                disabled={isGenerating}
-                aria-label="AUTO mode selector"
-              >
-                <option value="auto">AUTO (recomendado)</option>
-                <option value="hard_surface">HARD-SURFACE</option>
-                <option value="organic">ORGANICO</option>
-              </select>
-
-              <select
-                value={reconstructionTier}
-                onChange={(event) => {
-                  const nextValue = event.currentTarget.value as ReconstructionTier;
-                  setReconstructionTier(nextValue);
-                  if (!hasStoredMultiviewPreferenceRef.current) {
-                    setMultiviewEnabled(nextValue === "final");
-                  }
-                  try {
-                    window.localStorage.setItem(RECONSTRUCTION_TIER_KEY, nextValue);
-                  } catch {
-                    // No-op by design.
-                  }
-                }}
-                className={`pointer-events-auto h-9 min-w-44 appearance-none rounded-lg border px-3 text-sm outline-none transition duration-150 ease-out focus:ring-2 focus:ring-[#8c7e6d]/50 ${selectClass}`}
-                disabled={isGenerating}
-                aria-label="Reconstruction tier selector"
-              >
-                <option value="preview">Preview (rapido)</option>
-                <option value="final">Final (HQ)</option>
-              </select>
-
-              <label className="pointer-events-auto inline-flex h-9 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface-2)] px-3 text-xs text-[var(--text)]">
-                <input
-                  className="pointer-events-auto"
-                  type="checkbox"
-                  checked={multiviewEnabled}
-                  onChange={(event) => {
-                    const nextValue = event.currentTarget.checked;
-                    setMultiviewEnabled(nextValue);
-                    hasStoredMultiviewPreferenceRef.current = true;
-                    try {
-                      window.localStorage.setItem(MULTIVIEW_ENABLED_KEY, String(nextValue));
-                    } catch {
-                      // No-op by design.
-                    }
-                  }}
-                  disabled={isGenerating}
-                />
-                Multiview (Local)
-              </label>
-
-              <select
-                value={multiviewPreset}
-                onChange={(event) => setMultiviewPreset(event.currentTarget.value as MultiviewPreset)}
-                className={`pointer-events-auto h-9 min-w-44 appearance-none rounded-lg border px-3 text-sm outline-none transition duration-150 ease-out focus:ring-2 focus:ring-[#8c7e6d]/50 ${selectClass}`}
-                disabled={isGenerating || !multiviewEnabled}
-                aria-label="Multiview preset selector"
-              >
-                <option value="hard_surface">HardSurface</option>
-                <option value="balanced">Balanced</option>
-                <option value="organic">Organic</option>
-              </select>
-
-              {multiviewPreset === "hard_surface" ? (
                 <select
-                  value={multiviewHardSurfaceQuality}
-                  onChange={(event) => {
-                    const nextValue = event.currentTarget.value as MultiviewHardSurfaceQuality;
-                    setMultiviewHardSurfaceQuality(nextValue);
-                    try {
-                      window.localStorage.setItem(MULTIVIEW_HARD_SURFACE_QUALITY_KEY, nextValue);
-                    } catch {
-                      // No-op by design.
-                    }
-                  }}
-                  className={`pointer-events-auto h-9 min-w-36 appearance-none rounded-lg border px-3 text-sm outline-none transition duration-150 ease-out focus:ring-2 focus:ring-[#8c7e6d]/50 ${selectClass}`}
-                  disabled={isGenerating || !multiviewEnabled}
-                  aria-label="HardSurface quality selector"
+                  value={preset}
+                  onChange={(event) => setPreset(event.currentTarget.value as GenerationPreset)}
+                  className={`pointer-events-auto h-9 min-w-32 appearance-none rounded-lg border px-3 text-sm outline-none transition duration-150 ease-out focus:ring-2 focus:ring-[#8c7e6d]/50 ${selectClass}`}
                 >
                   <option value="fast">Fast</option>
                   <option value="balanced">Balanced</option>
-                  <option value="pro">Pro</option>
+                  <option value="quality">Quality</option>
                 </select>
-              ) : null}
 
-              <Button className="pointer-events-auto" variant="primary" onClick={() => void handleRunGeneration()} disabled={selectedImages.length === 0 || isGenerating}>
-                Generar 3D
-              </Button>
-              <Button
-                className="pointer-events-auto"
-                variant="primary"
-                onClick={() => void handleRunGenerationSkp()}
-                disabled={selectedImages.length < 1 || selectedImages.length > 4 || isGenerating}
-              >
-                Generar SKP
-              </Button>
-              <Button className="pointer-events-auto" variant="ghost" onClick={() => void handleCancelGeneration()} disabled={!isGenerating}>
-                Cancelar
-              </Button>
+                <select
+                  value={settings.autoGenerationProfile}
+                  onChange={(event) => setAutoGenerationProfile(event.currentTarget.value as AutoProfile)}
+                  className={`pointer-events-auto h-9 min-w-48 appearance-none rounded-lg border px-3 text-sm outline-none transition duration-150 ease-out focus:ring-2 focus:ring-[#8c7e6d]/50 ${selectClass}`}
+                  aria-label="AUTO mode selector"
+                >
+                  <option value="auto">AUTO (recomendado)</option>
+                  <option value="hard_surface">HARD-SURFACE</option>
+                  <option value="organic">ORGANICO</option>
+                </select>
+
+                <select
+                  value={reconstructionTier}
+                  onChange={(event) => {
+                    const nextValue = event.currentTarget.value as ReconstructionTier;
+                    setReconstructionTier(nextValue);
+                    if (!hasStoredMultiviewPreferenceRef.current) {
+                      setMultiviewEnabled(nextValue === "final");
+                    }
+                    try {
+                      window.localStorage.setItem(RECONSTRUCTION_TIER_KEY, nextValue);
+                    } catch {
+                      // No-op by design.
+                    }
+                  }}
+                  className={`pointer-events-auto h-9 min-w-44 appearance-none rounded-lg border px-3 text-sm outline-none transition duration-150 ease-out focus:ring-2 focus:ring-[#8c7e6d]/50 ${selectClass}`}
+                  aria-label="Reconstruction tier selector"
+                >
+                  <option value="preview">Preview (rapido)</option>
+                  <option value="final">Final (HQ)</option>
+                </select>
+
+                <label className="pointer-events-auto inline-flex h-9 items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface-2)] px-3 text-xs text-[var(--text)]">
+                  <input
+                    className="pointer-events-auto"
+                    type="checkbox"
+                    checked={multiviewEnabled}
+                    onChange={(event) => {
+                      const nextValue = event.currentTarget.checked;
+                      setMultiviewEnabled(nextValue);
+                      hasStoredMultiviewPreferenceRef.current = true;
+                      try {
+                        window.localStorage.setItem(MULTIVIEW_ENABLED_KEY, String(nextValue));
+                      } catch {
+                        // No-op by design.
+                      }
+                    }}
+                  />
+                  Multiview (Local)
+                </label>
+
+                <select
+                  value={multiviewPreset}
+                  onChange={(event) => setMultiviewPreset(event.currentTarget.value as MultiviewPreset)}
+                  className={`pointer-events-auto h-9 min-w-44 appearance-none rounded-lg border px-3 text-sm outline-none transition duration-150 ease-out focus:ring-2 focus:ring-[#8c7e6d]/50 ${selectClass}`}
+                  disabled={!multiviewEnabled}
+                  aria-label="Multiview preset selector"
+                >
+                  <option value="hard_surface">HardSurface</option>
+                  <option value="balanced">Balanced</option>
+                  <option value="organic">Organic</option>
+                </select>
+
+                {multiviewPreset === "hard_surface" ? (
+                  <select
+                    value={multiviewHardSurfaceQuality}
+                    onChange={(event) => {
+                      const nextValue = event.currentTarget.value as MultiviewHardSurfaceQuality;
+                      setMultiviewHardSurfaceQuality(nextValue);
+                      try {
+                        window.localStorage.setItem(MULTIVIEW_HARD_SURFACE_QUALITY_KEY, nextValue);
+                      } catch {
+                        // No-op by design.
+                      }
+                    }}
+                    className={`pointer-events-auto h-9 min-w-36 appearance-none rounded-lg border px-3 text-sm outline-none transition duration-150 ease-out focus:ring-2 focus:ring-[#8c7e6d]/50 ${selectClass}`}
+                    disabled={!multiviewEnabled}
+                    aria-label="HardSurface quality selector"
+                  >
+                    <option value="fast">Fast</option>
+                    <option value="balanced">Balanced</option>
+                    <option value="pro">Pro</option>
+                  </select>
+                ) : null}
+              </fieldset>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  className="pointer-events-auto"
+                  variant="primary"
+                  onClick={() => void handleRunGeneration()}
+                  disabled={selectedImages.length === 0 || isGenerating}
+                >
+                  Generar 3D
+                </Button>
+                <Button
+                  className="pointer-events-auto"
+                  variant="primary"
+                  onClick={() => void handleRunGenerationSkp()}
+                  disabled={selectedImages.length < 1 || selectedImages.length > 4 || isGenerating}
+                >
+                  Generar SKP
+                </Button>
+              </div>
             </div>
+            {localGeneratorDisabled ? (
+              <p className="mt-2 text-xs text-[var(--text-muted)]">ComfyUI activo. Opciones locales deshabilitadas.</p>
+            ) : null}
           </div>
         </section>
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+﻿import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { ContactShadows, Environment, OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
@@ -60,7 +60,6 @@ type ViewportGenerationBridge = {
 
 type LoadedModelProps = {
   glbPath?: string;
-  glbVersion?: number;
   modelUrl?: string;
   allowFit: boolean;
   fittedForUrlRef: { current: string | null };
@@ -164,115 +163,37 @@ function asOrbitControls(value: unknown): OrbitControlsImpl | null {
   return maybe as OrbitControlsImpl;
 }
 
-type GroundingResult = {
-  bboxSize: THREE.Vector3;
-  minYTranslation: number;
-  centeredX: number;
-  centeredZ: number;
-};
+function stripGeneratedGroundPlane(root: THREE.Object3D) {
+  const rootBox = new THREE.Box3().setFromObject(root);
+  if (rootBox.isEmpty()) return;
 
-function resolveFitKey(glbPath?: string, glbVersion?: number, modelUrl?: string) {
-  if (glbPath) {
-    return typeof glbVersion === "number" ? `${glbPath}::${glbVersion}` : glbPath;
-  }
-  return modelUrl ?? "";
-}
+  const rootSize = rootBox.getSize(new THREE.Vector3());
+  const rootMinY = rootBox.min.y;
 
-function disposeMeshResources(mesh: THREE.Mesh) {
-  if (mesh.geometry) {
-    mesh.geometry.dispose();
-  }
-  const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-  for (const material of materials) {
-    if (material) {
-      material.dispose();
-    }
-  }
-}
+  const toHide: THREE.Object3D[] = [];
 
-function stripGeneratedGroundPlane(root: THREE.Object3D): { removed: number } {
-  root.updateMatrixWorld(true);
-  const modelBox = new THREE.Box3().setFromObject(root);
-  if (modelBox.isEmpty()) {
-    return { removed: 0 };
-  }
-
-  const modelSize = modelBox.getSize(new THREE.Vector3());
-  const modelHeight = modelSize.y;
-  const maxDim = Math.max(modelSize.x, modelSize.z);
-  const bottomThreshold = modelBox.min.y + modelHeight * 0.1;
-
-  const toRemove: THREE.Mesh[] = [];
-
-  root.traverseVisible((obj) => {
+  root.traverse((obj) => {
     const mesh = obj as THREE.Mesh;
-    if (!mesh || !(mesh as any).isMesh) {
-      return;
-    }
-    const meshBox = new THREE.Box3().setFromObject(mesh);
-    if (meshBox.isEmpty()) {
-      return;
-    }
-    const size = meshBox.getSize(new THREE.Vector3());
-    const width = size.x;
-    const depth = size.z;
-    const height = size.y;
-    const flat = height < 0.05 * Math.max(width, depth);
-    const large = Math.max(width, depth) > 0.6 * maxDim;
-    const low = meshBox.max.y <= bottomThreshold;
+    if (!mesh || !(mesh as any).isMesh) return;
 
-    if (flat && large && low) {
-      toRemove.push(mesh);
+    const box = new THREE.Box3().setFromObject(mesh);
+    if (box.isEmpty()) return;
+
+    const size = box.getSize(new THREE.Vector3());
+
+    const touchesBottom = Math.abs(box.min.y - rootMinY) < rootSize.y * 0.05;
+    const isWide = size.x > rootSize.x * 0.7 || size.z > rootSize.z * 0.7;
+    const isFlatish = size.y < rootSize.y * 0.25;
+
+    if (touchesBottom && isWide && isFlatish) {
+      toHide.push(mesh);
     }
   });
 
-  for (const mesh of toRemove) {
-    mesh.parent?.remove(mesh);
-    disposeMeshResources(mesh);
+  for (const obj of toHide) {
+    obj.visible = false;
   }
-
-  if (VIEWER_DEBUG && toRemove.length > 0) {
-    console.debug("[ProjectViewport][normalize] removed ground meshes:", toRemove.length);
-  }
-
-  return { removed: toRemove.length };
 }
-
-function normalizeAndGround(root: THREE.Object3D, epsilon = 0.002): GroundingResult | null {
-  root.updateMatrixWorld(true);
-  const bbox = new THREE.Box3().setFromObject(root);
-  if (bbox.isEmpty()) {
-    return null;
-  }
-
-  const center = bbox.getCenter(new THREE.Vector3());
-  root.position.x -= center.x;
-  root.position.z -= center.z;
-  root.updateMatrixWorld(true);
-
-  const bbox2 = new THREE.Box3().setFromObject(root);
-  if (bbox2.isEmpty()) {
-    return null;
-  }
-
-  const minYTranslation = -bbox2.min.y + epsilon;
-  root.position.y += minYTranslation;
-  root.updateMatrixWorld(true);
-
-  const finalBox = new THREE.Box3().setFromObject(root);
-  if (finalBox.isEmpty()) {
-    return null;
-  }
-
-  const size = finalBox.getSize(new THREE.Vector3());
-  return {
-    bboxSize: size,
-    minYTranslation,
-    centeredX: center.x,
-    centeredZ: center.z,
-  };
-}
-
 function applyModelVisualSettings(object: THREE.Object3D, envMapIntensity: number, wireframe: boolean) {
   object.traverse((child) => {
     if (!(child instanceof THREE.Mesh)) {
@@ -360,7 +281,6 @@ function applyModelVisualSettings(object: THREE.Object3D, envMapIntensity: numbe
 
 function LoadedModel({
   glbPath,
-  glbVersion,
   modelUrl,
   allowFit,
   fittedForUrlRef,
@@ -376,7 +296,6 @@ function LoadedModel({
   const modelRef = useRef<THREE.Group>(null);
   const loadedSceneRef = useRef<THREE.Object3D | null>(null);
   const [loadedModel, setLoadedModel] = useState<THREE.Object3D | null>(null);
-  const cameraFitKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     const container = modelRef.current;
@@ -392,7 +311,6 @@ function LoadedModel({
       onLoadError(null);
       onModelNormalizationDebug(null);
       onModelReady(null);
-      cameraFitKeyRef.current = null;
       return;
     }
 
@@ -432,39 +350,10 @@ function LoadedModel({
               onModelReady(null);
               return;
             }
-            const fitKey = resolveFitKey(glbPath, glbVersion, modelUrl);
-            const shouldNormalize = Boolean(fitKey) && fittedForUrlRef.current !== fitKey;
-            let normalizationDebug: ModelNormalizationDebug | null = null;
+            stripGeneratedGroundPlane(model);
 
-            if (shouldNormalize) {
-              const removal = stripGeneratedGroundPlane(model);
-              const grounding = normalizeAndGround(model, 0.002);
-              if (grounding) {
-                normalizationDebug = {
-                  bboxSize: {
-                    x: grounding.bboxSize.x,
-                    y: grounding.bboxSize.y,
-                    z: grounding.bboxSize.z,
-                  },
-                  minYTranslation: grounding.minYTranslation,
-                  centeredX: grounding.centeredX,
-                  centeredZ: grounding.centeredZ,
-                };
-              }
-              if (VIEWER_DEBUG) {
-                console.debug("[ProjectViewport][normalize] removed", removal.removed);
-                if (grounding) {
-                  console.debug("[ProjectViewport][normalize] bbox", {
-                    size: grounding.bboxSize,
-                    minYTranslation: grounding.minYTranslation,
-                  });
-                }
-              }
-              fittedForUrlRef.current = fitKey;
-            }
-
-            onModelNormalizationDebug(normalizationDebug);
             container.add(model);
+            applyModelVisualSettings(model, envMapIntensity, wireframe);
             loadedSceneRef.current = model;
             setLoadedModel(model);
             onModelReady(model);
@@ -498,9 +387,8 @@ function LoadedModel({
         onModelReady(null);
         invalidate();
       }
-      cameraFitKeyRef.current = null;
     };
-  }, [glbPath, glbVersion, invalidate, modelUrl, onLoadError, onModelNormalizationDebug, onModelReady]);
+  }, [envMapIntensity, glbPath, invalidate, modelUrl, onLoadError, onModelNormalizationDebug, onModelReady, wireframe]);
 
   useEffect(() => {
     if (!loadedModel || !(camera instanceof THREE.PerspectiveCamera)) {
@@ -509,21 +397,51 @@ function LoadedModel({
     if (!allowFit || !modelUrl) {
       return;
     }
-    const fitKey = resolveFitKey(glbPath, glbVersion, modelUrl);
-    if (!fitKey) {
-      return;
-    }
-    if (cameraFitKeyRef.current === fitKey) {
+    if (fittedForUrlRef.current === modelUrl) {
       return;
     }
 
+    loadedModel.position.set(0, 0, 0);
     loadedModel.updateMatrixWorld(true);
+
+    const initialBox = new THREE.Box3().setFromObject(loadedModel);
+    if (initialBox.isEmpty()) {
+      return;
+    }
+    const center = new THREE.Vector3();
+    initialBox.getCenter(center);
+    loadedModel.position.x -= center.x;
+    loadedModel.position.z -= center.z;
+    loadedModel.updateMatrixWorld(true);
+
+    const groundedBox = new THREE.Box3().setFromObject(loadedModel);
+    if (groundedBox.isEmpty()) {
+      return;
+    }
+    const minYTranslation = -groundedBox.min.y;
+    loadedModel.position.y += minYTranslation;
+    loadedModel.updateMatrixWorld(true);
+
     const finalBox = new THREE.Box3().setFromObject(loadedModel);
     if (finalBox.isEmpty()) {
       return;
     }
 
     const size = finalBox.getSize(new THREE.Vector3());
+    const normalizationDebug: ModelNormalizationDebug = {
+      bboxSize: {
+        x: size.x,
+        y: size.y,
+        z: size.z,
+      },
+      minYTranslation,
+      centeredX: center.x,
+      centeredZ: center.z,
+    };
+    onModelNormalizationDebug(normalizationDebug);
+    if (VIEWER_DEBUG) {
+      console.debug("[ProjectViewport][normalize]", normalizationDebug);
+    }
     const maxDim = Math.max(size.x, size.y, size.z);
     if (!Number.isFinite(maxDim) || maxDim <= 0) {
       return;
@@ -552,19 +470,19 @@ function LoadedModel({
       near: snapshot.near,
       far: snapshot.far,
     });
-    cameraFitKeyRef.current = fitKey;
+    fittedForUrlRef.current = modelUrl;
     invalidate();
   }, [
     allowFit,
     camera,
     controls,
     controlsRef,
+    fittedForUrlRef,
     invalidate,
     loadedModel,
-    glbPath,
-    glbVersion,
     modelUrl,
     onCameraFit,
+    onModelNormalizationDebug,
   ]);
 
   useEffect(() => {
@@ -879,7 +797,6 @@ export function ProjectViewport({
       throw new Error("Viewport capture requires outputDir and baseName.");
     }
 
-    model.updateMatrixWorld(true);
     const bbox = new THREE.Box3().setFromObject(model);
     if (bbox.isEmpty()) {
       throw new Error("Viewport capture failed: model bounding box is empty.");
@@ -1199,7 +1116,7 @@ export function ProjectViewport({
                   groundColor={themeConfig.ground}
                   gridMain={themeConfig.gridMain}
                   gridSub={themeConfig.gridSub}
-                  gridOpacity={themeConfig.gridOpacity}
+                  gridOpacity={glbPath ? 0 : themeConfig.gridOpacity}
                 />
                 <ContactShadows
                   position={[0, 0.002, 0]}
@@ -1211,7 +1128,6 @@ export function ProjectViewport({
                 />
                 <LoadedModel
                   glbPath={glbPath}
-                  glbVersion={glbVersion}
                   modelUrl={url}
                   allowFit={allowModelFit}
                   fittedForUrlRef={fittedForUrlRef}
@@ -1267,3 +1183,5 @@ export function ProjectViewport({
     </div>
   );
 }
+
+

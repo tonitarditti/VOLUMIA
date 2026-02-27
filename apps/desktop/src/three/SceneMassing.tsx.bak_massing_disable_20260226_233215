@@ -59,4 +59,3 @@ export function SceneMassing({ showMassing, groundColor, gridMain, gridSub, grid
   );
 }
 
-
