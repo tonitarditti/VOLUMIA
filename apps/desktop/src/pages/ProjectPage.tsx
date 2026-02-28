@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Navigate, useParams } from "react-router-dom";
 import { createChatMessage } from "@/projects/factory";
 import { useProjects } from "@/projects/context";
@@ -30,7 +30,7 @@ type PendingGenerationRun = {
   preset: GenerationPreset;
 };
 type InspectorTab = "model" | "material" | "light" | "ai" | "result";
-type WorkspaceStatus = "idle" | "generating" | "result";
+type WorkspaceStatus = "idle" | "generating" | "ready" | "error";
 
 const INSPECTOR_TABS: Array<{ id: InspectorTab; label: string }> = [
   { id: "model", label: "MODEL" },
@@ -204,8 +204,9 @@ export function ProjectPage() {
   const [imagePreviews, setImagePreviews] = useState<Record<string, string>>({});
   const [isAssistantOpen, setIsAssistantOpen] = useState(false);
   const [isNotesOpen, setIsNotesOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<InspectorTab>("ai");
+  const [activeTab, setActiveTab] = useState<InspectorTab>("model");
   const [isReferenceDrawerOpen, setIsReferenceDrawerOpen] = useState(true);
+  const [toolShortcut, setToolShortcut] = useState("tools");
   const historyBottomRef = useRef<HTMLDivElement | null>(null);
   const projectModel = getProjectModel(project?.model);
   const currentProjectId = project?.id ?? "";
@@ -261,8 +262,9 @@ export function ProjectPage() {
     setImagePreviews({});
     pendingGenerationRef.current = null;
     handledGenerationStateRef.current = "";
-    setActiveTab(projectModel.glbPath ? "result" : "ai");
+    setActiveTab("model");
     setIsReferenceDrawerOpen(true);
+    setToolShortcut("tools");
   }, [project?.id]);
 
   useEffect(() => {
@@ -638,7 +640,32 @@ export function ProjectPage() {
     await desktopApi.openGenerationLogPath(generationLogPath);
   };
 
-  const workspaceStatus: WorkspaceStatus = isGenerating ? "generating" : project.model?.glbPath ? "result" : "idle";
+  const handleToolShortcut = async (value: string) => {
+    setToolShortcut(value);
+
+    if (value === "references") {
+      setIsReferenceDrawerOpen((current) => !current);
+    } else if (value === "notes") {
+      setIsReferenceDrawerOpen(true);
+    } else if (value === "result") {
+      setActiveTab("result");
+    } else if (value === "output") {
+      await handleOpenOutputFolder();
+    }
+
+    window.setTimeout(() => {
+      setToolShortcut("tools");
+    }, 0);
+  };
+
+  const workspaceStatus: WorkspaceStatus =
+    generationJob.projectId === currentProjectId && generationJob.status === "error"
+      ? "error"
+      : isGenerating
+        ? "generating"
+        : project.model?.glbPath
+          ? "ready"
+          : "idle";
 
   useEffect(() => {
     if (workspaceStatusRef.current === workspaceStatus) {
@@ -647,8 +674,10 @@ export function ProjectPage() {
 
     if (workspaceStatus === "generating") {
       setActiveTab("ai");
-    } else if (workspaceStatus === "result") {
+    } else if (workspaceStatus === "ready") {
       setActiveTab("result");
+    } else if (workspaceStatus === "error") {
+      setActiveTab("ai");
     }
 
     workspaceStatusRef.current = workspaceStatus;
@@ -659,26 +688,39 @@ export function ProjectPage() {
     : `${getSurfaceClass(false, "panel")} text-[var(--text)]`;
   const panelSoftClass = getSurfaceClass(false, "soft");
   const selectClass = "pointer-events-auto border-[var(--border)] bg-[var(--surface-3)] text-[var(--text)] hover:border-[var(--accent)] focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--focus-ring)]";
-  const sectionClass = `${floatingPanelClass} border border-[var(--border)] bg-[color:rgba(13,18,26,0.92)] shadow-[0_18px_36px_rgba(0,0,0,0.18)]`;
+  const sectionClass = `${floatingPanelClass} rounded-lg border border-[color:rgba(255,255,255,0.06)] shadow-[0_10px_24px_rgba(0,0,0,0.12)]`;
+  const structuredPanelStyle: CSSProperties = {
+    backgroundImage:
+      "linear-gradient(180deg, rgba(255,255,255,0.02) 0%, rgba(255,255,255,0.008) 12%, rgba(255,255,255,0) 100%), linear-gradient(180deg, rgba(12,16,22,0.96) 0%, rgba(11,14,19,0.94) 100%)",
+  };
   const tabButtonClass = (tabId: InspectorTab) =>
-    `rounded-xl border px-3 py-2 text-[11px] font-medium tracking-[0.16em] transition-colors ${
+    `rounded-lg border px-3 py-2 text-[11px] font-medium tracking-[0.16em] transition-colors ${
       activeTab === tabId
         ? "border-[var(--accent)] bg-[var(--surface-3)] text-[var(--text)]"
         : "border-transparent bg-transparent text-[var(--text-muted)] hover:border-[var(--border)] hover:bg-[var(--surface-2)] hover:text-[var(--text)]"
     }`;
   const railButtonClass = (isActive: boolean) =>
-    `flex h-11 w-11 items-center justify-center rounded-2xl border text-[10px] font-semibold tracking-[0.18em] transition-colors ${
+    `flex h-11 w-11 items-center justify-center rounded-lg border text-[10px] font-semibold tracking-[0.18em] transition-colors ${
       isActive
         ? "border-[var(--accent)] bg-[var(--surface-3)] text-[var(--text)]"
         : "border-[var(--border)] bg-[var(--surface-2)] text-[var(--text-muted)] hover:text-[var(--text)]"
     }`;
   const bottomZoneClass = "flex h-full min-w-0 items-center gap-2 px-4";
-  const compactMetaClass = "rounded-xl border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2 text-xs text-[var(--text-muted)]";
+  const compactMetaClass = "rounded-lg border border-[color:rgba(255,255,255,0.06)] bg-[color:rgba(255,255,255,0.03)] px-3 py-2 text-xs text-[var(--text-muted)]";
+  const panelCardClass = `rounded-lg border border-[color:rgba(255,255,255,0.06)] p-4 ${panelSoftClass}`;
+  const statusBadgeClass =
+    workspaceStatus === "generating"
+      ? "border-[rgba(182,133,65,0.36)] bg-[rgba(182,133,65,0.16)] text-[#d6bf8b]"
+      : workspaceStatus === "ready"
+        ? "border-[rgba(90,151,108,0.34)] bg-[rgba(90,151,108,0.16)] text-[#b7d9bf]"
+        : workspaceStatus === "error"
+          ? "border-[rgba(165,91,91,0.34)] bg-[rgba(165,91,91,0.16)] text-[#dfb3b3]"
+          : "border-[rgba(138,148,163,0.26)] bg-[rgba(138,148,163,0.12)] text-[#c6ceda]";
 
   return (
     <div className="flex h-full min-h-0 w-full min-w-0 overflow-hidden bg-[var(--surface-1)]">
-      <aside className={`flex h-full w-16 shrink-0 flex-col items-center gap-3 border-r border-[var(--border)] px-2 py-3 ${sectionClass}`}>
-        <div className="flex h-11 w-11 items-center justify-center rounded-2xl border border-[var(--border)] bg-[var(--surface-2)] text-[11px] font-semibold tracking-[0.24em] text-[var(--accent)]">VD</div>
+      <aside className={`flex h-full w-16 shrink-0 flex-col items-center gap-3 border-r border-[var(--border)] px-2 py-3 ${sectionClass}`} style={structuredPanelStyle}>
+        <div className="flex h-11 w-11 items-center justify-center rounded-lg border border-[color:rgba(255,255,255,0.06)] bg-[color:rgba(255,255,255,0.03)] text-[11px] font-semibold tracking-[0.24em] text-[var(--accent)]">VD</div>
         <div className="flex flex-1 flex-col items-center gap-2">
           {INSPECTOR_TABS.map((tab) => (
             <button key={tab.id} type="button" className={railButtonClass(activeTab === tab.id)} onClick={() => setActiveTab(tab.id)} title={tab.label}>
@@ -692,7 +734,7 @@ export function ProjectPage() {
       </aside>
 
       {isReferenceDrawerOpen ? (
-        <aside className={`flex min-h-0 w-[280px] shrink-0 flex-col border-r border-[var(--border)] p-3 ${sectionClass}`}>
+        <aside className={`flex min-h-0 w-[280px] shrink-0 flex-col gap-4 border-r border-[var(--border)] p-5 ${sectionClass}`} style={structuredPanelStyle}>
           <div className="flex items-center justify-between gap-2">
             <div>
               <p className="text-[11px] uppercase tracking-[0.22em] text-[var(--text-muted)]">Reference</p>
@@ -702,13 +744,21 @@ export function ProjectPage() {
           </div>
           <div className="mt-3 min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
             {selectedImages.length > 0 ? selectedImages.map((imagePath) => (
-              <figure key={imagePath} className={`overflow-hidden rounded-2xl border border-[var(--border)] p-2 ${panelSoftClass}`}>
-                {imagePreviews[imagePath] ? <img src={imagePreviews[imagePath]} alt={filenameFromPath(imagePath)} className="h-36 w-full rounded-xl object-cover" /> : <div className="h-36 w-full rounded-xl bg-[var(--surface-3)]" />}
+              <figure key={imagePath} className={`overflow-hidden ${panelCardClass}`}>
+                {imagePreviews[imagePath] ? <img src={imagePreviews[imagePath]} alt={filenameFromPath(imagePath)} className="h-36 w-full rounded-md object-cover" /> : <div className="h-36 w-full rounded-md bg-[var(--surface-3)]" />}
                 <figcaption className="mt-2 truncate text-[11px] text-[var(--text-muted)]">{filenameFromPath(imagePath)}</figcaption>
               </figure>
-            )) : <div className={`rounded-2xl border border-dashed border-[var(--border)] p-4 text-xs text-[var(--text-muted)] ${panelSoftClass}`}>The reference drawer is docked so it never covers the viewport.</div>}
+            )) : <div className={`${panelCardClass} border-dashed text-xs text-[var(--text-muted)]`}>The reference drawer is docked so it never covers the viewport.</div>}
           </div>
-          <TextArea value={project.notes} onChange={(event) => updateNotes(project.id, event.currentTarget.value)} rows={5} placeholder="Notas del proyecto" />
+          <div className={panelCardClass}>
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <p className="text-[11px] uppercase tracking-[0.18em] text-[var(--text-muted)]">Notes</p>
+              <Button variant="ghost" className="h-8 px-3 text-xs" onClick={() => setIsNotesOpen((current) => !current)}>
+                {isNotesOpen ? "Hide" : "Open"}
+              </Button>
+            </div>
+            {isNotesOpen ? <TextArea value={project.notes} onChange={(event) => updateNotes(project.id, event.currentTarget.value)} rows={5} placeholder="Notas del proyecto" /> : <p className="text-xs text-[var(--text-muted)]">Project notes stay docked with references to avoid covering the viewport.</p>}
+          </div>
         </aside>
       ) : null}
 
@@ -716,15 +766,23 @@ export function ProjectPage() {
         <div className="flex min-h-0 flex-1">
           <section className="relative min-w-0 flex-1 border-r border-[var(--border)] bg-[var(--surface-1)]">
             <ProjectViewport glbPath={project.model?.glbPath} glbVersion={project.model?.generatedAt} isGenerating={isGenerating} generationStage={generationStage} showUtilityButtons={false} showChrome={false} />
-            <div className="pointer-events-none absolute inset-x-4 top-4 flex flex-wrap gap-2">
-              <span className={compactMetaClass}>Workspace: {workspaceStatus}</span>
-              <span className={compactMetaClass}>Preset: {preset}</span>
-              <span className={compactMetaClass}>{project.model?.glbPath ? filenameFromPath(project.model.glbPath) : "No GLB yet"}</span>
-              {generationDevice ? <span className={compactMetaClass}>{generationDevice.device.toUpperCase()} {generationDevice.name}</span> : null}
+            <div className="pointer-events-none absolute inset-x-4 top-4 flex items-start justify-between gap-3">
+              <div className="flex flex-wrap gap-2">
+                <span className={compactMetaClass}>Workspace: {workspaceStatus}</span>
+                <span className={compactMetaClass}>Preset: {preset}</span>
+                <span className={compactMetaClass}>{project.model?.glbPath ? filenameFromPath(project.model.glbPath) : "No GLB yet"}</span>
+              </div>
+              <div className="flex flex-wrap justify-end gap-2">
+                <span className={`rounded-full border px-3 py-1 text-[11px] font-medium tracking-[0.08em] ${statusBadgeClass}`}>
+                  {workspaceStatus === "ready" ? "Ready" : workspaceStatus === "generating" ? "Generating" : workspaceStatus === "error" ? "Error" : "Idle"}
+                </span>
+                {generationDevice ? <span className={compactMetaClass}>{generationDevice.device.toUpperCase()} {generationDevice.name}</span> : null}
+              </div>
             </div>
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 h-28 bg-[linear-gradient(180deg,rgba(6,8,11,0)_0%,rgba(6,8,11,0.28)_100%)]" />
           </section>
 
-          <aside className={`flex min-h-0 w-[360px] shrink-0 flex-col p-3 ${sectionClass}`}>
+          <aside className={`flex min-h-0 w-[360px] shrink-0 flex-col gap-4 p-5 ${sectionClass}`} style={structuredPanelStyle}>
             <div className="flex flex-wrap gap-2">
               {INSPECTOR_TABS.map((tab) => (
                 <button key={tab.id} type="button" className={tabButtonClass(tab.id)} onClick={() => setActiveTab(tab.id)}>
@@ -733,45 +791,45 @@ export function ProjectPage() {
               ))}
             </div>
 
-            <div className="mt-4 min-h-0 flex-1 overflow-y-auto pr-1">
+            <div className="min-h-0 flex-1 overflow-y-auto pr-1">
               {activeTab === "model" ? (
-                <div className={`rounded-2xl border border-[var(--border)] p-3 ${panelSoftClass}`}>
+                <div className={panelCardClass}>
                   <p className="text-[11px] uppercase tracking-[0.2em] text-[var(--text-muted)]">Model</p>
-                  <div className="mt-3 grid grid-cols-2 gap-2">
+                  <div className="mt-4 grid grid-cols-2 gap-2">
                     <div className={compactMetaClass}>Images: {selectedImages.length}</div>
                     <div className={compactMetaClass}>Tier: {reconstructionTier}</div>
                     <div className={compactMetaClass}>Mode: auto</div>
                     <div className={compactMetaClass}>Multiview: {multiviewEnabled ? "on" : "off"}</div>
                   </div>
-                  <p className="mt-3 text-xs text-[var(--text-muted)]">{project.model?.glbPath ? project.model.glbPath : "No generated model attached yet."}</p>
+                  <p className="mt-4 text-xs text-[var(--text-muted)]">{project.model?.glbPath ? project.model.glbPath : "No generated model attached yet."}</p>
                 </div>
               ) : null}
 
-              {activeTab === "material" ? <div className={`rounded-2xl border border-[var(--border)] p-3 text-sm text-[var(--text)] ${panelSoftClass}`}>Material slots stay untouched here so the next texture phase can assign maps without replacing the loaded GLB.</div> : null}
-              {activeTab === "light" ? <div className={`rounded-2xl border border-[var(--border)] p-3 text-sm text-[var(--text)] ${panelSoftClass}`}>Lighting remains stable. Ground, grid and docked panels are separated to avoid visual noise while orbiting.</div> : null}
+              {activeTab === "material" ? <div className={`${panelCardClass} text-sm text-[var(--text)]`}>Material slots stay untouched here so the next texture phase can assign maps without replacing the loaded GLB.</div> : null}
+              {activeTab === "light" ? <div className={`${panelCardClass} text-sm text-[var(--text)]`}>Lighting remains stable. Ground, grid and docked panels are separated to avoid visual noise while orbiting.</div> : null}
 
               {activeTab === "ai" ? (
-                <div className="space-y-2">
+                <div className={`${panelCardClass} space-y-4`}>
                   <Button variant="secondary" onClick={() => void handleSelectImages()} disabled={isGenerating}>Agregar imagenes</Button>
                   <Button variant="secondary" onClick={() => void handleOpenOutputFolder()} disabled={!project.model?.glbPath}>Abrir salida</Button>
-                  <select value={preset} onChange={(event) => setPreset(event.currentTarget.value as GenerationPreset)} className={`h-10 w-full appearance-none rounded-xl border px-3 text-sm outline-none ${selectClass}`} disabled={isGenerating}>
+                  <select value={preset} onChange={(event) => setPreset(event.currentTarget.value as GenerationPreset)} className={`h-10 w-full appearance-none rounded-lg border px-3 text-sm outline-none ${selectClass}`} disabled={isGenerating}>
                     <option value="fast">Fast</option><option value="balanced">Balanced</option><option value="quality">Quality</option>
                   </select>
-                  <select value={settings.autoGenerationProfile} onChange={(event) => setAutoGenerationProfile(event.currentTarget.value as AutoProfile)} className={`h-10 w-full appearance-none rounded-xl border px-3 text-sm outline-none ${selectClass}`} disabled={isGenerating}>
+                  <select value={settings.autoGenerationProfile} onChange={(event) => setAutoGenerationProfile(event.currentTarget.value as AutoProfile)} className={`h-10 w-full appearance-none rounded-lg border px-3 text-sm outline-none ${selectClass}`} disabled={isGenerating}>
                     <option value="auto">AUTO (recomendado)</option><option value="hard_surface">HARD-SURFACE</option><option value="organic">ORGANICO</option>
                   </select>
-                  <select value={reconstructionTier} onChange={(event) => { const nextValue = event.currentTarget.value as ReconstructionTier; setReconstructionTier(nextValue); if (!hasStoredMultiviewPreferenceRef.current) { setMultiviewEnabled(nextValue === "final"); } try { window.localStorage.setItem(RECONSTRUCTION_TIER_KEY, nextValue); } catch {} }} className={`h-10 w-full appearance-none rounded-xl border px-3 text-sm outline-none ${selectClass}`} disabled={isGenerating}>
+                  <select value={reconstructionTier} onChange={(event) => { const nextValue = event.currentTarget.value as ReconstructionTier; setReconstructionTier(nextValue); if (!hasStoredMultiviewPreferenceRef.current) { setMultiviewEnabled(nextValue === "final"); } try { window.localStorage.setItem(RECONSTRUCTION_TIER_KEY, nextValue); } catch {} }} className={`h-10 w-full appearance-none rounded-lg border px-3 text-sm outline-none ${selectClass}`} disabled={isGenerating}>
                     <option value="preview">Preview (rapido)</option><option value="final">Final (HQ)</option>
                   </select>
-                  <label className="inline-flex h-10 w-full items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface-2)] px-3 text-xs text-[var(--text)]">
+                  <label className="inline-flex h-10 w-full items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface-2)] px-3 text-xs text-[var(--text)]">
                     <input type="checkbox" checked={multiviewEnabled} onChange={(event) => { const nextValue = event.currentTarget.checked; setMultiviewEnabled(nextValue); hasStoredMultiviewPreferenceRef.current = true; try { window.localStorage.setItem(MULTIVIEW_ENABLED_KEY, String(nextValue)); } catch {} }} disabled={isGenerating} />
                     Multiview (Local)
                   </label>
-                  <select value={multiviewPreset} onChange={(event) => setMultiviewPreset(event.currentTarget.value as MultiviewPreset)} className={`h-10 w-full appearance-none rounded-xl border px-3 text-sm outline-none ${selectClass}`} disabled={isGenerating || !multiviewEnabled}>
+                  <select value={multiviewPreset} onChange={(event) => setMultiviewPreset(event.currentTarget.value as MultiviewPreset)} className={`h-10 w-full appearance-none rounded-lg border px-3 text-sm outline-none ${selectClass}`} disabled={isGenerating || !multiviewEnabled}>
                     <option value="hard_surface">HardSurface</option><option value="balanced">Balanced</option><option value="organic">Organic</option>
                   </select>
                   {multiviewPreset === "hard_surface" ? (
-                    <select value={multiviewHardSurfaceQuality} onChange={(event) => { const nextValue = event.currentTarget.value as MultiviewHardSurfaceQuality; setMultiviewHardSurfaceQuality(nextValue); try { window.localStorage.setItem(MULTIVIEW_HARD_SURFACE_QUALITY_KEY, nextValue); } catch {} }} className={`h-10 w-full appearance-none rounded-xl border px-3 text-sm outline-none ${selectClass}`} disabled={isGenerating || !multiviewEnabled}>
+                    <select value={multiviewHardSurfaceQuality} onChange={(event) => { const nextValue = event.currentTarget.value as MultiviewHardSurfaceQuality; setMultiviewHardSurfaceQuality(nextValue); try { window.localStorage.setItem(MULTIVIEW_HARD_SURFACE_QUALITY_KEY, nextValue); } catch {} }} className={`h-10 w-full appearance-none rounded-lg border px-3 text-sm outline-none ${selectClass}`} disabled={isGenerating || !multiviewEnabled}>
                       <option value="fast">Fast</option><option value="balanced">Balanced</option><option value="pro">Pro</option>
                     </select>
                   ) : null}
@@ -779,7 +837,7 @@ export function ProjectPage() {
               ) : null}
 
               {activeTab === "result" ? (
-                <div className={`space-y-3 rounded-2xl border border-[var(--border)] p-3 ${panelSoftClass}`}>
+                <div className={`${panelCardClass} space-y-4`}>
                   <span className={compactMetaClass}>{generationStage}</span>
                   <div className="h-2 w-full overflow-hidden rounded-full bg-[var(--surface-3)]"><div className="h-full bg-[var(--accent)] transition-all duration-150 ease-out" style={{ width: `${generationPercent}%` }} /></div>
                   <p className="text-sm text-[var(--text)]">{generationMessage}</p>
@@ -799,10 +857,62 @@ export function ProjectPage() {
           </aside>
         </div>
 
-        <footer className={`grid h-16 shrink-0 grid-cols-[minmax(0,1.15fr)_minmax(0,0.95fr)_minmax(0,1.35fr)] border-t border-[var(--border)] ${sectionClass}`}>
-          <div className={`${bottomZoneClass} border-r border-[var(--border)]`}><span className="text-[11px] uppercase tracking-[0.18em] text-[var(--text-muted)]">Transform</span><span className={compactMetaClass}>Grounded</span><span className={compactMetaClass}>Centered</span></div>
-          <div className={`${bottomZoneClass} border-r border-[var(--border)]`}><span className="text-[11px] uppercase tracking-[0.18em] text-[var(--text-muted)]">Tools</span><Button variant="ghost" className="h-9 px-3 text-xs" onClick={() => setIsReferenceDrawerOpen((value) => !value)}>{isReferenceDrawerOpen ? "Hide refs" : "Show refs"}</Button><Button variant="ghost" className="h-9 px-3 text-xs" onClick={() => setActiveTab("result")}>Result</Button></div>
-          <div className={`${bottomZoneClass} justify-end`}><span className="text-[11px] uppercase tracking-[0.18em] text-[var(--text-muted)]">Primary</span><Button variant="secondary" onClick={() => void handleSelectImages()} disabled={isGenerating}>Agregar imagenes</Button><Button variant="primary" onClick={() => void handleRunGeneration()} disabled={selectedImages.length === 0 || isGenerating}>{workspaceStatus === "idle" ? "Generar 3D" : "Regenerar 3D"}</Button><Button variant="primary" onClick={() => void handleRunGenerationSkp()} disabled={selectedImages.length < 1 || selectedImages.length > 4 || isGenerating}>Generar SKP</Button><Button variant="ghost" onClick={() => void handleCancelGeneration()} disabled={!isGenerating}>Cancelar</Button></div>
+        <footer className={`grid h-16 shrink-0 grid-cols-[minmax(0,1.15fr)_minmax(0,0.95fr)_minmax(0,1.35fr)] border-t border-[var(--border)] ${sectionClass}`} style={structuredPanelStyle}>
+          <div className={`${bottomZoneClass} border-r border-[var(--border)] ${isGenerating ? "opacity-45" : ""}`}>
+            <span className="text-[11px] uppercase tracking-[0.18em] text-[var(--text-muted)]">Transform</span>
+            <Button variant="ghost" className="h-9 px-3 text-xs" disabled={isGenerating} onClick={() => setActiveTab("model")}>
+              Model
+            </Button>
+            <Button variant="ghost" className="h-9 px-3 text-xs" disabled={isGenerating} onClick={() => setActiveTab("light")}>
+              Light
+            </Button>
+            <Button variant="ghost" className="h-9 px-3 text-xs" disabled={isGenerating} onClick={() => setActiveTab("material")}>
+              Material
+            </Button>
+          </div>
+
+          <div className={`${bottomZoneClass} border-r border-[var(--border)]`}>
+            <span className="text-[11px] uppercase tracking-[0.18em] text-[var(--text-muted)]">Tools</span>
+            <select
+              value={toolShortcut}
+              onChange={(event) => void handleToolShortcut(event.currentTarget.value)}
+              className={`h-9 min-w-36 appearance-none rounded-lg border px-3 text-xs outline-none ${selectClass}`}
+            >
+              <option value="tools">Workspace tools</option>
+              <option value="references">{isReferenceDrawerOpen ? "Hide references" : "Show references"}</option>
+              <option value="notes">Open notes</option>
+              <option value="result">Open result tab</option>
+              <option value="output">Open output folder</option>
+            </select>
+          </div>
+
+          {isGenerating ? (
+            <div className={`${bottomZoneClass} justify-end`}>
+              <span className="text-[11px] uppercase tracking-[0.18em] text-[#d6bf8b]">Generating</span>
+              <div className="w-44">
+                <div className="h-2 w-full overflow-hidden rounded-full bg-[var(--surface-3)]">
+                  <div className="h-full bg-[#c39b5f] transition-all duration-150 ease-out" style={{ width: `${generationPercent}%` }} />
+                </div>
+                <p className="mt-1 truncate text-[11px] text-[var(--text-muted)]">{generationMessage}</p>
+              </div>
+              <Button variant="ghost" onClick={() => void handleCancelGeneration()}>
+                Cancelar
+              </Button>
+            </div>
+          ) : (
+            <div className={`${bottomZoneClass} justify-end`}>
+              <span className="text-[11px] uppercase tracking-[0.18em] text-[var(--text-muted)]">Primary</span>
+              <Button variant="secondary" onClick={() => void handleSelectImages()}>
+                Agregar imagenes
+              </Button>
+              <Button variant="primary" onClick={() => void handleRunGeneration()} disabled={selectedImages.length === 0}>
+                {workspaceStatus === "idle" ? "Generar 3D" : "Regenerar 3D"}
+              </Button>
+              <Button variant="primary" onClick={() => void handleRunGenerationSkp()} disabled={selectedImages.length < 1 || selectedImages.length > 4}>
+                Generar SKP
+              </Button>
+            </div>
+          )}
         </footer>
       </div>
     </div>
