@@ -22,3 +22,4 @@ const child = spawn(pythonBin, [serviceEntry], {
 child.on("exit", (code) => {
   process.exit(code ?? 0);
 });
+ 
