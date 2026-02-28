@@ -22,6 +22,16 @@ type AutoProfile = "auto" | "hard_surface" | "organic";
 type MultiviewPreset = "hard_surface" | "balanced" | "organic";
 type MultiviewHardSurfaceQuality = "fast" | "balanced" | "pro";
 type ReconstructionTier = "preview" | "final";
+type InspectorTab = "model" | "material" | "light" | "ai" | "result";
+type WorkspaceStatus = "idle" | "generating" | "result";
+
+const INSPECTOR_TABS: Array<{ id: InspectorTab; label: string }> = [
+  { id: "model", label: "MODEL" },
+  { id: "material", label: "MATERIAL" },
+  { id: "light", label: "LIGHT" },
+  { id: "ai", label: "AI" },
+  { id: "result", label: "RESULT" },
+];
 
 function formatMessageTime(value: string, locale: string) {
   return new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit" }).format(new Date(value));
@@ -217,12 +227,15 @@ export function ProjectPage() {
   const [imagePreviews, setImagePreviews] = useState<Record<string, string>>({});
   const [isAssistantOpen, setIsAssistantOpen] = useState(false);
   const [isNotesOpen, setIsNotesOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<InspectorTab>("ai");
+  const [isReferenceDrawerOpen, setIsReferenceDrawerOpen] = useState(true);
   const historyBottomRef = useRef<HTMLDivElement | null>(null);
   const projectModel = getProjectModel(project?.model);
   const projectRef = useRef(project);
   const selectedImagesRef = useRef(selectedImages);
   const presetRef = useRef(preset);
   const updateProjectModelRef = useRef(updateProjectModel);
+  const workspaceStatusRef = useRef<WorkspaceStatus>("idle");
 
   useEffect(() => {
     projectRef.current = project;
@@ -266,6 +279,8 @@ export function ProjectPage() {
     setMultiviewEnabled(storedMultiview.enabled);
     setMultiviewPreset(resolveDefaultMultiviewPreset(settings.autoGenerationProfile));
     setImagePreviews({});
+    setActiveTab(projectModel.glbPath ? "result" : "ai");
+    setIsReferenceDrawerOpen(true);
   }, [project?.id]);
 
   useEffect(() => {

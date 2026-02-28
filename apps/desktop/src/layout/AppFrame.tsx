@@ -150,13 +150,13 @@ export function AppFrame({ notice, onDismissNotice, children }: AppFrameProps) {
 
       <div
         className={isProjectView
-          ? "flex h-full w-full flex-1 gap-4 overflow-hidden py-4 pl-4 pr-0"
+          ? "flex h-full w-full flex-1 overflow-hidden p-0"
           : "mx-auto flex h-full w-full max-w-[1680px] flex-1 gap-4 overflow-hidden p-4"}
       >
-        <div className="hidden w-56 shrink-0 md:block" aria-hidden />
+        {!isProjectView ? <div className="hidden w-56 shrink-0 md:block" aria-hidden /> : null}
         <main
           className={isProjectView
-            ? `flex min-h-0 flex-1 overflow-hidden rounded-l-2xl rounded-r-none p-0 ${panelClass}`
+            ? `flex min-h-0 flex-1 overflow-hidden rounded-none p-0 ${panelClass}`
             : `flex min-h-0 flex-1 overflow-hidden rounded-2xl p-4 ${panelClass}`}
         >
           {children}
