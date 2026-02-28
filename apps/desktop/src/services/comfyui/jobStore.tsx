@@ -7,7 +7,7 @@ import {
   useState,
   type PropsWithChildren,
 } from "react";
-import type { SubmitWorkflowParams } from "./comfyuiTypes";
+import type { JobStatus, SubmitWorkflowParams } from "./comfyuiTypes";
 import { comfyuiService } from "./comfyuiService";
 import { COMFYUI_JOB_POLL_MS } from "./comfyuiConfig";
 
@@ -37,6 +37,27 @@ function wait(ms: number) {
   return new Promise<void>((resolve) => {
     window.setTimeout(resolve, ms);
   });
+}
+
+async function hydrateTerminalJobState(jobState: JobStatus): Promise<JobStatus> {
+  if (jobState.state !== "RESULT_READY") {
+    return jobState;
+  }
+
+  if (jobState.outputs?.glbPath || (jobState.outputs?.previewImages?.length ?? 0) > 0) {
+    return jobState;
+  }
+
+  try {
+    const outputs = await comfyuiService.resolveOutputs(jobState.jobId);
+    return {
+      ...jobState,
+      outputs,
+    };
+  } catch (error) {
+    console.warn("[VOLUMIA][comfyui][job] resolveOutputs failed", jobState.jobId, error);
+    return jobState;
+  }
 }
 
 export function GenerationJobProvider({ children }: PropsWithChildren) {
@@ -98,7 +119,7 @@ export function GenerationJobProvider({ children }: PropsWithChildren) {
       return;
     }
 
-    const jobState = await comfyuiService.getJobStatus(state.jobId);
+    const jobState = await hydrateTerminalJobState(await comfyuiService.getJobStatus(state.jobId));
     applyRemoteStatus(jobState);
   }, [applyRemoteStatus, state.jobId]);
 
@@ -118,6 +139,7 @@ export function GenerationJobProvider({ children }: PropsWithChildren) {
       error: undefined,
     });
 
+    console.info("[VOLUMIA][comfyui][job] run", params.projectId ?? "unknown-project");
     const submitted = await comfyuiService.submitWorkflow(params);
     setState((current) => ({
       ...current,
@@ -128,10 +150,11 @@ export function GenerationJobProvider({ children }: PropsWithChildren) {
 
     void (async () => {
       while (pollGenerationRef.current === pollToken) {
-        const jobState = await comfyuiService.getJobStatus(submitted.jobId);
+        const jobState = await hydrateTerminalJobState(await comfyuiService.getJobStatus(submitted.jobId));
         applyRemoteStatus(jobState);
 
         if (jobState.state === "RESULT_READY" || jobState.state === "ERROR" || jobState.state === "CANCELED") {
+          console.info("[VOLUMIA][comfyui][job] terminal", submitted.jobId, jobState.state);
           return;
         }
 

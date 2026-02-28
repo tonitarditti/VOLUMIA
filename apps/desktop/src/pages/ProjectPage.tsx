@@ -9,6 +9,7 @@ import { desktopApi, hasDesktopBridge } from "@/electron/desktopApi";
 import { Button, TextArea, TextField } from "@/ui/primitives";
 import { getSurfaceClass } from "@/ui/surfaceClass";
 import { ProjectViewport } from "@/three/ProjectViewport";
+import { DEFAULT_COMFY_WORKFLOW_ID, useGenerationJobStore } from "@/services/comfyui";
 import { useT } from "@/volumia/i18n/useT";
 import { useSettings } from "@/volumia/settings/context";
 
@@ -22,6 +23,12 @@ type AutoProfile = "auto" | "hard_surface" | "organic";
 type MultiviewPreset = "hard_surface" | "balanced" | "organic";
 type MultiviewHardSurfaceQuality = "fast" | "balanced" | "pro";
 type ReconstructionTier = "preview" | "final";
+type PendingGenerationRun = {
+  jobId?: string;
+  pipeline?: "depth_glb" | "gen_skp";
+  sourceImages: string[];
+  preset: GenerationPreset;
+};
 
 function formatMessageTime(value: string, locale: string) {
   return new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit" }).format(new Date(value));
@@ -163,6 +170,7 @@ export function ProjectPage() {
   const hasStoredMultiviewPreferenceRef = useRef(initialGenerationUiState.hasStoredMultiviewPreference);
   const { t, language } = useT();
   const { settings, setAutoGenerationProfile } = useSettings();
+  const { state: generationJob, runGeneration } = useGenerationJobStore();
   const { projectId = "" } = useParams();
   const { state, hydrated, renameProject, updateNotes, appendChatMessage, updateModelMetadata, updateProjectModel } = useProjects();
 
@@ -193,6 +201,8 @@ export function ProjectPage() {
   const selectedImagesRef = useRef(selectedImages);
   const presetRef = useRef(preset);
   const updateProjectModelRef = useRef(updateProjectModel);
+  const pendingGenerationRef = useRef<PendingGenerationRun | null>(null);
+  const handledGenerationStateRef = useRef("");
 
   useEffect(() => {
     projectRef.current = project;
@@ -236,6 +246,8 @@ export function ProjectPage() {
     setMultiviewEnabled(storedMultiview.enabled);
     setMultiviewPreset(resolveDefaultMultiviewPreset(settings.autoGenerationProfile));
     setImagePreviews({});
+    pendingGenerationRef.current = null;
+    handledGenerationStateRef.current = "";
   }, [project?.id]);
 
   useEffect(() => {
@@ -364,52 +376,103 @@ export function ProjectPage() {
     setGenerationLogPath(payload.logPath ?? "");
   }, []);
 
+  useEffect(() => {
+    if (!currentProjectId || generationJob.projectId !== currentProjectId) {
+      return;
+    }
+
+    if (generationJob.status === "generating") {
+      setIsGenerating(true);
+      setGenerationStage((generationJob.progress ?? 0) < 10 ? "queued" : "running");
+      setGenerationPercent(generationJob.progress ?? 0);
+      setGenerationMessage(generationJob.message ?? "Procesando en ComfyUI...");
+      setGenerationLogPath("");
+      return;
+    }
+
+    if (generationJob.status === "idle") {
+      return;
+    }
+
+    const stateKey = `${generationJob.status}:${generationJob.jobId ?? "none"}:${generationJob.finishedAt ?? generationJob.startedAt ?? 0}`;
+    if (handledGenerationStateRef.current === stateKey) {
+      return;
+    }
+    handledGenerationStateRef.current = stateKey;
+
+    if (generationJob.status === "result") {
+      const pendingRun = pendingGenerationRef.current;
+      const glbPath = generationJob.outputs?.glbPath;
+
+      if (!glbPath) {
+        handleGenerationError({
+          projectId: currentProjectId,
+          message: generationJob.message || "ComfyUI finalizo sin producir un GLB.",
+        });
+        return;
+      }
+
+      handleGenerationDone({
+        projectId: currentProjectId,
+        pipeline: pendingRun?.pipeline,
+        glbPath,
+        sourceImages: pendingRun?.sourceImages ?? selectedImagesRef.current,
+        preset: pendingRun?.preset ?? presetRef.current,
+        mode: "auto",
+        message: generationJob.message,
+      });
+      pendingGenerationRef.current = null;
+      return;
+    }
+
+    if (generationJob.status === "error") {
+      handleGenerationError({
+        projectId: currentProjectId,
+        message: generationJob.error?.message ?? generationJob.message ?? "Error ejecutando ComfyUI.",
+      });
+      pendingGenerationRef.current = null;
+    }
+  }, [currentProjectId, generationJob, handleGenerationDone, handleGenerationError]);
+
   const runComfyWorkflow = useCallback(
     async (payload: { imagePath: string; sourceImages: string[]; pipeline?: "depth_glb" | "gen_skp"; label: string }) => {
-      console.info("[gen][renderer] ComfyUI runWorkflow requested. Local Python pipeline disabled.", {
+      console.info("[gen][renderer] ComfyUI submit requested.", {
         label: payload.label,
         imagePath: payload.imagePath,
+        projectId: currentProjectId,
       });
 
+      pendingGenerationRef.current = {
+        pipeline: payload.pipeline,
+        sourceImages: [...payload.sourceImages],
+        preset,
+      };
+      handledGenerationStateRef.current = "";
+
       try {
-        const result = await desktopApi.runComfyWorkflow({ imagePath: payload.imagePath });
-        if (!result.ok) {
-          handleGenerationError({
-            projectId: currentProjectId,
-            message: result.error ?? result.message,
-          });
-          return;
-        }
+        const submitted = await runGeneration({
+          workflowId: DEFAULT_COMFY_WORKFLOW_ID,
+          imagePath: payload.imagePath,
+          projectId: currentProjectId,
+        });
 
-        if (result.outputGlbPath) {
-          handleGenerationDone({
-            projectId: currentProjectId,
+        pendingGenerationRef.current = {
+          ...(pendingGenerationRef.current ?? {
             pipeline: payload.pipeline,
-            glbPath: result.outputGlbPath,
-            sourceImages: payload.sourceImages,
+            sourceImages: [...payload.sourceImages],
             preset,
-            mode: "auto",
-            message: result.message,
-          });
-          return;
-        }
-
-        setIsGenerating(false);
-        setGenerationStage("queued");
-        setGenerationPercent(60);
-        setGenerationMessage(result.message);
-        setGenerationDevice(null);
-        setAutoUsedEngine(null);
-        setAutoUsedPreset(null);
-        setGenerationLogPath("");
+          }),
+          jobId: submitted.jobId,
+        };
       } catch (error) {
+        pendingGenerationRef.current = null;
         handleGenerationError({
           projectId: currentProjectId,
           message: error instanceof Error ? error.message : "Error ejecutando ComfyUI.",
         });
       }
     },
-    [handleGenerationDone, handleGenerationError, preset, currentProjectId]
+    [currentProjectId, handleGenerationError, preset, runGeneration]
   );
 
   // TODO(cleanup): remove legacy local generation IPC + python pipeline once Comfy-only flow is stable.

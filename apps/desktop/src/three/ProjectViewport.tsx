@@ -591,6 +591,24 @@ function applyTextures(root: THREE.Object3D, materialMap: TextureMaterialMap) {
   });
 }
 
+function disposeObject3D(object: THREE.Object3D | null) {
+  if (!object) {
+    return;
+  }
+
+  object.traverse((child) => {
+    if (!(child instanceof THREE.Mesh)) {
+      return;
+    }
+
+    child.geometry?.dispose();
+    const materials = Array.isArray(child.material) ? child.material : [child.material];
+    for (const material of materials) {
+      material?.dispose();
+    }
+  });
+}
+
 function normalizeAndStabilizeModel(root: THREE.Object3D, options: NormalizeAndStabilizeOptions): ModelStabilizationResult | null {
   root.position.set(0, 0, 0);
   root.rotation.set(0, 0, 0);
@@ -724,9 +742,18 @@ function LoadedModel({
   const [loadedModel, setLoadedModel] = useState<THREE.Object3D | null>(null);
   const [stabilization, setStabilization] = useState<ModelStabilizationResult | null>(null);
   const cameraFitKeyRef = useRef<string | null>(null);
+  const loadSeqRef = useRef(0);
+  const invalidateRef = useRef(invalidate);
   const envMapIntensityRef = useRef(envMapIntensity);
   const wireframeRef = useRef(wireframe);
   const debugRenderEnabledRef = useRef(debugRenderEnabled);
+  const onLoadErrorRef = useRef(onLoadError);
+  const onModelNormalizationDebugRef = useRef(onModelNormalizationDebug);
+  const onModelReadyRef = useRef(onModelReady);
+
+  useEffect(() => {
+    invalidateRef.current = invalidate;
+  }, [invalidate]);
 
   useEffect(() => {
     envMapIntensityRef.current = envMapIntensity;
@@ -741,154 +768,206 @@ function LoadedModel({
   }, [debugRenderEnabled]);
 
   useEffect(() => {
+    onLoadErrorRef.current = onLoadError;
+  }, [onLoadError]);
+
+  useEffect(() => {
+    onModelNormalizationDebugRef.current = onModelNormalizationDebug;
+  }, [onModelNormalizationDebug]);
+
+  useEffect(() => {
+    onModelReadyRef.current = onModelReady;
+  }, [onModelReady]);
+
+  useEffect(() => {
     const container = modelRef.current;
-    if (container && loadedSceneRef.current) {
-      container.remove(loadedSceneRef.current);
-      loadedSceneRef.current = null;
-      setLoadedModel(null);
-      setStabilization(null);
-      onModelReady(null);
-      invalidate();
-    }
 
     if (!glbPath) {
-      onLoadError(null);
-      onModelNormalizationDebug(null);
-      onModelReady(null);
+      loadSeqRef.current += 1;
+      if (container && loadedSceneRef.current) {
+        container.remove(loadedSceneRef.current);
+        disposeObject3D(loadedSceneRef.current);
+        loadedSceneRef.current = null;
+      }
+      setLoadedModel(null);
       setStabilization(null);
+      onLoadErrorRef.current(null);
+      onModelNormalizationDebugRef.current(null);
+      onModelReadyRef.current(null);
       cameraFitKeyRef.current = null;
+      invalidateRef.current();
       return;
     }
 
     const loader = new GLTFLoader();
-    let active = true;
     const readGlb = (window as { volumia?: { generation?: ViewportGenerationBridge } }).volumia?.generation?.readGlb;
 
     if (!readGlb) {
-      onLoadError("GLB reader unavailable in this environment.");
-      onModelReady(null);
+      onLoadErrorRef.current("GLB reader unavailable in this environment.");
       return;
     }
 
-    onLoadError(null);
+    const seq = ++loadSeqRef.current;
+    let cancelled = false;
+    onLoadErrorRef.current(null);
 
-    void (async () => {
-      try {
-        const buffer = await readGlb(glbPath);
-        const source = buffer instanceof ArrayBuffer ? new Uint8Array(buffer) : buffer;
-        const bytes = new Uint8Array(source.byteLength);
-        bytes.set(source);
-        const arrayBuffer = bytes.buffer;
+    const shouldRetry = !loadedSceneRef.current && /(?:^|[\\/])latest\.glb(?:\?.*)?$/i.test(glbPath);
+    const retryDelaysMs = shouldRetry ? [0, 300, 800, 1500] : [0];
+
+    const wait = (ms: number) =>
+      new Promise<void>((resolve) => {
+        window.setTimeout(resolve, ms);
+      });
+
+    const readBufferWithRetry = async () => {
+      let lastError: unknown = null;
+      for (let attempt = 0; attempt < retryDelaysMs.length; attempt += 1) {
+        const delayMs = retryDelaysMs[attempt]!;
+        if (attempt > 0) {
+          await wait(delayMs);
+        }
+        if (cancelled || seq !== loadSeqRef.current) {
+          throw new Error("GLB load cancelled.");
+        }
+        try {
+          return await readGlb(glbPath);
+        } catch (error) {
+          lastError = error;
+        }
+      }
+      throw lastError ?? new Error("GLB file not found.");
+    };
+
+    const parseModel = async (arrayBuffer: ArrayBuffer) =>
+      await new Promise<THREE.Object3D>((resolve, reject) => {
         loader.parse(
           arrayBuffer,
           "",
           (gltf) => {
-            if (!active) return;
             const model = gltf.scene ?? gltf.scenes[0];
             if (!model) {
-              onLoadError("GLB loaded but no scene was found.");
-              onModelReady(null);
+              reject(new Error("GLB loaded but no scene was found."));
               return;
             }
-            const container = modelRef.current;
-            if (!container) {
-              onLoadError("Model container unavailable.");
-              onModelReady(null);
-              return;
-            }
-
-            const fitKey = resolveFitKey(glbPath, glbVersion, modelUrl);
-            let normalizationDebug: ModelNormalizationDebug | null = null;
-            const stabilized = normalizeAndStabilizeModel(model, {
-              floorY: FLOOR_Y,
-              envMapIntensity: envMapIntensityRef.current,
-              wireframe: wireframeRef.current,
-              debugRender: debugRenderEnabledRef.current,
-              forcePolygonOffsetAllMeshes: DEV_POLY_OFFSET_ALL_MESHES,
-            });
-
-            if (stabilized) {
-              normalizationDebug = {
-                bboxSize: {
-                  x: stabilized.bboxSize.x,
-                  y: stabilized.bboxSize.y,
-                  z: stabilized.bboxSize.z,
-                },
-                minYTranslation: stabilized.minYTranslation,
-                minYBefore: stabilized.minYBefore,
-                minYAfter: stabilized.minYAfter,
-                centeredX: stabilized.centeredX,
-                centeredZ: stabilized.centeredZ,
-              };
-              if (debugRenderEnabledRef.current) {
-                const cameraPlanes = deriveCameraPlanes(stabilized.radius);
-                console.debug("[ProjectViewport][debug-render]", {
-                  bboxSize: stabilized.bboxSize,
-                  radius: stabilized.radius,
-                  diagonal: stabilized.diagonal,
-                  scaleApplied: stabilized.scaleApplied,
-                  epsilonLift: stabilized.epsilonLift,
-                  cameraNearFar: cameraPlanes,
-                  transparency: stabilized.material,
-                  coplanar: stabilized.coplanar,
-                  polygonOffsetEngaged: stabilized.polygonOffsetEngaged,
-                });
-              }
-            }
-            if (fitKey) {
-              fittedForUrlRef.current = fitKey;
-            }
-
-            // Texture phase hook (material names -> map assignments).
-            applyTextures(model, {});
-            onModelNormalizationDebug(normalizationDebug);
-            container.add(model);
-            loadedSceneRef.current = model;
-            setLoadedModel(model);
-            setStabilization(stabilized);
-            onModelReady(model);
-            onLoadError(null);
-            invalidate();
+            resolve(model);
           },
           (error) => {
-            if (!active) return;
-            onLoadError(`GLB parse error: ${extractErrorMessage(error)}`);
-            onModelNormalizationDebug(null);
-            onModelReady(null);
-            invalidate();
+            reject(error);
           }
         );
+      });
+
+    void (async () => {
+      let nextModel: THREE.Object3D | null = null;
+      try {
+        const buffer = await readBufferWithRetry();
+        if (cancelled || seq !== loadSeqRef.current) {
+          return;
+        }
+        const source = buffer instanceof ArrayBuffer ? new Uint8Array(buffer) : buffer;
+        const bytes = new Uint8Array(source.byteLength);
+        bytes.set(source);
+        nextModel = await parseModel(bytes.buffer);
+        if (cancelled || seq !== loadSeqRef.current) {
+          disposeObject3D(nextModel);
+          return;
+        }
+
+        const nextContainer = modelRef.current;
+        if (!nextContainer) {
+          disposeObject3D(nextModel);
+          if (seq === loadSeqRef.current) {
+            onLoadErrorRef.current("Model container unavailable.");
+          }
+          return;
+        }
+
+        const fitKey = resolveFitKey(glbPath, glbVersion, modelUrl);
+        const stabilized = normalizeAndStabilizeModel(nextModel, {
+          floorY: FLOOR_Y,
+          envMapIntensity: envMapIntensityRef.current,
+          wireframe: wireframeRef.current,
+          debugRender: debugRenderEnabledRef.current,
+          forcePolygonOffsetAllMeshes: DEV_POLY_OFFSET_ALL_MESHES,
+        });
+
+        if (!stabilized) {
+          disposeObject3D(nextModel);
+          if (seq === loadSeqRef.current) {
+            onLoadErrorRef.current("GLB stabilization failed.");
+          }
+          return;
+        }
+
+        const normalizationDebug: ModelNormalizationDebug = {
+          bboxSize: {
+            x: stabilized.bboxSize.x,
+            y: stabilized.bboxSize.y,
+            z: stabilized.bboxSize.z,
+          },
+          minYTranslation: stabilized.minYTranslation,
+          minYBefore: stabilized.minYBefore,
+          minYAfter: stabilized.minYAfter,
+          centeredX: stabilized.centeredX,
+          centeredZ: stabilized.centeredZ,
+        };
+        if (debugRenderEnabledRef.current) {
+          const cameraPlanes = deriveCameraPlanes(stabilized.radius);
+          console.debug("[ProjectViewport][debug-render]", {
+            bboxSize: stabilized.bboxSize,
+            radius: stabilized.radius,
+            diagonal: stabilized.diagonal,
+            scaleApplied: stabilized.scaleApplied,
+            epsilonLift: stabilized.epsilonLift,
+            cameraNearFar: cameraPlanes,
+            transparency: stabilized.material,
+            coplanar: stabilized.coplanar,
+            polygonOffsetEngaged: stabilized.polygonOffsetEngaged,
+          });
+        }
+        if (fitKey) {
+          fittedForUrlRef.current = fitKey;
+        }
+
+        applyTextures(nextModel, {});
+
+        if (cancelled || seq !== loadSeqRef.current) {
+          disposeObject3D(nextModel);
+          return;
+        }
+
+        const previousModel = loadedSceneRef.current;
+        if (previousModel) {
+          nextContainer.remove(previousModel);
+        }
+        nextContainer.add(nextModel);
+        loadedSceneRef.current = nextModel;
+        setLoadedModel(nextModel);
+        setStabilization(stabilized);
+        onModelNormalizationDebugRef.current(normalizationDebug);
+        onModelReadyRef.current(nextModel);
+        onLoadErrorRef.current(null);
+        if (previousModel) {
+          disposeObject3D(previousModel);
+        }
+        invalidateRef.current();
       } catch (error) {
-        if (!active) return;
-        onLoadError(`GLB load error: ${extractErrorMessage(error)}`);
-        onModelNormalizationDebug(null);
-        onModelReady(null);
-        invalidate();
+        if (nextModel && (cancelled || seq !== loadSeqRef.current)) {
+          disposeObject3D(nextModel);
+          return;
+        }
+        if (cancelled || seq !== loadSeqRef.current) {
+          return;
+        }
+        onLoadErrorRef.current(`GLB load error: ${extractErrorMessage(error)}`);
+        invalidateRef.current();
       }
     })();
 
     return () => {
-      active = false;
-      const container = modelRef.current;
-      if (container && loadedSceneRef.current) {
-        container.remove(loadedSceneRef.current);
-        loadedSceneRef.current = null;
-        setLoadedModel(null);
-        setStabilization(null);
-        onModelReady(null);
-        invalidate();
-      }
-      cameraFitKeyRef.current = null;
+      cancelled = true;
     };
-  }, [
-    glbPath,
-    glbVersion,
-    invalidate,
-    modelUrl,
-    onLoadError,
-    onModelNormalizationDebug,
-    onModelReady,
-  ]);
+  }, [glbPath, modelUrl]);
 
   useEffect(() => {
     if (!loadedModel || !(camera instanceof THREE.PerspectiveCamera)) {
