@@ -1,5 +1,4 @@
 import { render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 import { createProject } from "@/projects/factory";
@@ -13,7 +12,7 @@ vi.mock("@/three/ProjectViewport", () => ({
 }));
 
 describe("ProjectPage", () => {
-  it("updates notes and appends chat messages", async () => {
+  it("renders the current project workspace shell", () => {
     window.localStorage.clear();
     const project = createProject("Design Core");
     window.localStorage.setItem(
@@ -24,9 +23,6 @@ describe("ProjectPage", () => {
         projects: [project],
       })
     );
-
-    const user = userEvent.setup();
-
     render(
       <SettingsProvider>
         <ProjectsProvider>
@@ -39,18 +35,8 @@ describe("ProjectPage", () => {
       </SettingsProvider>
     );
 
-    await user.type(screen.getByRole("textbox", { name: /Project name|Nombre del proyecto|Nome do projeto/i }), " Tower");
-
-    const notes = screen.getByPlaceholderText(
-      /Capture constraints|Captura restricciones|Registre restricoes/i
-    );
-    await user.type(notes, "Primary axis aligned to north facade.");
-
-    const prompt = screen.getByRole("textbox", { name: /Assistant|Asistente|Assistente/i });
-    await user.type(prompt, "Review massing hierarchy");
-    await user.click(screen.getByRole("button", { name: /Send|Enviar/i }));
-
-    expect(screen.getByText(/Primary axis aligned to north facade/i)).toBeInTheDocument();
-    expect(screen.getByText(/Intent captured: Review massing hierarchy/i)).toBeInTheDocument();
+    expect(screen.getByTestId("mock-viewport")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Agregar imagenes/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Generar 3D/i })).toBeDisabled();
   });
 });

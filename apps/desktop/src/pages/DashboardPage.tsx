@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { desktopApi, hasDesktopBridge } from "@/electron/desktopApi";
 import type { BackendStatusResponse, ComfyStatusResponse } from "@/electron/channels";
 import { useProjects } from "@/projects/context";
-import { selectProjectsSortedByUpdatedAt } from "@/projects/selectors";
+import { selectActiveProject, selectProjectsSortedByUpdatedAt } from "@/projects/selectors";
 import { EmptyState } from "@/ui/EmptyState";
 import { Button, Card, TextField } from "@/ui/primitives";
 import { useT } from "@/volumia/i18n/useT";
@@ -37,6 +37,12 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
   const [workflowImagePath, setWorkflowImagePath] = useState("");
 
   const projects = useMemo(() => selectProjectsSortedByUpdatedAt(state.projects), [state.projects]);
+  const activeProject = useMemo(() => selectActiveProject(state), [state]);
+
+  const openProject = (projectId: string) => {
+    setActiveProject(projectId);
+    navigate(`/workspace/${projectId}`);
+  };
 
   const beginRename = (projectId: string, currentName: string) => {
     setEditingProjectId(projectId);
@@ -216,6 +222,18 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
               variant="primary"
               className="min-w-28"
               onClick={() => {
+                if (activeProject) {
+                  openProject(activeProject.id);
+                }
+              }}
+              disabled={!activeProject}
+            >
+              Open Project
+            </Button>
+            <Button
+              variant="secondary"
+              className="min-w-28"
+              onClick={() => {
                 createProject();
               }}
             >
@@ -314,8 +332,7 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
                       variant="ghost"
                       className="h-auto items-start justify-start p-0 text-left hover:border-transparent hover:bg-transparent"
                       onClick={() => {
-                        setActiveProject(project.id);
-                        navigate(`/project/${project.id}`);
+                        openProject(project.id);
                       }}
                     >
                       <div>

@@ -188,6 +188,7 @@ export function ProjectPage() {
   const [isNotesOpen, setIsNotesOpen] = useState(false);
   const historyBottomRef = useRef<HTMLDivElement | null>(null);
   const projectModel = getProjectModel(project?.model);
+  const currentProjectId = project?.id ?? "";
   const projectRef = useRef(project);
   const selectedImagesRef = useRef(selectedImages);
   const presetRef = useRef(preset);
@@ -374,7 +375,7 @@ export function ProjectPage() {
         const result = await desktopApi.runComfyWorkflow({ imagePath: payload.imagePath });
         if (!result.ok) {
           handleGenerationError({
-            projectId: project.id,
+            projectId: currentProjectId,
             message: result.error ?? result.message,
           });
           return;
@@ -382,7 +383,7 @@ export function ProjectPage() {
 
         if (result.outputGlbPath) {
           handleGenerationDone({
-            projectId: project.id,
+            projectId: currentProjectId,
             pipeline: payload.pipeline,
             glbPath: result.outputGlbPath,
             sourceImages: payload.sourceImages,
@@ -403,12 +404,12 @@ export function ProjectPage() {
         setGenerationLogPath("");
       } catch (error) {
         handleGenerationError({
-          projectId: project.id,
+          projectId: currentProjectId,
           message: error instanceof Error ? error.message : "Error ejecutando ComfyUI.",
         });
       }
     },
-    [handleGenerationDone, handleGenerationError, preset, project.id]
+    [handleGenerationDone, handleGenerationError, preset, currentProjectId]
   );
 
   // TODO(cleanup): remove legacy local generation IPC + python pipeline once Comfy-only flow is stable.
@@ -769,4 +770,3 @@ export function ProjectPage() {
     </div>
   );
 }
-

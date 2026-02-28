@@ -1,0 +1,460 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>VOLUMIA Premium Home</title>
+    <script src="https://mcp.figma.com/mcp/html-to-design/capture.js" async></script>
+    <style>
+      :root {
+        --font-ui: "Segoe UI Variable", "Aptos", "SF Pro Text", "Helvetica Neue", sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+        font-family: var(--font-ui);
+      }
+
+      body {
+        color: #1e1b17;
+        background:
+          radial-gradient(60rem 35rem at 10% 0%, rgba(208, 188, 158, 0.2), transparent 65%),
+          radial-gradient(60rem 35rem at 100% 20%, rgba(140, 118, 92, 0.18), transparent 60%),
+          #e9e2d8;
+        padding: 20px;
+      }
+
+      .board {
+        max-width: 1920px;
+        margin: 0 auto;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(760px, 1fr));
+        gap: 18px;
+      }
+
+      .frame {
+        position: relative;
+        height: 920px;
+        border-radius: 20px;
+        overflow: hidden;
+        box-shadow: 0 20px 60px rgba(27, 22, 16, 0.18);
+      }
+
+      .frame.light {
+        --bg: #efe7dc;
+        --bg-2: #e8dfd3;
+        --surface: rgba(255, 251, 246, 0.56);
+        --surface-strong: rgba(255, 251, 246, 0.74);
+        --line: rgba(74, 62, 50, 0.14);
+        --text: #2f2720;
+        --muted: rgba(47, 39, 32, 0.64);
+        --bronze: #7a6550;
+        --viewport-a: #e9dfd2;
+        --viewport-b: #d8ccbe;
+      }
+
+      .frame.dark {
+        --bg: #16130f;
+        --bg-2: #1f1913;
+        --surface: rgba(255, 255, 255, 0.05);
+        --surface-strong: rgba(255, 255, 255, 0.08);
+        --line: rgba(255, 255, 255, 0.11);
+        --text: #efe7db;
+        --muted: rgba(239, 231, 219, 0.66);
+        --bronze: #b39674;
+        --viewport-a: #2c241c;
+        --viewport-b: #19150f;
+      }
+
+      .app {
+        position: absolute;
+        inset: 0;
+        background:
+          radial-gradient(50rem 30rem at 15% 0%, rgba(255, 255, 255, 0.16), transparent 65%),
+          radial-gradient(40rem 20rem at 85% 10%, rgba(173, 137, 96, 0.2), transparent 65%),
+          linear-gradient(160deg, var(--bg), var(--bg-2));
+        color: var(--text);
+      }
+
+      .topbar {
+        height: 62px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 22px;
+        border-bottom: 1px solid var(--line);
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.1), transparent);
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .logo {
+        width: 26px;
+        height: 26px;
+        border-radius: 7px;
+        border: 1px solid var(--line);
+        background: linear-gradient(135deg, var(--bronze), rgba(255, 255, 255, 0.35));
+      }
+
+      .brand h1 {
+        margin: 0;
+        font-size: 14px;
+        letter-spacing: 0.22em;
+        font-weight: 600;
+      }
+
+      .project {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 3px;
+      }
+
+      .project strong {
+        font-size: 13px;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+      }
+
+      .project span {
+        font-size: 11px;
+        color: var(--muted);
+      }
+
+      .workspace {
+        position: absolute;
+        inset: 62px 0 0 0;
+      }
+
+      .left-hover {
+        position: absolute;
+        left: 0;
+        top: 0;
+        bottom: 0;
+        width: 58px;
+        border-right: 1px solid var(--line);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .left-hover::before {
+        content: "NAV";
+        font-size: 10px;
+        letter-spacing: 0.2em;
+        color: var(--muted);
+        writing-mode: vertical-rl;
+        transform: rotate(180deg);
+      }
+
+      .viewport-wrap {
+        position: absolute;
+        left: 58px;
+        right: 0;
+        top: 0;
+        bottom: 0;
+        display: grid;
+        grid-template-columns: 70% 30%;
+      }
+
+      .viewport {
+        position: relative;
+        border-right: 1px solid var(--line);
+        background:
+          radial-gradient(28rem 14rem at 50% 65%, rgba(0, 0, 0, 0.22), transparent 72%),
+          linear-gradient(170deg, var(--viewport-a), var(--viewport-b));
+      }
+
+      .hint {
+        position: absolute;
+        left: 22px;
+        top: 20px;
+        padding: 10px 12px;
+        border-radius: 12px;
+        border: 1px solid var(--line);
+        background: var(--surface);
+        backdrop-filter: blur(12px);
+        font-size: 11px;
+        color: var(--muted);
+      }
+
+      .model {
+        position: absolute;
+        left: 50%;
+        top: 47%;
+        width: 280px;
+        height: 300px;
+        transform: translate(-50%, -50%);
+        border-radius: 22px;
+        border: 1px solid rgba(255, 255, 255, 0.22);
+        background:
+          linear-gradient(160deg, rgba(255, 255, 255, 0.45), rgba(255, 255, 255, 0.14)),
+          linear-gradient(60deg, rgba(127, 101, 74, 0.55), rgba(255, 255, 255, 0.1));
+        box-shadow:
+          0 26px 50px rgba(0, 0, 0, 0.3),
+          inset 0 1px 0 rgba(255, 255, 255, 0.45);
+      }
+
+      .model::after {
+        content: "";
+        position: absolute;
+        left: 50%;
+        bottom: -34px;
+        transform: translateX(-50%);
+        width: 230px;
+        height: 20px;
+        border-radius: 50%;
+        background: rgba(0, 0, 0, 0.3);
+        filter: blur(11px);
+      }
+
+      .controls {
+        position: absolute;
+        left: 16px;
+        right: 16px;
+        bottom: 16px;
+        border-radius: 14px;
+        border: 1px solid var(--line);
+        background: var(--surface-strong);
+        backdrop-filter: blur(16px);
+        padding: 10px;
+        display: flex;
+        gap: 10px;
+      }
+
+      .btn {
+        flex: 1;
+        border-radius: 10px;
+        height: 38px;
+        border: 1px solid var(--line);
+        background: transparent;
+        color: var(--text);
+        font-size: 12px;
+        font-weight: 600;
+        letter-spacing: 0.01em;
+        display: grid;
+        place-items: center;
+      }
+
+      .btn.primary {
+        background: linear-gradient(135deg, rgba(150, 123, 92, 0.88), rgba(115, 91, 67, 0.85));
+        color: #f9f5ef;
+        border-color: rgba(255, 255, 255, 0.22);
+      }
+
+      .props {
+        position: relative;
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+
+      .glass {
+        border-radius: 14px;
+        border: 1px solid var(--line);
+        background: var(--surface);
+        backdrop-filter: blur(16px);
+        padding: 12px;
+      }
+
+      .glass h3 {
+        margin: 0 0 10px;
+        font-size: 11px;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        color: var(--muted);
+        font-weight: 600;
+      }
+
+      .row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        margin-bottom: 8px;
+        font-size: 12px;
+      }
+
+      .chip {
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 5px 9px;
+        font-size: 11px;
+        color: var(--muted);
+      }
+
+      .asset-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 8px;
+      }
+
+      .asset {
+        aspect-ratio: 1 / 0.78;
+        border-radius: 10px;
+        border: 1px solid var(--line);
+        background:
+          radial-gradient(circle at 25% 22%, rgba(255, 255, 255, 0.32), transparent 45%),
+          linear-gradient(165deg, rgba(170, 143, 115, 0.4), rgba(70, 56, 41, 0.1));
+      }
+
+      .timeline {
+        position: absolute;
+        left: 76px;
+        right: 16px;
+        bottom: 16px;
+        height: 72px;
+        border-radius: 14px;
+        border: 1px solid var(--line);
+        background: var(--surface-strong);
+        backdrop-filter: blur(16px);
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 8px;
+        padding: 10px;
+      }
+
+      .step {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 11px;
+        color: var(--muted);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="board">
+      <section class="frame light">
+        <div class="app">
+          <header class="topbar">
+            <div class="brand">
+              <div class="logo"></div>
+              <h1>VOLUMIA</h1>
+            </div>
+            <div class="project">
+              <strong>Project: Nordic Pavilion</strong>
+              <span>AI Architecture Workspace</span>
+            </div>
+          </header>
+          <div class="workspace">
+            <div class="left-hover"></div>
+            <div class="viewport-wrap">
+              <main class="viewport">
+                <div class="hint">Drag to rotate model · Scroll to zoom · Soft HDR enabled</div>
+                <div class="model"></div>
+                <div class="controls">
+                  <div class="btn primary">Generate 3D</div>
+                  <div class="btn">Apply Texture</div>
+                  <div class="btn">Export GLB</div>
+                </div>
+              </main>
+              <aside class="props">
+                <section class="glass">
+                  <h3>Materials</h3>
+                  <div class="row"><span>Stone</span><span class="chip">PBR</span></div>
+                  <div class="row"><span>Roughness</span><span class="chip">43%</span></div>
+                  <div class="row"><span>Metallic</span><span class="chip">12%</span></div>
+                </section>
+                <section class="glass">
+                  <h3>Lighting</h3>
+                  <div class="row"><span>HDRI</span><span class="chip">Studio 02</span></div>
+                  <div class="row"><span>Exposure</span><span class="chip">+0.7</span></div>
+                </section>
+                <section class="glass">
+                  <h3>Asset Library</h3>
+                  <div class="asset-grid">
+                    <div class="asset"></div>
+                    <div class="asset"></div>
+                    <div class="asset"></div>
+                    <div class="asset"></div>
+                    <div class="asset"></div>
+                    <div class="asset"></div>
+                  </div>
+                </section>
+              </aside>
+            </div>
+            <footer class="timeline">
+              <div class="step">1. Prompt</div>
+              <div class="step">2. Geometry</div>
+              <div class="step">3. Materials</div>
+              <div class="step">4. Export</div>
+            </footer>
+          </div>
+        </div>
+      </section>
+
+      <section class="frame dark">
+        <div class="app">
+          <header class="topbar">
+            <div class="brand">
+              <div class="logo"></div>
+              <h1>VOLUMIA</h1>
+            </div>
+            <div class="project">
+              <strong>Project: Nordic Pavilion</strong>
+              <span>AI Architecture Workspace</span>
+            </div>
+          </header>
+          <div class="workspace">
+            <div class="left-hover"></div>
+            <div class="viewport-wrap">
+              <main class="viewport">
+                <div class="hint">Drag to rotate model · Scroll to zoom · Soft HDR enabled</div>
+                <div class="model"></div>
+                <div class="controls">
+                  <div class="btn primary">Generate 3D</div>
+                  <div class="btn">Apply Texture</div>
+                  <div class="btn">Export GLB</div>
+                </div>
+              </main>
+              <aside class="props">
+                <section class="glass">
+                  <h3>Materials</h3>
+                  <div class="row"><span>Stone</span><span class="chip">PBR</span></div>
+                  <div class="row"><span>Roughness</span><span class="chip">43%</span></div>
+                  <div class="row"><span>Metallic</span><span class="chip">12%</span></div>
+                </section>
+                <section class="glass">
+                  <h3>Lighting</h3>
+                  <div class="row"><span>HDRI</span><span class="chip">Studio 02</span></div>
+                  <div class="row"><span>Exposure</span><span class="chip">+0.7</span></div>
+                </section>
+                <section class="glass">
+                  <h3>Asset Library</h3>
+                  <div class="asset-grid">
+                    <div class="asset"></div>
+                    <div class="asset"></div>
+                    <div class="asset"></div>
+                    <div class="asset"></div>
+                    <div class="asset"></div>
+                    <div class="asset"></div>
+                  </div>
+                </section>
+              </aside>
+            </div>
+            <footer class="timeline">
+              <div class="step">1. Prompt</div>
+              <div class="step">2. Geometry</div>
+              <div class="step">3. Materials</div>
+              <div class="step">4. Export</div>
+            </footer>
+          </div>
+        </div>
+      </section>
+    </div>
+  </body>
+</html>

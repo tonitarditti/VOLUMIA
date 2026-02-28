@@ -46,7 +46,7 @@ export function Sidebar({ className = "", drawer = false, pinned = false, onTogg
         ) : null}
       </div>
       <nav className="space-y-1.5">
-        <NavLink to="/" end className={({ isActive }) => navItemClass(isActive)}>
+        <NavLink to="/dashboard" end className={({ isActive }) => navItemClass(isActive)}>
           <span className={iconClass}>
             D
           </span>

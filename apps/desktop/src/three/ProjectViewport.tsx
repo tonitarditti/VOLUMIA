@@ -63,6 +63,7 @@ type LoadedModelProps = {
   glbVersion?: number;
   modelUrl?: string;
   allowFit: boolean;
+  debugRenderEnabled: boolean;
   fittedForUrlRef: { current: string | null };
   controlsRef: { current: OrbitControlsImpl | null };
   envMapIntensity: number;
@@ -95,6 +96,56 @@ type ModelNormalizationDebug = {
   centeredZ: number;
 };
 
+type CoplanarHeuristicStats = {
+  meshCount: number;
+  thinMeshCount: number;
+  duplicateBoxKeyCount: number;
+  suspicious: boolean;
+};
+
+type MaterialStabilityStats = {
+  totalMaterials: number;
+  transparentMaterials: number;
+  forcedOpaqueMaterials: number;
+  translucentMaterials: number;
+  polygonOffsetMaterials: number;
+};
+
+type ModelStabilizationResult = {
+  bboxSize: THREE.Vector3;
+  minYTranslation: number;
+  minYBefore: number;
+  minYAfter: number;
+  centeredX: number;
+  centeredZ: number;
+  radius: number;
+  diagonal: number;
+  epsilonLift: number;
+  scaleApplied: number;
+  removedBaseMeshes: number;
+  coplanar: CoplanarHeuristicStats;
+  material: MaterialStabilityStats;
+  polygonOffsetEngaged: boolean;
+};
+
+type NormalizeAndStabilizeOptions = {
+  floorY: number;
+  envMapIntensity: number;
+  wireframe: boolean;
+  debugRender: boolean;
+  forcePolygonOffsetAllMeshes: boolean;
+};
+
+type TextureAssignment = {
+  map?: THREE.Texture | null;
+  normalMap?: THREE.Texture | null;
+  roughnessMap?: THREE.Texture | null;
+  metalnessMap?: THREE.Texture | null;
+  aoMap?: THREE.Texture | null;
+};
+
+type TextureMaterialMap = Record<string, TextureAssignment>;
+
 type ViewportThemeConfig = {
   isDark: boolean;
   background: string;
@@ -114,12 +165,14 @@ const VIEW_TARGET = new THREE.Vector3(0, 0, 0);
 const VIEWER_DEBUG = import.meta.env.DEV;
 const VIEWPORT_EVENT_DEBUG = import.meta.env.DEV && import.meta.env.VITE_VOLUMIA_DEBUG_VIEWPORT === "1";
 const VIEWPORT_CAPTURE_DEBUG = import.meta.env.VITE_VOLUMIA_DEBUG_VIEWPORT === "1";
+const DEFAULT_DEBUG_RENDER = import.meta.env.DEV && import.meta.env.VITE_VOLUMIA_DEBUG_RENDER === "1";
+const DEV_POLY_OFFSET_ALL_MESHES = import.meta.env.DEV && import.meta.env.VITE_VOLUMIA_POLYOFFSET_ALL_MESHES === "1";
 const SHADOW_CAMERA_BOUNDS = 12;
 const SHADOW_CAMERA_NEAR = 0.5;
 const SHADOW_CAMERA_FAR = 40;
 const FLOOR_Y = 0;
-const EPS = 0.002;
-const MODEL_GROUND_TOLERANCE = EPS * 0.25;
+const MODEL_GROUND_TOLERANCE = 0.0005;
+const TARGET_MODEL_DIAGONAL = 2.0;
 const DEFAULT_CAMERA_SNAPSHOT: CameraSnapshot = {
   position: new THREE.Vector3(2.8, 2.2, 2.8),
   target: VIEW_TARGET.clone(),
@@ -251,16 +304,6 @@ function asOrbitControls(value: unknown): OrbitControlsImpl | null {
   return maybe as OrbitControlsImpl;
 }
 
-type GroundingResult = {
-  bboxSize: THREE.Vector3;
-  minYTranslation: number;
-  minYBefore: number;
-  minYAfter: number;
-  centeredX: number;
-  centeredZ: number;
-  removedBaseMeshes: number;
-};
-
 function resolveFitKey(glbPath?: string, glbVersion?: number, modelUrl?: string) {
   if (modelUrl) {
     return modelUrl;
@@ -271,74 +314,102 @@ function resolveFitKey(glbPath?: string, glbVersion?: number, modelUrl?: string)
   return "";
 }
 
-function normalizeAndGround(root: THREE.Object3D): GroundingResult | null {
-  // Keep normalization idempotent between repeated runs for the same loaded scene.
-  // We intentionally do not reset scale to avoid breaking valid authored GLB scaling.
-  root.position.set(0, 0, 0);
-  root.rotation.set(0, 0, 0);
-  root.updateMatrixWorld(true);
-
-  const stripResult = hideLikelyEmbeddedBaseMeshes(root);
-  const bbox = computeVisibleBoundingBox(root);
-  if (!bbox || bbox.isEmpty()) {
-    return null;
-  }
-
-  const center = bbox.getCenter(new THREE.Vector3());
-  root.position.x -= center.x;
-  root.position.z -= center.z;
-  root.updateMatrixWorld(true);
-
-  const bbox2 = computeVisibleBoundingBox(root);
-  if (!bbox2 || bbox2.isEmpty()) {
-    return null;
-  }
-
-  const groundedBox = bbox2;
-  const minYBefore = groundedBox.min.y;
-  const targetMinY = FLOOR_Y + EPS;
-  let minYTranslation = (FLOOR_Y + EPS) - groundedBox.min.y;
-  if (Math.abs(minYTranslation) > MODEL_GROUND_TOLERANCE) {
-    root.position.y += minYTranslation;
-    root.updateMatrixWorld(true);
-  } else {
-    minYTranslation = 0;
-  }
-
-  let finalBox = computeVisibleBoundingBox(root);
-  if (!finalBox || finalBox.isEmpty()) {
-    return null;
-  }
-
-  const postMoveMinY = finalBox.min.y;
-  if (Math.abs(postMoveMinY - targetMinY) > MODEL_GROUND_TOLERANCE) {
-    const correction = targetMinY - postMoveMinY;
-    root.position.y += correction;
-    minYTranslation += correction;
-    root.updateMatrixWorld(true);
-    finalBox = computeVisibleBoundingBox(root);
-    if (!finalBox || finalBox.isEmpty()) {
-      return null;
-    }
-  }
-
-  const size = finalBox.getSize(new THREE.Vector3());
-  const minYAfter = finalBox.min.y;
-  if (VIEWER_DEBUG) {
-    console.debug("[ProjectViewport][ground] minY before", minYBefore, "dy", minYTranslation, "after", minYAfter);
-  }
+function deriveCameraPlanes(radius: number) {
+  const safeRadius = Math.max(radius, 0.01);
   return {
-    bboxSize: size,
-    minYTranslation,
-    minYBefore,
-    minYAfter,
-    centeredX: center.x,
-    centeredZ: center.z,
-    removedBaseMeshes: stripResult.removed,
+    near: Math.max(0.01, safeRadius / 1000),
+    far: Math.max(100, safeRadius * 20),
   };
 }
 
-function applyModelVisualSettings(object: THREE.Object3D, envMapIntensity: number, wireframe: boolean) {
+function normalizeTextureColorSpace(texture: THREE.Texture) {
+  if ("colorSpace" in texture) {
+    texture.colorSpace = THREE.SRGBColorSpace;
+  } else {
+    const legacyEncoding = (THREE as unknown as { sRGBEncoding?: number }).sRGBEncoding;
+    if (legacyEncoding !== undefined) {
+      (texture as THREE.Texture & { encoding?: number }).encoding = legacyEncoding;
+    }
+  }
+  texture.needsUpdate = true;
+}
+
+function analyzeCoplanarRisk(root: THREE.Object3D): CoplanarHeuristicStats {
+  const box = new THREE.Box3();
+  const size = new THREE.Vector3();
+  const center = new THREE.Vector3();
+  const seenBoxes = new Map<string, number>();
+  let meshCount = 0;
+  let thinMeshCount = 0;
+
+  root.updateMatrixWorld(true);
+  root.traverse((child) => {
+    if (!(child instanceof THREE.Mesh)) {
+      return;
+    }
+    if (!child.visible || !child.geometry) {
+      return;
+    }
+    const geometry = child.geometry;
+    if (!geometry.boundingBox) {
+      geometry.computeBoundingBox();
+    }
+    if (!geometry.boundingBox) {
+      return;
+    }
+    box.copy(geometry.boundingBox).applyMatrix4(child.matrixWorld);
+    if (box.isEmpty()) {
+      return;
+    }
+
+    box.getSize(size);
+    box.getCenter(center);
+    const maxAxis = Math.max(size.x, size.y, size.z);
+    const minAxis = Math.min(size.x, size.y, size.z);
+    if (maxAxis > 0 && minAxis / maxAxis <= 0.0025) {
+      thinMeshCount += 1;
+    }
+
+    const key = [
+      size.x.toFixed(4),
+      size.y.toFixed(4),
+      size.z.toFixed(4),
+      center.x.toFixed(4),
+      center.y.toFixed(4),
+      center.z.toFixed(4),
+    ].join("|");
+    seenBoxes.set(key, (seenBoxes.get(key) ?? 0) + 1);
+    meshCount += 1;
+  });
+
+  let duplicateBoxKeyCount = 0;
+  for (const count of seenBoxes.values()) {
+    if (count > 1) {
+      duplicateBoxKeyCount += count - 1;
+    }
+  }
+
+  const suspicious = duplicateBoxKeyCount > 0 || thinMeshCount >= Math.max(2, Math.floor(meshCount * 0.2));
+  return {
+    meshCount,
+    thinMeshCount,
+    duplicateBoxKeyCount,
+    suspicious,
+  };
+}
+
+function applyModelVisualSettings(
+  object: THREE.Object3D,
+  options: { envMapIntensity: number; wireframe: boolean; polygonOffset: boolean }
+): MaterialStabilityStats {
+  const stats: MaterialStabilityStats = {
+    totalMaterials: 0,
+    transparentMaterials: 0,
+    forcedOpaqueMaterials: 0,
+    translucentMaterials: 0,
+    polygonOffsetMaterials: 0,
+  };
+
   object.traverse((child) => {
     if (!(child instanceof THREE.Mesh)) {
       return;
@@ -406,21 +477,230 @@ function applyModelVisualSettings(object: THREE.Object3D, envMapIntensity: numbe
       if (!material) {
         continue;
       }
+      stats.totalMaterials += 1;
 
       if (material instanceof THREE.MeshStandardMaterial || material instanceof THREE.MeshPhysicalMaterial) {
-        material.envMapIntensity = envMapIntensity;
+        material.envMapIntensity = options.envMapIntensity;
       }
 
       if ("wireframe" in material) {
         const wireframeMaterial = material as THREE.Material & { wireframe?: boolean };
         if (typeof wireframeMaterial.wireframe === "boolean") {
-          wireframeMaterial.wireframe = wireframe;
+          wireframeMaterial.wireframe = options.wireframe;
         }
       }
 
+      const alphaMaterial = material as THREE.Material & {
+        transparent?: boolean;
+        opacity?: number;
+        depthWrite?: boolean;
+        depthTest?: boolean;
+        polygonOffset?: boolean;
+        polygonOffsetFactor?: number;
+        polygonOffsetUnits?: number;
+      };
+      const opacity = typeof alphaMaterial.opacity === "number" ? alphaMaterial.opacity : 1;
+      const wasTransparent = alphaMaterial.transparent === true;
+      if (wasTransparent) {
+        stats.transparentMaterials += 1;
+      }
+      if (wasTransparent && opacity >= 0.99) {
+        alphaMaterial.transparent = false;
+        alphaMaterial.opacity = 1;
+        stats.forcedOpaqueMaterials += 1;
+      }
+
+      const isTranslucent = alphaMaterial.transparent === true && (alphaMaterial.opacity ?? 1) < 0.99;
+      if (isTranslucent) {
+        stats.translucentMaterials += 1;
+      }
+      alphaMaterial.depthTest = true;
+      alphaMaterial.depthWrite = !isTranslucent;
+
+      const shouldOffsetMaterial = options.polygonOffset || isTranslucent;
+      alphaMaterial.polygonOffset = shouldOffsetMaterial;
+      alphaMaterial.polygonOffsetFactor = shouldOffsetMaterial ? 1 : 0;
+      alphaMaterial.polygonOffsetUnits = shouldOffsetMaterial ? 1 : 0;
+      if (shouldOffsetMaterial) {
+        stats.polygonOffsetMaterials += 1;
+      }
+
+      if (isTranslucent) {
+        child.renderOrder = Math.max(child.renderOrder, 1);
+      }
       material.needsUpdate = true;
     }
   });
+
+  return stats;
+}
+
+function applyTextures(root: THREE.Object3D, materialMap: TextureMaterialMap) {
+  if (Object.keys(materialMap).length === 0) {
+    return;
+  }
+
+  root.traverse((child) => {
+    if (!(child instanceof THREE.Mesh)) {
+      return;
+    }
+    const materials = Array.isArray(child.material) ? child.material : [child.material];
+    for (const material of materials) {
+      if (!material) {
+        continue;
+      }
+      const keyCandidates = [material.name, child.name].filter((value) => value && value.trim().length > 0) as string[];
+      let assignment: TextureAssignment | undefined;
+      for (const key of keyCandidates) {
+        if (materialMap[key]) {
+          assignment = materialMap[key];
+          break;
+        }
+      }
+      if (!assignment) {
+        continue;
+      }
+
+      const pbr = material as THREE.Material & {
+        map?: THREE.Texture | null;
+        normalMap?: THREE.Texture | null;
+        roughnessMap?: THREE.Texture | null;
+        metalnessMap?: THREE.Texture | null;
+        aoMap?: THREE.Texture | null;
+      };
+      if (assignment.map !== undefined) {
+        pbr.map = assignment.map ?? null;
+        if (pbr.map) {
+          normalizeTextureColorSpace(pbr.map);
+        }
+      }
+      if (assignment.normalMap !== undefined) {
+        pbr.normalMap = assignment.normalMap ?? null;
+      }
+      if (assignment.roughnessMap !== undefined) {
+        pbr.roughnessMap = assignment.roughnessMap ?? null;
+      }
+      if (assignment.metalnessMap !== undefined) {
+        pbr.metalnessMap = assignment.metalnessMap ?? null;
+      }
+      if (assignment.aoMap !== undefined) {
+        pbr.aoMap = assignment.aoMap ?? null;
+      }
+      material.needsUpdate = true;
+    }
+  });
+}
+
+function normalizeAndStabilizeModel(root: THREE.Object3D, options: NormalizeAndStabilizeOptions): ModelStabilizationResult | null {
+  root.position.set(0, 0, 0);
+  root.rotation.set(0, 0, 0);
+  root.updateMatrixWorld(true);
+
+  const stripResult = hideLikelyEmbeddedBaseMeshes(root);
+  let bbox = computeVisibleBoundingBox(root);
+  if (!bbox || bbox.isEmpty()) {
+    return null;
+  }
+
+  const preScaleSize = bbox.getSize(new THREE.Vector3());
+  const preScaleDiagonal = preScaleSize.length();
+  let scaleApplied = 1;
+  const isScaleClearlyWrong = preScaleDiagonal > 0 && (preScaleDiagonal < 0.02 || preScaleDiagonal > 200);
+  if (isScaleClearlyWrong) {
+    scaleApplied = THREE.MathUtils.clamp(TARGET_MODEL_DIAGONAL / preScaleDiagonal, 0.001, 1000);
+    root.scale.multiplyScalar(scaleApplied);
+    root.updateMatrixWorld(true);
+    bbox = computeVisibleBoundingBox(root);
+    if (!bbox || bbox.isEmpty()) {
+      return null;
+    }
+  }
+
+  const center = bbox.getCenter(new THREE.Vector3());
+  root.position.x -= center.x;
+  root.position.y -= center.y;
+  root.position.z -= center.z;
+  root.updateMatrixWorld(true);
+
+  const groundedBox = computeVisibleBoundingBox(root);
+  if (!groundedBox || groundedBox.isEmpty()) {
+    return null;
+  }
+
+  const groundedSize = groundedBox.getSize(new THREE.Vector3());
+  const radius = Math.max(groundedSize.length() * 0.5, 0.001);
+  const epsilonLift = Math.max(0.001, radius * 0.001);
+  const targetMinY = options.floorY + epsilonLift;
+  const minYBefore = groundedBox.min.y;
+  let minYTranslation = targetMinY - groundedBox.min.y;
+  if (Math.abs(minYTranslation) > MODEL_GROUND_TOLERANCE) {
+    root.position.y += minYTranslation;
+    root.updateMatrixWorld(true);
+  } else {
+    minYTranslation = 0;
+  }
+
+  let finalBox = computeVisibleBoundingBox(root);
+  if (!finalBox || finalBox.isEmpty()) {
+    return null;
+  }
+
+  const postMoveMinY = finalBox.min.y;
+  if (Math.abs(postMoveMinY - targetMinY) > MODEL_GROUND_TOLERANCE) {
+    const correction = targetMinY - postMoveMinY;
+    root.position.y += correction;
+    minYTranslation += correction;
+    root.updateMatrixWorld(true);
+    finalBox = computeVisibleBoundingBox(root);
+    if (!finalBox || finalBox.isEmpty()) {
+      return null;
+    }
+  }
+
+  const coplanar = analyzeCoplanarRisk(root);
+  const polygonOffsetEngaged = options.forcePolygonOffsetAllMeshes || coplanar.suspicious;
+  const material = applyModelVisualSettings(root, {
+    envMapIntensity: options.envMapIntensity,
+    wireframe: options.wireframe,
+    polygonOffset: polygonOffsetEngaged,
+  });
+
+  const finalSize = finalBox.getSize(new THREE.Vector3());
+  const minYAfter = finalBox.min.y;
+  const diagonal = finalSize.length();
+  if (options.debugRender) {
+    console.debug("[ProjectViewport][stabilize]", {
+      bbox: { x: finalSize.x, y: finalSize.y, z: finalSize.z },
+      radius,
+      diagonal,
+      epsilonLift,
+      scaleApplied,
+      minYBefore,
+      minYAfter,
+      minYTranslation,
+      coplanar,
+      material,
+      polygonOffsetEngaged,
+      removedBaseMeshes: stripResult.removed,
+    });
+  }
+
+  return {
+    bboxSize: finalSize,
+    minYTranslation,
+    minYBefore,
+    minYAfter,
+    centeredX: center.x,
+    centeredZ: center.z,
+    radius,
+    diagonal,
+    epsilonLift,
+    scaleApplied,
+    removedBaseMeshes: stripResult.removed,
+    coplanar,
+    material,
+    polygonOffsetEngaged,
+  };
 }
 
 function LoadedModel({
@@ -428,6 +708,7 @@ function LoadedModel({
   glbVersion,
   modelUrl,
   allowFit,
+  debugRenderEnabled,
   fittedForUrlRef,
   controlsRef,
   envMapIntensity,
@@ -441,7 +722,23 @@ function LoadedModel({
   const modelRef = useRef<THREE.Group>(null);
   const loadedSceneRef = useRef<THREE.Object3D | null>(null);
   const [loadedModel, setLoadedModel] = useState<THREE.Object3D | null>(null);
+  const [stabilization, setStabilization] = useState<ModelStabilizationResult | null>(null);
   const cameraFitKeyRef = useRef<string | null>(null);
+  const envMapIntensityRef = useRef(envMapIntensity);
+  const wireframeRef = useRef(wireframe);
+  const debugRenderEnabledRef = useRef(debugRenderEnabled);
+
+  useEffect(() => {
+    envMapIntensityRef.current = envMapIntensity;
+  }, [envMapIntensity]);
+
+  useEffect(() => {
+    wireframeRef.current = wireframe;
+  }, [wireframe]);
+
+  useEffect(() => {
+    debugRenderEnabledRef.current = debugRenderEnabled;
+  }, [debugRenderEnabled]);
 
   useEffect(() => {
     const container = modelRef.current;
@@ -449,6 +746,7 @@ function LoadedModel({
       container.remove(loadedSceneRef.current);
       loadedSceneRef.current = null;
       setLoadedModel(null);
+      setStabilization(null);
       onModelReady(null);
       invalidate();
     }
@@ -457,6 +755,7 @@ function LoadedModel({
       onLoadError(null);
       onModelNormalizationDebug(null);
       onModelReady(null);
+      setStabilization(null);
       cameraFitKeyRef.current = null;
       return;
     }
@@ -500,26 +799,39 @@ function LoadedModel({
 
             const fitKey = resolveFitKey(glbPath, glbVersion, modelUrl);
             let normalizationDebug: ModelNormalizationDebug | null = null;
-            const grounding = normalizeAndGround(model);
+            const stabilized = normalizeAndStabilizeModel(model, {
+              floorY: FLOOR_Y,
+              envMapIntensity: envMapIntensityRef.current,
+              wireframe: wireframeRef.current,
+              debugRender: debugRenderEnabledRef.current,
+              forcePolygonOffsetAllMeshes: DEV_POLY_OFFSET_ALL_MESHES,
+            });
 
-            if (grounding) {
+            if (stabilized) {
               normalizationDebug = {
                 bboxSize: {
-                  x: grounding.bboxSize.x,
-                  y: grounding.bboxSize.y,
-                  z: grounding.bboxSize.z,
+                  x: stabilized.bboxSize.x,
+                  y: stabilized.bboxSize.y,
+                  z: stabilized.bboxSize.z,
                 },
-                minYTranslation: grounding.minYTranslation,
-                minYBefore: grounding.minYBefore,
-                minYAfter: grounding.minYAfter,
-                centeredX: grounding.centeredX,
-                centeredZ: grounding.centeredZ,
+                minYTranslation: stabilized.minYTranslation,
+                minYBefore: stabilized.minYBefore,
+                minYAfter: stabilized.minYAfter,
+                centeredX: stabilized.centeredX,
+                centeredZ: stabilized.centeredZ,
               };
-              if (VIEWER_DEBUG) {
-                console.debug("[ProjectViewport][normalize] bbox", {
-                  size: grounding.bboxSize,
-                  minYTranslation: grounding.minYTranslation,
-                  removedBaseMeshes: grounding.removedBaseMeshes,
+              if (debugRenderEnabledRef.current) {
+                const cameraPlanes = deriveCameraPlanes(stabilized.radius);
+                console.debug("[ProjectViewport][debug-render]", {
+                  bboxSize: stabilized.bboxSize,
+                  radius: stabilized.radius,
+                  diagonal: stabilized.diagonal,
+                  scaleApplied: stabilized.scaleApplied,
+                  epsilonLift: stabilized.epsilonLift,
+                  cameraNearFar: cameraPlanes,
+                  transparency: stabilized.material,
+                  coplanar: stabilized.coplanar,
+                  polygonOffsetEngaged: stabilized.polygonOffsetEngaged,
                 });
               }
             }
@@ -527,10 +839,13 @@ function LoadedModel({
               fittedForUrlRef.current = fitKey;
             }
 
+            // Texture phase hook (material names -> map assignments).
+            applyTextures(model, {});
             onModelNormalizationDebug(normalizationDebug);
             container.add(model);
             loadedSceneRef.current = model;
             setLoadedModel(model);
+            setStabilization(stabilized);
             onModelReady(model);
             onLoadError(null);
             invalidate();
@@ -559,12 +874,50 @@ function LoadedModel({
         container.remove(loadedSceneRef.current);
         loadedSceneRef.current = null;
         setLoadedModel(null);
+        setStabilization(null);
         onModelReady(null);
         invalidate();
       }
       cameraFitKeyRef.current = null;
     };
-  }, [glbPath, glbVersion, invalidate, modelUrl, onLoadError, onModelNormalizationDebug, onModelReady]);
+  }, [
+    glbPath,
+    glbVersion,
+    invalidate,
+    modelUrl,
+    onLoadError,
+    onModelNormalizationDebug,
+    onModelReady,
+  ]);
+
+  useEffect(() => {
+    if (!loadedModel || !(camera instanceof THREE.PerspectiveCamera)) {
+      return;
+    }
+
+    loadedModel.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(loadedModel);
+    if (box.isEmpty()) {
+      return;
+    }
+
+    const radius = Math.max(box.getSize(new THREE.Vector3()).length() * 0.5, 0.01);
+    const { near, far } = deriveCameraPlanes(radius);
+    if (!Number.isFinite(near) || !Number.isFinite(far) || near <= 0 || near >= far) {
+      if (debugRenderEnabled) {
+        console.warn("[ProjectViewport][debug-render] Invalid derived planes", { near, far, radius });
+      }
+      return;
+    }
+
+    const changed = Math.abs(camera.near - near) > 1e-6 || Math.abs(camera.far - far) > 1e-3;
+    if (changed) {
+      camera.near = near;
+      camera.far = far;
+      camera.updateProjectionMatrix();
+      invalidate();
+    }
+  }, [camera, debugRenderEnabled, invalidate, loadedModel]);
 
   useEffect(() => {
     if (!loadedModel || !(camera instanceof THREE.PerspectiveCamera)) {
@@ -588,17 +941,17 @@ function LoadedModel({
     }
 
     const size = finalBox.getSize(new THREE.Vector3());
+    const radius = Math.max(size.length() * 0.5, 0.01);
     const maxDim = Math.max(size.x, size.y, size.z);
-    if (!Number.isFinite(maxDim) || maxDim <= 0) {
+    if (!Number.isFinite(maxDim) || maxDim <= 0 || !Number.isFinite(radius)) {
       return;
     }
 
     const fovRad = THREE.MathUtils.degToRad(camera.fov);
-    const cameraZ = (maxDim / (2 * Math.tan(fovRad / 2))) * 1.4;
-    const near = Math.max(0.01, cameraZ / 100);
-    const far = Math.max(50, cameraZ * 20);
+    const cameraDistance = Math.max((radius / Math.tan(fovRad / 2)) * 1.25, radius * 2.2);
+    const { near, far } = deriveCameraPlanes(radius);
     const nextTarget = new THREE.Vector3(0, 0, 0);
-    const nextPosition = new THREE.Vector3(0, Math.max(size.y * 0.5, maxDim * 0.35), cameraZ);
+    const nextPosition = new THREE.Vector3(0, Math.max(size.y * 0.5, radius * 0.9), cameraDistance);
     const snapshot: CameraSnapshot = {
       position: nextPosition,
       target: nextTarget,
@@ -616,6 +969,19 @@ function LoadedModel({
       near: snapshot.near,
       far: snapshot.far,
     });
+    if (debugRenderEnabled) {
+      if (!Number.isFinite(snapshot.near) || !Number.isFinite(snapshot.far) || snapshot.near <= 0 || snapshot.near >= snapshot.far) {
+        console.warn("[ProjectViewport][debug-render] Invalid camera near/far", snapshot);
+      } else {
+        console.debug("[ProjectViewport][debug-render] Camera fit", {
+          near: snapshot.near,
+          far: snapshot.far,
+          radius,
+          cameraDistance,
+          bboxSize: size,
+        });
+      }
+    }
     cameraFitKeyRef.current = fitKey;
     invalidate();
   }, [
@@ -623,6 +989,7 @@ function LoadedModel({
     camera,
     controls,
     controlsRef,
+    debugRenderEnabled,
     invalidate,
     loadedModel,
     glbPath,
@@ -636,9 +1003,13 @@ function LoadedModel({
       return;
     }
 
-    applyModelVisualSettings(loadedModel, envMapIntensity, wireframe);
+    applyModelVisualSettings(loadedModel, {
+      envMapIntensity,
+      wireframe,
+      polygonOffset: stabilization?.polygonOffsetEngaged ?? DEV_POLY_OFFSET_ALL_MESHES,
+    });
     invalidate();
-  }, [envMapIntensity, invalidate, loadedModel, wireframe]);
+  }, [envMapIntensity, invalidate, loadedModel, stabilization, wireframe]);
 
   return <group ref={modelRef} />;
 }
@@ -805,6 +1176,7 @@ export function ProjectViewport({
   });
   const [size, setSize] = useState<ViewportSize>({ width: 0, height: 0 });
   const [wireframeInternal, setWireframeInternal] = useState(false);
+  const [debugRenderEnabled, setDebugRenderEnabled] = useState(DEFAULT_DEBUG_RENDER);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [modelNormalizationDebug, setModelNormalizationDebug] = useState<ModelNormalizationDebug | null>(null);
   const wireframe = wireframeProp ?? wireframeInternal;
@@ -880,6 +1252,11 @@ export function ProjectViewport({
       ? "bg-[var(--surface-3)] text-[var(--text)]"
       : "bg-[var(--surface-1)] text-[var(--text-muted)] hover:bg-[var(--surface-2)] hover:text-[var(--text)]"
   }`;
+  const utilityDebugClass = `rounded-md border border-[var(--border)] px-2 py-1 text-[10px] uppercase tracking-[0.08em] transition-colors ${
+    debugRenderEnabled
+      ? "bg-[var(--surface-3)] text-[var(--text)]"
+      : "bg-[var(--surface-1)] text-[var(--text-muted)] hover:bg-[var(--surface-2)] hover:text-[var(--text)]"
+  }`;
 
   useEffect(() => {
     if (glbPath) {
@@ -951,6 +1328,7 @@ export function ProjectViewport({
     const bboxSize = bbox.getSize(new THREE.Vector3());
     const target = bbox.getCenter(new THREE.Vector3());
     const maxDim = Math.max(bboxSize.x, bboxSize.y, bboxSize.z);
+    const modelRadius = Math.max(bboxSize.length() * 0.5, 0.01);
     if (!Number.isFinite(maxDim) || maxDim <= 0) {
       throw new Error("Viewport capture failed: invalid model dimensions.");
     }
@@ -1003,6 +1381,9 @@ export function ProjectViewport({
       renderer.setScissorTest(false);
       renderer.autoClear = true;
       camera.aspect = args.width / args.height;
+      const capturePlanes = deriveCameraPlanes(modelRadius);
+      camera.near = capturePlanes.near;
+      camera.far = capturePlanes.far;
       camera.updateProjectionMatrix();
 
       for (const view of views) {
@@ -1078,6 +1459,10 @@ export function ProjectViewport({
     }
     setWireframeInternal((current) => !current);
   }, [onToggleWireframe]);
+
+  const handleToggleDebugRender = useCallback(() => {
+    setDebugRenderEnabled((current) => !current);
+  }, []);
 
   const stopOrbiting = useCallback(() => {
     if (!isOrbitingRef.current) {
@@ -1159,6 +1544,15 @@ export function ProjectViewport({
                   >
                     Screenshot
                   </button>
+                  {VIEWER_DEBUG ? (
+                    <button
+                      type="button"
+                      onClick={handleToggleDebugRender}
+                      className={utilityDebugClass}
+                    >
+                      Debug Render
+                    </button>
+                  ) : null}
                 </div>
               ) : null}
             </div>
@@ -1187,11 +1581,12 @@ export function ProjectViewport({
                 dpr={[1, 2]}
                 frameloop="demand"
                 shadows
-                gl={{ antialias: true, alpha: false, preserveDrawingBuffer: true }}
+                gl={{ antialias: true, alpha: false, preserveDrawingBuffer: true, logarithmicDepthBuffer: true }}
                 onCreated={({ gl, camera, scene, invalidate }) => {
                   rendererRef.current = gl;
                   sceneRef.current = scene;
                   invalidateRef.current = invalidate;
+                  gl.sortObjects = true;
                   if ("outputColorSpace" in gl) {
                     gl.outputColorSpace = THREE.SRGBColorSpace;
                   } else {
@@ -1278,6 +1673,7 @@ export function ProjectViewport({
                   glbVersion={glbVersion}
                   modelUrl={url}
                   allowFit={allowModelFit}
+                  debugRenderEnabled={debugRenderEnabled}
                   fittedForUrlRef={fittedForUrlRef}
                   controlsRef={controlsRef}
                   envMapIntensity={themeConfig.envMapIntensity}

@@ -1,15 +1,21 @@
 import { useEffect, useState } from "react";
-import { HashRouter, Navigate, Route, Routes } from "react-router-dom";
+import { HashRouter, Navigate, Route, Routes, useParams } from "react-router-dom";
 import { desktopApi } from "@/electron/desktopApi";
 import { AppFrame } from "@/layout/AppFrame";
+import { BootScreen } from "@/pages/BootScreen";
 import { DashboardPage } from "@/pages/DashboardPage";
-import { ProjectPage } from "@/pages/ProjectPage";
 import { SettingsPage } from "@/pages/SettingsPage";
+import { WorkspacePage } from "@/pages/WorkspacePage";
 import { ProjectsProvider, useProjects } from "@/projects/context";
 import { parseImportEnvelope } from "@/storage/importSchema";
 import { useT } from "@/volumia/i18n/useT";
 import { SettingsProvider, useSettings } from "@/volumia/settings/context";
 import { createSettingsExportEnvelope, parseSettingsImportEnvelope } from "@/volumia/settings/storage";
+
+function LegacyProjectRedirect() {
+  const { projectId = "" } = useParams();
+  return <Navigate to={`/workspace/${projectId}`} replace />;
+}
 
 function AppContent() {
   const { state, mergeImportedProjects, resetProjects } = useProjects();
@@ -133,13 +139,22 @@ function AppContent() {
   }, [notice]);
 
   return (
-    <AppFrame notice={notice} onDismissNotice={() => setNotice(null)}>
-      <Routes>
-        <Route path="/" element={<DashboardPage onImport={importProjects} onExport={exportProjects} />} />
-        <Route path="/project/:projectId" element={<ProjectPage />} />
-        <Route
-          path="/settings"
-          element={
+    <Routes>
+      <Route path="/" element={<BootScreen />} />
+      <Route
+        path="/dashboard"
+        element={
+          <AppFrame notice={notice} onDismissNotice={() => setNotice(null)}>
+            <DashboardPage onImport={importProjects} onExport={exportProjects} />
+          </AppFrame>
+        }
+      />
+      <Route path="/workspace/:projectId" element={<WorkspacePage />} />
+      <Route path="/project/:projectId" element={<LegacyProjectRedirect />} />
+      <Route
+        path="/settings"
+        element={
+          <AppFrame notice={notice} onDismissNotice={() => setNotice(null)}>
             <SettingsPage
               onImportProjects={importProjects}
               onExportProjects={exportProjects}
@@ -149,11 +164,11 @@ function AppContent() {
               onResetAllData={handleResetAllData}
               onResetWindowLayout={handleResetWindowLayout}
             />
-          }
-        />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
-    </AppFrame>
+          </AppFrame>
+        }
+      />
+      <Route path="*" element={<Navigate to="/dashboard" replace />} />
+    </Routes>
   );
 }
 

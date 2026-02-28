@@ -11,7 +11,9 @@ export function TopBar() {
   const canUseDesktopBridge = typeof window !== "undefined" && Boolean(window.volumia);
   const location = useLocation();
   const pageTitle = useMemo(() => {
-    if (location.pathname.startsWith("/project/")) return t("topbar.projectWorkspace");
+    if (location.pathname.startsWith("/project/") || location.pathname.startsWith("/workspace/")) {
+      return t("topbar.projectWorkspace");
+    }
     if (location.pathname === "/settings") return t("topbar.settings");
     return t("topbar.dashboard");
   }, [location.pathname, t]);
@@ -38,7 +40,7 @@ export function TopBar() {
         <div className={dividerClass} />
         <h1 className="truncate text-sm font-medium tracking-[0.08em] text-[var(--text)]">{pageTitle}</h1>
         <nav className="ml-1 flex items-center gap-1 md:hidden">
-          <NavLink to="/" end className={({ isActive }) => compactNavClass(isActive)}>
+          <NavLink to="/dashboard" end className={({ isActive }) => compactNavClass(isActive)}>
             {t("nav.dashboard")}
           </NavLink>
           <NavLink to="/settings" className={({ isActive }) => compactNavClass(isActive)}>

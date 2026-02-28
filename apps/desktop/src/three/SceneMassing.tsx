@@ -20,7 +20,7 @@ const MASSING_SIZE: [number, number, number] = [
 const MASSING_CENTER_Y = MASSING_SIZE[1] * 0.5;
 const FLOOR_Y = 0;
 const GROUND_THICKNESS = 0.1;
-const GROUND_TOP_OFFSET = -0.002;
+const GROUND_TOP_OFFSET = -0.01;
 const GRID_OFFSET = 0.001;
 const groundPosY = (FLOOR_Y + GROUND_TOP_OFFSET) - (GROUND_THICKNESS / 2);
 
