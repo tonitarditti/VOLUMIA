@@ -1,14 +1,12 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { desktopApi, hasDesktopBridge } from "@/electron/desktopApi";
-
-const READY_STATE = "READY";
-const BOOT_FALLBACK_MS = 3200;
-const STATUS_POLL_MS = 800;
+import { hasDesktopBridge } from "@/electron/desktopApi";
+import { comfyuiService } from "@/services/comfyui";
 
 export function BootScreen() {
   const navigate = useNavigate();
   const [detail, setDetail] = useState("Waiting for ComfyUI readiness...");
+  const [bootError, setBootError] = useState<string | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -28,39 +26,32 @@ export function BootScreen() {
       };
     }
 
-    const fallbackTimer = window.setTimeout(() => {
-      setDetail("Using temporary readiness fallback.");
-      completeBoot();
-    }, BOOT_FALLBACK_MS);
-
-    const checkReadiness = async () => {
+    void (async () => {
       try {
-        const status = await desktopApi.getComfyStatus();
+        setDetail("Starting ComfyUI engine...");
+        setBootError(null);
+        const ready = await comfyuiService.ensureReady();
         if (!active) {
           return;
         }
-        setDetail(status.message || `ComfyUI ${status.state.toLowerCase()}.`);
-        if (status.state === READY_STATE) {
-          window.clearTimeout(fallbackTimer);
+        setDetail(ready.details ?? "Waiting for ComfyUI readiness...");
+        if (ready.ready) {
           completeBoot();
+          return;
         }
+        setBootError(ready.details ?? "ComfyUI did not become ready.");
       } catch (error) {
         if (!active) {
           return;
         }
-        setDetail(error instanceof Error ? error.message : "Unable to read ComfyUI status.");
+        const message = error instanceof Error ? error.message : "Unable to start ComfyUI.";
+        setDetail(message);
+        setBootError(message);
       }
-    };
-
-    void checkReadiness();
-    const pollTimer = window.setInterval(() => {
-      void checkReadiness();
-    }, STATUS_POLL_MS);
+    })();
 
     return () => {
       active = false;
-      window.clearTimeout(fallbackTimer);
-      window.clearInterval(pollTimer);
     };
   }, [navigate]);
 
@@ -73,6 +64,7 @@ export function BootScreen() {
           <div className="h-full w-1/2 animate-pulse rounded-full bg-[var(--accent)]" />
         </div>
         <p className="mt-4 text-sm text-[var(--text-muted)]">{detail}</p>
+        {bootError ? <p className="mt-3 text-sm text-[var(--danger)]">{bootError}</p> : null}
       </div>
     </div>
   );

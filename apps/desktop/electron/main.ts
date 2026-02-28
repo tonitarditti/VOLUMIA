@@ -9,8 +9,12 @@ import {
   type BackendStatusResponse,
   type ComfyConfigPatch,
   type ComfyConfigResponse,
+  type ComfyJobOutputs,
+  type ComfyJobStatusResponse,
   type ComfyRunWorkflowPayload,
   type ComfyRunWorkflowResult,
+  type ComfySubmitJobPayload,
+  type ComfySubmitJobResult,
   type ComfyStatusResponse,
 } from "./channels";
 import { registerProjectsFileHandlers } from "./ipc/projects-file.ipc";
@@ -53,7 +57,7 @@ type BackendRuntimeModule = {
   getComfyLogs: (limit?: number) => Promise<string[]>;
   runWorkflow: (
     workflowName?: string,
-    payload?: { imagePath?: string; imageBase64?: string }
+    payload?: { imagePath?: string; imageBase64?: string; projectId?: string }
   ) => Promise<{
     promptId: string;
     workflowName: string;
@@ -61,6 +65,13 @@ type BackendRuntimeModule = {
     message: string;
     outputGlbPath?: string;
   }>;
+  submitWorkflow: (
+    workflowName?: string,
+    payload?: { imagePath?: string; imageBase64?: string; projectId?: string }
+  ) => Promise<ComfySubmitJobResult>;
+  getWorkflowJobStatus: (jobId: string) => Promise<ComfyJobStatusResponse>;
+  cancelWorkflowJob: (jobId: string) => Promise<void>;
+  resolveWorkflowJobOutputs: (jobId: string) => Promise<ComfyJobOutputs>;
   getComfyConfig: () => Promise<ComfyConfigResponse>;
   saveComfyConfig: (patch: ComfyConfigPatch) => Promise<ComfyConfigResponse>;
 };
@@ -358,6 +369,7 @@ function registerBackendHandlers() {
       const runResult = await backend.runWorkflow(payload?.workflowId, {
         imagePath: payload?.imagePath,
         imageBase64: payload?.imageBase64,
+        projectId: payload?.projectId,
       });
       const comfy = await backend.getComfyStatus();
       return {
@@ -378,6 +390,39 @@ function registerBackendHandlers() {
         comfy: await getComfyStatusSafe(),
       };
     }
+  });
+
+  ipcMain.handle(IPC_CHANNELS.comfySubmitJob, async (_event, payload: ComfySubmitJobPayload | undefined): Promise<ComfySubmitJobResult> => {
+    const backend = loadBackendModule();
+    return await backend.submitWorkflow(payload?.workflowId, {
+      imagePath: payload?.imagePath,
+      imageBase64: payload?.imageBase64,
+      projectId: payload?.projectId,
+    });
+  });
+
+  ipcMain.handle(IPC_CHANNELS.comfyJobStatus, async (_event, payload: { jobId?: string } | undefined): Promise<ComfyJobStatusResponse> => {
+    if (!payload?.jobId) {
+      throw new Error("Missing ComfyUI jobId.");
+    }
+    const backend = loadBackendModule();
+    return await backend.getWorkflowJobStatus(payload.jobId);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.comfyCancelJob, async (_event, payload: { jobId?: string } | undefined): Promise<void> => {
+    if (!payload?.jobId) {
+      return;
+    }
+    const backend = loadBackendModule();
+    await backend.cancelWorkflowJob(payload.jobId);
+  });
+
+  ipcMain.handle(IPC_CHANNELS.comfyResolveOutputs, async (_event, payload: { jobId?: string } | undefined): Promise<ComfyJobOutputs> => {
+    if (!payload?.jobId) {
+      return {};
+    }
+    const backend = loadBackendModule();
+    return await backend.resolveWorkflowJobOutputs(payload.jobId);
   });
 
   ipcMain.handle(IPC_CHANNELS.comfyGetConfig, async (): Promise<ComfyConfigResponse> => {

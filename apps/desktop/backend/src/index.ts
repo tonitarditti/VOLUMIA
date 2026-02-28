@@ -54,6 +54,26 @@ export async function runWorkflow(workflowName?: string, input?: { imagePath?: s
   return await instance.runWorkflow(workflowName, input);
 }
 
+export async function submitWorkflow(workflowName?: string, input?: { imagePath?: string; imageBase64?: string; projectId?: string }) {
+  const instance = getSupervisor();
+  return await instance.submitWorkflow(workflowName, input);
+}
+
+export async function getWorkflowJobStatus(jobId: string) {
+  const instance = getSupervisor();
+  return await instance.getWorkflowJobStatus(jobId);
+}
+
+export async function cancelWorkflowJob(jobId: string) {
+  const instance = getSupervisor();
+  return await instance.cancelWorkflowJob(jobId);
+}
+
+export async function resolveWorkflowJobOutputs(jobId: string) {
+  const instance = getSupervisor();
+  return await instance.resolveWorkflowJobOutputs(jobId);
+}
+
 export async function importWorkflowFromPath(sourcePath: string) {
   const instance = getSupervisor();
   return instance.importWorkflowFromPath(sourcePath);

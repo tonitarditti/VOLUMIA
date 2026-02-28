@@ -89,6 +89,33 @@ export type RunWorkflowResult = {
   outputGlbPath?: string;
 };
 
+export type ComfyWorkflowJobState = "QUEUED" | "RUNNING" | "RESULT_READY" | "ERROR" | "CANCELED";
+
+export type ComfyWorkflowJobOutputs = {
+  glbPath?: string;
+  previewImages?: string[];
+  raw?: unknown;
+};
+
+export type ComfyWorkflowJobStatus = {
+  jobId: string;
+  promptId: string;
+  workflowName: string;
+  workflowPath: string;
+  state: ComfyWorkflowJobState;
+  progress: number;
+  message: string;
+  queuePosition?: number;
+  startedAt: number;
+  updatedAt: number;
+  finishedAt?: number;
+  outputs?: ComfyWorkflowJobOutputs;
+  error?: {
+    code?: string;
+    message: string;
+  };
+};
+
 export type ImportWorkflowResult = {
   workflowName: string;
   workflowPath: string;
@@ -98,6 +125,23 @@ export type ImportWorkflowResult = {
 type RunWorkflowInput = {
   imagePath?: string;
   imageBase64?: string;
+};
+
+type PreparedWorkflowSubmission = {
+  workflowName: string;
+  workflowPath: string;
+  workflowJson: unknown;
+  comfyOutputDir: string;
+  outputBefore: FileSnapshot[];
+  startedAtMs: number;
+};
+
+type WorkflowJobRecord = ComfyWorkflowJobStatus & {
+  projectId?: string;
+  outputDir: string;
+  outputBefore: FileSnapshot[];
+  history?: unknown;
+  cancelRequested: boolean;
 };
 
 function errorMessage(error: unknown) {
@@ -171,6 +215,27 @@ function newestGlb(files: FileSnapshot[]) {
   return candidates.sort((a, b) => b.mtimeMs - a.mtimeMs)[0] ?? null;
 }
 
+function findNewGlbFile(outputDir: string, before: FileSnapshot[], startedAtMs: number) {
+  const beforeByName = new Map(before.map((item) => [item.name, item]));
+  const startedThreshold = startedAtMs - 250;
+  const nowFiles = listFilesSafe(outputDir);
+  const candidates = nowFiles.filter((file) => {
+    if (!file.name.toLowerCase().endsWith(".glb") || file.size <= 0) {
+      return false;
+    }
+    if (file.mtimeMs < startedThreshold) {
+      return false;
+    }
+    const previous = beforeByName.get(file.name);
+    if (!previous) {
+      return true;
+    }
+    return file.mtimeMs > previous.mtimeMs || file.size !== previous.size;
+  });
+
+  return newestGlb(candidates);
+}
+
 function waitForNewGlbFile(params: {
   outputDir: string;
   before: FileSnapshot[];
@@ -179,27 +244,10 @@ function waitForNewGlbFile(params: {
   pollMs: number;
 }) {
   const { outputDir, before, startedAtMs, timeoutMs, pollMs } = params;
-  const beforeByName = new Map(before.map((item) => [item.name, item]));
-  const startedThreshold = startedAtMs - 250;
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {
-    const nowFiles = listFilesSafe(outputDir);
-    const candidates = nowFiles.filter((file) => {
-      if (!file.name.toLowerCase().endsWith(".glb") || file.size <= 0) {
-        return false;
-      }
-      if (file.mtimeMs < startedThreshold) {
-        return false;
-      }
-      const previous = beforeByName.get(file.name);
-      if (!previous) {
-        return true;
-      }
-      return file.mtimeMs > previous.mtimeMs || file.size !== previous.size;
-    });
-
-    const newest = newestGlb(candidates);
+    const newest = findNewGlbFile(outputDir, before, startedAtMs);
     if (newest) {
       return newest;
     }
@@ -213,10 +261,53 @@ function waitForNewGlbFile(params: {
   return null;
 }
 
+function extractPreviewImagesFromHistory(historyEntry: unknown, comfyDir: string) {
+  const previews = new Set<string>();
+
+  const visit = (node: unknown) => {
+    if (!node) {
+      return;
+    }
+    if (Array.isArray(node)) {
+      for (const item of node) {
+        visit(item);
+      }
+      return;
+    }
+    if (typeof node !== "object") {
+      return;
+    }
+
+    const recordNode = node as Record<string, unknown>;
+    const filename = typeof recordNode.filename === "string" ? recordNode.filename.trim() : "";
+    if (filename && /\.(png|jpe?g|webp)$/i.test(filename)) {
+      const subfolder = typeof recordNode.subfolder === "string" ? recordNode.subfolder.trim() : "";
+      const fullPath = path.isAbsolute(filename)
+        ? filename
+        : path.join(comfyDir, "output", subfolder.replace(/\//g, path.sep), filename);
+      previews.add(fullPath);
+    }
+
+    for (const value of Object.values(recordNode)) {
+      visit(value);
+    }
+  };
+
+  visit(historyEntry);
+  return Array.from(previews.values());
+}
+
+function sleep(ms: number) {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
 export class BackendSupervisor {
   private readonly processManager = new ProcessManager();
   private readonly comfyLogs: string[] = [];
   private readonly comfyLogLimit = 500;
+  private readonly workflowJobs = new Map<string, WorkflowJobRecord>();
   private comfyState: ComfySupervisorState = "STOPPED";
   private comfyLastError: string | null = null;
   private config = loadBackendConfig();
@@ -417,6 +508,145 @@ export class BackendSupervisor {
 
     visit(history);
     return candidates[0] ?? null;
+  }
+
+  private buildOutputPathFromHistory(history: unknown) {
+    const relativeOrAbsolute = this.extractGlbPathFromHistory(history);
+    if (!relativeOrAbsolute) {
+      return null;
+    }
+
+    if (path.isAbsolute(relativeOrAbsolute)) {
+      return relativeOrAbsolute;
+    }
+
+    const normalized = relativeOrAbsolute.replace(/\//g, path.sep);
+    return path.join(this.config.comfy.comfyDir, "output", normalized);
+  }
+
+  private copyDetectedGlb(promptId: string, startedAtMs: number, detected: FileSnapshot) {
+    const runId = `${promptId}-${startedAtMs}`;
+    const projectAssetsRoot = path.join(getOutputsDir(), "..", "project-assets");
+    const runDir = path.join(projectAssetsRoot, runId);
+    const runLatest = path.join(runDir, "latest.glb");
+    const globalLatest = path.join(projectAssetsRoot, "latest.glb");
+
+    fs.mkdirSync(runDir, { recursive: true });
+    fs.mkdirSync(projectAssetsRoot, { recursive: true });
+    fs.copyFileSync(detected.fullPath, runLatest);
+    fs.copyFileSync(detected.fullPath, globalLatest);
+    logger.info("GLB detectado y copiado desde ComfyUI output.", {
+      promptId,
+      detected: detected.fullPath,
+      runLatest,
+      globalLatest,
+    });
+    return runLatest;
+  }
+
+  private finalizeWorkflowJobSuccess(job: WorkflowJobRecord, history?: unknown) {
+    if (history) {
+      job.history = history;
+    }
+
+    const detected = findNewGlbFile(job.outputDir, job.outputBefore, job.startedAt);
+    const detectedGlbPath = detected ? this.copyDetectedGlb(job.promptId, job.startedAt, detected) : undefined;
+    const historyOutputPath = history ? this.buildOutputPathFromHistory(history) : null;
+    const resolvedGlbPath = detectedGlbPath || historyOutputPath || job.outputs?.glbPath;
+    const previewImages = history ? extractPreviewImagesFromHistory(history, this.config.comfy.comfyDir) : job.outputs?.previewImages;
+
+    job.outputs = {
+      glbPath: resolvedGlbPath ?? undefined,
+      previewImages,
+      raw: history ?? job.outputs?.raw,
+    };
+    job.state = "RESULT_READY";
+    job.progress = 100;
+    job.updatedAt = Date.now();
+    job.finishedAt = job.finishedAt ?? Date.now();
+    job.message = resolvedGlbPath
+      ? `Workflow completado. promptId=${job.promptId}. GLB=${resolvedGlbPath}`
+      : `Workflow completado. promptId=${job.promptId}`;
+    return job;
+  }
+
+  private finalizeWorkflowJobError(job: WorkflowJobRecord, message: string, code?: string) {
+    job.state = "ERROR";
+    job.progress = Math.max(job.progress, 1);
+    job.updatedAt = Date.now();
+    job.finishedAt = Date.now();
+    job.message = message;
+    job.error = { code, message };
+    return job;
+  }
+
+  private async prepareWorkflowSubmission(workflowName?: string, input?: RunWorkflowInput): Promise<PreparedWorkflowSubmission> {
+    if (!this.started) {
+      await this.startAll({ mode: "dev" });
+    }
+
+    await this.ensureComfyRunning("dev");
+    if (!this.getComfyStatus().running) {
+      throw new Error(
+        [
+          "ComfyUI no esta disponible para ejecutar workflow.",
+          `URL esperada: ${this.config.comfy.baseUrl}`,
+          this.comfyLastError ? `Detalle: ${this.comfyLastError}` : "",
+        ]
+          .filter(Boolean)
+          .join("\n")
+      );
+    }
+
+    const targetWorkflow = this.resolveWorkflowByName(workflowName);
+    let workflowJson = loadWorkflowJson(targetWorkflow.path);
+    const imageInputPath = await this.resolveWorkflowInputImagePath(input);
+    if (imageInputPath) {
+      const uploaded = await this.comfyApi.uploadImage(imageInputPath);
+      const injected = applyImageInputToWorkflow(workflowJson, uploaded.name, uploaded.subfolder);
+      workflowJson = injected.workflowJson;
+      if (injected.appliedNodeIds.length > 0) {
+        logger.info("Imagen de entrada aplicada en workflow.", {
+          workflow: targetWorkflow.name,
+          nodes: injected.appliedNodeIds,
+          image: injected.imageValue,
+        });
+      } else {
+        logger.warn("Se subio imagen pero el workflow no tiene nodos LoadImage para aplicar entrada dinamica.", {
+          workflow: targetWorkflow.name,
+          image: uploaded.name,
+        });
+      }
+    }
+
+    let availableCheckpoints: string[] = [];
+    try {
+      availableCheckpoints = await this.comfyApi.getAvailableCheckpoints();
+    } catch (error) {
+      this.appendComfyLog(`No se pudo leer checkpoints desde ComfyUI: ${errorMessage(error)}`, "warn");
+    }
+
+    const patchResult = patchWorkflowCheckpoints(workflowJson, availableCheckpoints);
+    workflowJson = patchResult.workflowJson;
+    for (const replacement of patchResult.replaced) {
+      const line = `Patched ckpt_name -> ${replacement.to} (node=${replacement.nodeId}, from=${replacement.from})`;
+      this.appendComfyLog(line, "warn");
+      logger.warn(line);
+    }
+
+    await this.validateCheckpointsAfterPatch(getCheckpointUsages(workflowJson), patchResult.availableCheckpoints);
+
+    const comfyOutputDir = path.join(this.config.comfy.comfyDir, "output", "mesh");
+    const outputBefore = listFilesSafe(comfyOutputDir);
+
+    return {
+      workflowName: targetWorkflow.name,
+      workflowPath: targetWorkflow.path,
+      workflowJson,
+      comfyOutputDir,
+      outputBefore,
+      startedAtMs: Date.now(),
+    };
   }
 
   async stopComfyUI(reason = "manual-stop", force = false) {
@@ -644,122 +874,170 @@ export class BackendSupervisor {
     return activeWorkflow;
   }
 
-  async runWorkflow(workflowName?: string, input?: RunWorkflowInput): Promise<RunWorkflowResult> {
-    if (!this.started) {
-      await this.startAll({ mode: "dev" });
-    }
+  async submitWorkflow(workflowName?: string, input?: RunWorkflowInput & { projectId?: string }) {
+    const prepared = await this.prepareWorkflowSubmission(workflowName, input);
+    const queue = await this.comfyApi.queuePrompt(prepared.workflowJson);
 
-    await this.ensureComfyRunning("dev");
-    if (!this.getComfyStatus().running) {
-      throw new Error(
-        [
-          "ComfyUI no esta disponible para ejecutar workflow.",
-          `URL esperada: ${this.config.comfy.baseUrl}`,
-          this.comfyLastError ? `Detalle: ${this.comfyLastError}` : "",
-        ]
-          .filter(Boolean)
-          .join("\n")
-      );
-    }
-
-    const targetWorkflow = this.resolveWorkflowByName(workflowName);
-
-    let workflowJson = loadWorkflowJson(targetWorkflow.path);
-    const imageInputPath = await this.resolveWorkflowInputImagePath(input);
-    if (imageInputPath) {
-      const uploaded = await this.comfyApi.uploadImage(imageInputPath);
-      const injected = applyImageInputToWorkflow(workflowJson, uploaded.name, uploaded.subfolder);
-      workflowJson = injected.workflowJson;
-      if (injected.appliedNodeIds.length > 0) {
-        logger.info("Imagen de entrada aplicada en workflow.", {
-          workflow: targetWorkflow.name,
-          nodes: injected.appliedNodeIds,
-          image: injected.imageValue,
-        });
-      } else {
-        logger.warn("Se subio imagen pero el workflow no tiene nodos LoadImage para aplicar entrada dinamica.", {
-          workflow: targetWorkflow.name,
-          image: uploaded.name,
-        });
-      }
-    }
-
-    let availableCheckpoints: string[] = [];
-    try {
-      availableCheckpoints = await this.comfyApi.getAvailableCheckpoints();
-    } catch (error) {
-      this.appendComfyLog(`No se pudo leer checkpoints desde ComfyUI: ${errorMessage(error)}`, "warn");
-    }
-
-    const patchResult = patchWorkflowCheckpoints(workflowJson, availableCheckpoints);
-    workflowJson = patchResult.workflowJson;
-    for (const replacement of patchResult.replaced) {
-      const line = `Patched ckpt_name -> ${replacement.to} (node=${replacement.nodeId}, from=${replacement.from})`;
-      this.appendComfyLog(line, "warn");
-      logger.warn(line);
-    }
-
-    await this.validateCheckpointsAfterPatch(getCheckpointUsages(workflowJson), patchResult.availableCheckpoints);
-    const comfyOutputDir = path.join(this.config.comfy.comfyDir, "output", "mesh");
-    const outputBefore = listFilesSafe(comfyOutputDir);
-    const startedAtMs = Date.now();
-    const queue = await this.comfyApi.queuePrompt(workflowJson);
-
-    let outputGlbPath: string | undefined;
-    if (!fs.existsSync(comfyOutputDir)) {
-      logger.warn(`ComfyUI output dir no encontrado: ${comfyOutputDir}`);
-    } else {
-      const detected = await waitForNewGlbFile({
-        outputDir: comfyOutputDir,
-        before: outputBefore,
-        startedAtMs,
-        timeoutMs: 6 * 60 * 1000,
-        pollMs: 1000,
-      });
-      if (detected) {
-        const runId = `${queue.promptId}-${startedAtMs}`;
-        const projectAssetsRoot = path.join(getOutputsDir(), "..", "project-assets");
-        const runDir = path.join(projectAssetsRoot, runId);
-        const runLatest = path.join(runDir, "latest.glb");
-        const globalLatest = path.join(projectAssetsRoot, "latest.glb");
-
-        try {
-          fs.mkdirSync(runDir, { recursive: true });
-          fs.mkdirSync(projectAssetsRoot, { recursive: true });
-          fs.copyFileSync(detected.fullPath, runLatest);
-          fs.copyFileSync(detected.fullPath, globalLatest);
-          outputGlbPath = runLatest;
-          logger.info("GLB detectado y copiado desde ComfyUI output.", {
-            promptId: queue.promptId,
-            detected: detected.fullPath,
-            runLatest,
-            globalLatest,
-          });
-        } catch (error) {
-          logger.warn("No se pudo copiar GLB detectado.", errorMessage(error));
-        }
-      } else {
-        logger.warn("No se detecto GLB nuevo dentro del timeout en output/.");
-      }
-    }
-
-    const message = outputGlbPath
-      ? `Workflow encolado/completado. promptId=${queue.promptId}. GLB=${outputGlbPath}`
-      : `Workflow encolado en ComfyUI con promptId=${queue.promptId}`;
-    logger.info(message, {
-      workflowName: targetWorkflow.name,
-      workflowPath: targetWorkflow.path,
-      outputGlbPath: outputGlbPath ?? null,
-    });
-    this.pushNote(message);
-    this.appendComfyLog(message);
-    return {
+    const job: WorkflowJobRecord = {
+      jobId: queue.promptId,
       promptId: queue.promptId,
-      workflowName: targetWorkflow.name,
-      workflowPath: targetWorkflow.path,
-      message,
-      outputGlbPath,
+      projectId: input?.projectId,
+      workflowName: prepared.workflowName,
+      workflowPath: prepared.workflowPath,
+      state: "QUEUED",
+      progress: 8,
+      message: `Workflow encolado en ComfyUI con promptId=${queue.promptId}`,
+      startedAt: prepared.startedAtMs,
+      updatedAt: prepared.startedAtMs,
+      outputDir: prepared.comfyOutputDir,
+      outputBefore: prepared.outputBefore,
+      cancelRequested: false,
     };
+
+    this.workflowJobs.set(job.jobId, job);
+    logger.info(job.message, {
+      workflowName: job.workflowName,
+      workflowPath: job.workflowPath,
+      promptId: job.promptId,
+    });
+    this.pushNote(job.message);
+    this.appendComfyLog(job.message);
+
+    return {
+      jobId: job.jobId,
+      promptId: job.promptId,
+      workflowName: job.workflowName,
+      workflowPath: job.workflowPath,
+      message: job.message,
+    };
+  }
+
+  async getWorkflowJobStatus(jobId: string): Promise<ComfyWorkflowJobStatus> {
+    const job = this.workflowJobs.get(jobId);
+    if (!job) {
+      throw new Error(`ComfyUI job no encontrado: ${jobId}`);
+    }
+
+    if (job.state === "RESULT_READY" || job.state === "ERROR" || job.state === "CANCELED") {
+      return JSON.parse(JSON.stringify(job)) as ComfyWorkflowJobStatus;
+    }
+
+    try {
+      const [queue, historyEntry] = await Promise.all([
+        this.comfyApi.getQueueSnapshot(),
+        this.comfyApi.getHistoryEntry(job.promptId),
+      ]);
+
+      if (historyEntry) {
+        this.finalizeWorkflowJobSuccess(job, historyEntry);
+        return JSON.parse(JSON.stringify(job)) as ComfyWorkflowJobStatus;
+      }
+
+      const runningIndex = queue.running.indexOf(job.promptId);
+      if (runningIndex >= 0) {
+        job.state = "RUNNING";
+        job.progress = Math.max(job.progress, 65);
+        job.queuePosition = runningIndex;
+        job.updatedAt = Date.now();
+        job.message = `Workflow ejecutandose en ComfyUI (promptId=${job.promptId})`;
+        return JSON.parse(JSON.stringify(job)) as ComfyWorkflowJobStatus;
+      }
+
+      const pendingIndex = queue.pending.indexOf(job.promptId);
+      if (pendingIndex >= 0) {
+        job.state = "QUEUED";
+        job.progress = Math.max(job.progress, Math.max(10, 30 - pendingIndex * 5));
+        job.queuePosition = pendingIndex;
+        job.updatedAt = Date.now();
+        job.message = `Workflow en cola en ComfyUI (posicion ${pendingIndex + 1})`;
+        return JSON.parse(JSON.stringify(job)) as ComfyWorkflowJobStatus;
+      }
+
+      if (Date.now() - job.startedAt > 15_000) {
+        this.finalizeWorkflowJobError(
+          job,
+          `ComfyUI no reporta el job ${job.promptId} en queue/history.`,
+          "JOB_NOT_VISIBLE"
+        );
+      }
+    } catch (error) {
+      this.finalizeWorkflowJobError(job, errorMessage(error), "STATUS_POLL_FAILED");
+    }
+
+    return JSON.parse(JSON.stringify(job)) as ComfyWorkflowJobStatus;
+  }
+
+  async cancelWorkflowJob(jobId: string) {
+    const job = this.workflowJobs.get(jobId);
+    if (!job) {
+      return;
+    }
+
+    job.cancelRequested = true;
+    job.updatedAt = Date.now();
+
+    try {
+      const queue = await this.comfyApi.getQueueSnapshot();
+      if (queue.running.includes(job.promptId)) {
+        try {
+          await this.comfyApi.interrupt();
+        } catch (error) {
+          this.appendComfyLog(`ComfyUI interrupt fallo: ${errorMessage(error)}`, "warn");
+        }
+      }
+      if (queue.pending.includes(job.promptId)) {
+        try {
+          await this.comfyApi.deleteQueuedPrompt(job.promptId);
+        } catch (error) {
+          this.appendComfyLog(`ComfyUI queue delete fallo: ${errorMessage(error)}`, "warn");
+        }
+      }
+    } finally {
+      job.state = "CANCELED";
+      job.progress = 0;
+      job.message = `Workflow cancelado. promptId=${job.promptId}`;
+      job.finishedAt = Date.now();
+      job.updatedAt = job.finishedAt;
+    }
+  }
+
+  async resolveWorkflowJobOutputs(jobId: string): Promise<ComfyWorkflowJobOutputs> {
+    const status = await this.getWorkflowJobStatus(jobId);
+    return status.outputs ?? {};
+  }
+
+  async runWorkflow(workflowName?: string, input?: RunWorkflowInput): Promise<RunWorkflowResult> {
+    const submitted = await this.submitWorkflow(workflowName, input);
+    const deadline = Date.now() + 6 * 60 * 1000;
+
+    while (Date.now() < deadline) {
+      const status = await this.getWorkflowJobStatus(submitted.jobId);
+
+      if (status.state === "RESULT_READY") {
+        const message = status.outputs?.glbPath
+          ? `Workflow encolado/completado. promptId=${status.promptId}. GLB=${status.outputs.glbPath}`
+          : `Workflow encolado/completado. promptId=${status.promptId}`;
+        return {
+          promptId: status.promptId,
+          workflowName: status.workflowName,
+          workflowPath: status.workflowPath,
+          message,
+          outputGlbPath: status.outputs?.glbPath,
+        };
+      }
+
+      if (status.state === "ERROR") {
+        throw new Error(status.error?.message ?? status.message);
+      }
+
+      if (status.state === "CANCELED") {
+        throw new Error(status.message);
+      }
+
+      await sleep(1_000);
+    }
+
+    throw new Error(`ComfyUI timeout esperando resultado para promptId=${submitted.promptId}.`);
   }
 
   async runDefaultWorkflow(input?: RunWorkflowInput): Promise<RunWorkflowResult> {

@@ -24,6 +24,12 @@ export type CompletionResult = {
   history: unknown;
 };
 
+export type QueueSnapshot = {
+  running: string[];
+  pending: string[];
+  raw: unknown;
+};
+
 export type UploadImageResult = {
   name: string;
   subfolder: string;
@@ -301,20 +307,98 @@ export class ComfyApi {
     return { promptId };
   }
 
+  async getQueueSnapshot(): Promise<QueueSnapshot> {
+    const payload = await this.requestJson("/queue", undefined, {
+      timeoutMs: 8_000,
+      retries: 1,
+      retryDelayMs: 300,
+    });
+
+    const extractPromptIds = (value: unknown) => {
+      if (!Array.isArray(value)) {
+        return [] as string[];
+      }
+
+      const promptIds: string[] = [];
+      for (const item of value) {
+        if (Array.isArray(item) && item.length > 1 && typeof item[1] === "string") {
+          promptIds.push(item[1]);
+          continue;
+        }
+        if (isRecord(item) && typeof item.prompt_id === "string") {
+          promptIds.push(item.prompt_id);
+        }
+      }
+      return promptIds;
+    };
+
+    const running = isRecord(payload) ? extractPromptIds(payload.queue_running) : [];
+    const pending = isRecord(payload) ? extractPromptIds(payload.queue_pending) : [];
+
+    return {
+      running,
+      pending,
+      raw: payload,
+    };
+  }
+
+  async getHistoryEntry(promptId: string): Promise<unknown | null> {
+    const history = await this.requestJson(`/history/${encodeURIComponent(promptId)}`, undefined, {
+      timeoutMs: 8_000,
+      retries: 1,
+      retryDelayMs: 300,
+    });
+
+    if (!history || typeof history !== "object") {
+      return null;
+    }
+
+    const record = history as Record<string, unknown>;
+    return record[promptId] ?? Object.values(record)[0] ?? null;
+  }
+
+  async interrupt(): Promise<void> {
+    const response = await this.request(
+      "/interrupt",
+      {
+        method: "POST",
+      },
+      { timeoutMs: 8_000, retries: 0 }
+    );
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      throw new Error(`ComfyUI /interrupt respondio ${response.status}: ${body || response.statusText || "sin detalle"}`);
+    }
+  }
+
+  async deleteQueuedPrompt(promptId: string): Promise<void> {
+    const response = await this.request(
+      "/queue",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          delete: [promptId],
+        }),
+      },
+      { timeoutMs: 8_000, retries: 0 }
+    );
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      throw new Error(`ComfyUI /queue delete respondio ${response.status}: ${body || response.statusText || "sin detalle"}`);
+    }
+  }
+
   async waitForCompletion(promptId: string, timeoutMs = 120_000): Promise<CompletionResult> {
     const startedAt = Date.now();
     let backoffMs = 800;
 
     while (Date.now() - startedAt < timeoutMs) {
-      const history = await this.requestJson(`/history/${encodeURIComponent(promptId)}`, undefined, {
-        timeoutMs: 8_000,
-        retries: 1,
-        retryDelayMs: 300,
-      });
-      const entry =
-        history && typeof history === "object"
-          ? (history as Record<string, unknown>)[promptId]
-          : undefined;
+      const entry = await this.getHistoryEntry(promptId);
 
       if (entry && typeof entry === "object") {
         const outputs = (entry as Record<string, unknown>).outputs;

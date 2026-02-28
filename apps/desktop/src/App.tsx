@@ -7,6 +7,7 @@ import { DashboardPage } from "@/pages/DashboardPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { WorkspacePage } from "@/pages/WorkspacePage";
 import { ProjectsProvider, useProjects } from "@/projects/context";
+import { GenerationJobProvider } from "@/services/comfyui";
 import { parseImportEnvelope } from "@/storage/importSchema";
 import { useT } from "@/volumia/i18n/useT";
 import { SettingsProvider, useSettings } from "@/volumia/settings/context";
@@ -175,11 +176,13 @@ function AppContent() {
 export default function App() {
   return (
     <SettingsProvider>
-      <ProjectsProvider>
-        <HashRouter>
-          <AppContent />
-        </HashRouter>
-      </ProjectsProvider>
+      <GenerationJobProvider>
+        <ProjectsProvider>
+          <HashRouter>
+            <AppContent />
+          </HashRouter>
+        </ProjectsProvider>
+      </GenerationJobProvider>
     </SettingsProvider>
   );
 }

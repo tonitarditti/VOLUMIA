@@ -11,8 +11,12 @@ import {
   type BackendStatusResponse,
   type ComfyConfigPatch,
   type ComfyConfigResponse,
+  type ComfyJobOutputs,
+  type ComfyJobStatusResponse,
   type ComfyRunWorkflowPayload,
   type ComfyRunWorkflowResult,
+  type ComfySubmitJobPayload,
+  type ComfySubmitJobResult,
   type ComfyStatusResponse,
   type GenerationDonePayload,
   type GenerationErrorPayload,
@@ -230,6 +234,14 @@ const bridge = {
     logs: (limit?: number) => ipcRenderer.invoke(IPC_CHANNELS.comfyLogs, { limit }) as Promise<string[]>,
     runWorkflow: (payload?: ComfyRunWorkflowPayload) =>
       ipcRenderer.invoke(IPC_CHANNELS.comfyRunWorkflow, payload ?? {}) as Promise<ComfyRunWorkflowResult>,
+    submitJob: (payload?: ComfySubmitJobPayload) =>
+      ipcRenderer.invoke(IPC_CHANNELS.comfySubmitJob, payload ?? {}) as Promise<ComfySubmitJobResult>,
+    getJobStatus: (jobId: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.comfyJobStatus, { jobId }) as Promise<ComfyJobStatusResponse>,
+    cancelJob: (jobId: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.comfyCancelJob, { jobId }) as Promise<void>,
+    resolveOutputs: (jobId: string) =>
+      ipcRenderer.invoke(IPC_CHANNELS.comfyResolveOutputs, { jobId }) as Promise<ComfyJobOutputs>,
     getConfig: () => ipcRenderer.invoke(IPC_CHANNELS.comfyGetConfig) as Promise<ComfyConfigResponse>,
     saveConfig: (patch: ComfyConfigPatch) =>
       ipcRenderer.invoke(IPC_CHANNELS.comfySaveConfig, patch ?? {}) as Promise<ComfyConfigResponse>,

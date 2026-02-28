@@ -5,8 +5,12 @@ import {
   type BackendStatusResponse,
   type ComfyConfigPatch,
   type ComfyConfigResponse,
+  type ComfyJobOutputs,
+  type ComfyJobStatusResponse,
   type ComfyRunWorkflowPayload,
   type ComfyRunWorkflowResult,
+  type ComfySubmitJobPayload,
+  type ComfySubmitJobResult,
   type ComfyStatusResponse,
   type ExportSettingsResult,
   type ImportSettingsResult,
@@ -103,6 +107,10 @@ export type VolumiaComfyBridge = {
   stop: () => Promise<ComfyStatusResponse>;
   logs: (limit?: number) => Promise<string[]>;
   runWorkflow: (payload?: ComfyRunWorkflowPayload) => Promise<ComfyRunWorkflowResult>;
+  submitJob: (payload?: ComfySubmitJobPayload) => Promise<ComfySubmitJobResult>;
+  getJobStatus: (jobId: string) => Promise<ComfyJobStatusResponse>;
+  cancelJob: (jobId: string) => Promise<void>;
+  resolveOutputs: (jobId: string) => Promise<ComfyJobOutputs>;
   getConfig: () => Promise<ComfyConfigResponse>;
   saveConfig: (patch: ComfyConfigPatch) => Promise<ComfyConfigResponse>;
 };
@@ -239,7 +247,19 @@ function ensureBackendBridge(): VolumiaBackendBridge {
 
 function ensureComfyBridge(): VolumiaComfyBridge {
   const comfy = ensureBridge().comfy;
-  if (!comfy?.status || !comfy.start || !comfy.stop || !comfy.logs || !comfy.runWorkflow || !comfy.getConfig || !comfy.saveConfig) {
+  if (
+    !comfy?.status ||
+    !comfy.start ||
+    !comfy.stop ||
+    !comfy.logs ||
+    !comfy.runWorkflow ||
+    !comfy.submitJob ||
+    !comfy.getJobStatus ||
+    !comfy.cancelJob ||
+    !comfy.resolveOutputs ||
+    !comfy.getConfig ||
+    !comfy.saveConfig
+  ) {
     throw new Error("Desktop comfy bridge is unavailable.");
   }
   return comfy as VolumiaComfyBridge;
@@ -458,6 +478,18 @@ export const desktopApi = {
   },
   runComfyWorkflow(payload?: ComfyRunWorkflowPayload): Promise<ComfyRunWorkflowResult> {
     return ensureComfyBridge().runWorkflow(payload);
+  },
+  submitComfyJob(payload?: ComfySubmitJobPayload): Promise<ComfySubmitJobResult> {
+    return ensureComfyBridge().submitJob(payload);
+  },
+  getComfyJobStatus(jobId: string): Promise<ComfyJobStatusResponse> {
+    return ensureComfyBridge().getJobStatus(jobId);
+  },
+  cancelComfyJob(jobId: string): Promise<void> {
+    return ensureComfyBridge().cancelJob(jobId);
+  },
+  resolveComfyOutputs(jobId: string): Promise<ComfyJobOutputs> {
+    return ensureComfyBridge().resolveOutputs(jobId);
   },
   getComfyConfig(): Promise<ComfyConfigResponse> {
     return ensureComfyBridge().getConfig();

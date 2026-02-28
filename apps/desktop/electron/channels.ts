@@ -37,6 +37,10 @@ export const IPC_CHANNELS = {
   comfyStop: "comfy:stop",
   comfyLogs: "comfy:logs",
   comfyRunWorkflow: "comfy:runWorkflow",
+  comfySubmitJob: "comfy:submit-job",
+  comfyJobStatus: "comfy:job-status",
+  comfyCancelJob: "comfy:cancel-job",
+  comfyResolveOutputs: "comfy:resolve-outputs",
   comfyGetConfig: "comfy:get-config",
   comfySaveConfig: "comfy:save-config",
 } as const;
@@ -223,6 +227,7 @@ export type ComfyRunWorkflowPayload = {
   workflowId?: string;
   imagePath?: string;
   imageBase64?: string;
+  projectId?: string;
 };
 
 export type ComfyRunWorkflowResult = {
@@ -234,6 +239,50 @@ export type ComfyRunWorkflowResult = {
   message: string;
   error?: string;
   comfy: ComfyStatusResponse;
+};
+
+export type ComfyJobState = "QUEUED" | "RUNNING" | "RESULT_READY" | "ERROR" | "CANCELED";
+
+export type ComfyJobOutputs = {
+  glbPath?: string;
+  previewImages?: string[];
+  raw?: unknown;
+};
+
+export type ComfyJobError = {
+  code?: string;
+  message: string;
+};
+
+export type ComfySubmitJobPayload = {
+  workflowId?: string;
+  imagePath?: string;
+  imageBase64?: string;
+  projectId?: string;
+};
+
+export type ComfySubmitJobResult = {
+  jobId: string;
+  promptId: string;
+  workflowName: string;
+  workflowPath: string;
+  message: string;
+};
+
+export type ComfyJobStatusResponse = {
+  jobId: string;
+  promptId: string;
+  workflowName: string;
+  workflowPath: string;
+  state: ComfyJobState;
+  progress: number;
+  message: string;
+  queuePosition?: number;
+  startedAt: number;
+  updatedAt: number;
+  finishedAt?: number;
+  outputs?: ComfyJobOutputs;
+  error?: ComfyJobError;
 };
 
 export type BackendRunDefaultPayload = {

@@ -1,6 +1,7 @@
 import { useEffect, useMemo } from "react";
 import { Navigate, NavLink, useParams } from "react-router-dom";
 import { useProjects } from "@/projects/context";
+import { useGenerationJobStore } from "@/services/comfyui";
 import { selectProjectById } from "@/projects/selectors";
 import { ProjectViewport } from "@/three/ProjectViewport";
 
@@ -31,6 +32,7 @@ function panelClass() {
 export function WorkspacePage() {
   const { projectId = "" } = useParams();
   const { state, hydrated, setActiveProject } = useProjects();
+  const { state: generationJob } = useGenerationJobStore();
   const project = useMemo(() => selectProjectById(state, projectId), [projectId, state]);
 
   useEffect(() => {
@@ -49,6 +51,14 @@ export function WorkspacePage() {
   }
 
   const sourceImages = project.model?.sourceImages ?? [];
+  const generationLabel =
+    generationJob.status === "generating"
+      ? `Generating ${generationJob.progress ?? 0}%`
+      : generationJob.status === "result"
+        ? "Result ready"
+        : generationJob.status === "error"
+          ? "Generation error"
+          : "Engine idle";
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-[var(--surface-2)] text-[var(--text)]">
@@ -139,9 +149,12 @@ export function WorkspacePage() {
               {project.model?.glbPath ? project.model.glbPath : "Viewport mounted with the current project context."}
             </p>
           </div>
-          <p className="shrink-0 text-xs uppercase tracking-[0.18em] text-[var(--text-muted)]">
-            Images {sourceImages.length} | Chat {project.chatHistory.length}
-          </p>
+          <div className="shrink-0 text-right">
+            <p className="text-xs uppercase tracking-[0.18em] text-[var(--text-muted)]">
+              Images {sourceImages.length} | Chat {project.chatHistory.length}
+            </p>
+            <p className="mt-1 text-[11px] text-[var(--text-muted)]">{generationLabel}</p>
+          </div>
         </footer>
       </div>
     </div>
