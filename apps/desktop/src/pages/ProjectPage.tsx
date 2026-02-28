@@ -641,11 +641,42 @@ export function ProjectPage() {
     await desktopApi.openGenerationLogPath(generationLogPath);
   };
 
+  const workspaceStatus: WorkspaceStatus = isGenerating ? "generating" : project.model?.glbPath ? "result" : "idle";
+
+  useEffect(() => {
+    if (workspaceStatusRef.current === workspaceStatus) {
+      return;
+    }
+
+    if (workspaceStatus === "generating") {
+      setActiveTab("ai");
+    } else if (workspaceStatus === "result") {
+      setActiveTab("result");
+    }
+
+    workspaceStatusRef.current = workspaceStatus;
+  }, [workspaceStatus]);
+
   const floatingPanelClass = settings.glassStyle
-    ? "glass text-[var(--text)]"
+    ? "text-[var(--text)]"
     : `${getSurfaceClass(false, "panel")} text-[var(--text)]`;
   const panelSoftClass = getSurfaceClass(false, "soft");
   const selectClass = "pointer-events-auto border-[var(--border)] bg-[var(--surface-3)] text-[var(--text)] hover:border-[var(--accent)] focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--focus-ring)]";
+  const sectionClass = `${floatingPanelClass} border border-[var(--border)] bg-[color:rgba(13,18,26,0.92)] shadow-[0_18px_36px_rgba(0,0,0,0.18)]`;
+  const tabButtonClass = (tabId: InspectorTab) =>
+    `rounded-xl border px-3 py-2 text-[11px] font-medium tracking-[0.16em] transition-colors ${
+      activeTab === tabId
+        ? "border-[var(--accent)] bg-[var(--surface-3)] text-[var(--text)]"
+        : "border-transparent bg-transparent text-[var(--text-muted)] hover:border-[var(--border)] hover:bg-[var(--surface-2)] hover:text-[var(--text)]"
+    }`;
+  const railButtonClass = (isActive: boolean) =>
+    `flex h-11 w-11 items-center justify-center rounded-2xl border text-[10px] font-semibold tracking-[0.18em] transition-colors ${
+      isActive
+        ? "border-[var(--accent)] bg-[var(--surface-3)] text-[var(--text)]"
+        : "border-[var(--border)] bg-[var(--surface-2)] text-[var(--text-muted)] hover:text-[var(--text)]"
+    }`;
+  const bottomZoneClass = "flex h-full min-w-0 items-center gap-2 px-4";
+  const compactMetaClass = "rounded-xl border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2 text-xs text-[var(--text-muted)]";
 
   return (
     <div className="relative flex h-full min-h-0 w-full min-w-0 overflow-hidden">
