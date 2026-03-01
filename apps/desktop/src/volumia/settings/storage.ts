@@ -18,10 +18,10 @@ export const SETTINGS_STORAGE_KEY = "volumia.settings.v1";
 export const DEFAULT_SETTINGS: AppSettings = {
   languageMode: "system",
   language: "es",
-  themeMode: "system",
-  theme: "dark",
+  themeMode: "manual",
+  theme: "light",
   timeTheme: { ...DEFAULT_TIME_THEME },
-  glassStyle: true,
+  glassStyle: false,
   windowMode: "windowed",
   rememberWindowBounds: true,
   performancePreset: "balanced",

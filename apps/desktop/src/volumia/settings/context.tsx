@@ -8,6 +8,7 @@ import {
   type PropsWithChildren,
 } from "react";
 import { desktopApi, hasDesktopBridge } from "@/electron/desktopApi";
+import { applyResolvedThemeToDocument } from "@/ui/theme";
 import { resolveLanguage, resolveTheme, sanitizeTimeTheme } from "./resolvers";
 import {
   DEFAULT_SETTINGS,
@@ -58,7 +59,7 @@ const SettingsContext = createContext<SettingsContextValue | null>(null);
 
 function detectBrowserTheme(): Theme {
   if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
-    return "dark";
+    return "light";
   }
 
   return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
@@ -93,17 +94,11 @@ export function SettingsProvider({ children }: PropsWithChildren) {
   }, [settings]);
 
   useEffect(() => {
-    document.documentElement.dataset.theme = resolvedTheme;
-    document.documentElement.style.colorScheme = resolvedTheme;
-  }, [resolvedTheme]);
-
-  useEffect(() => {
-    document.documentElement.classList.toggle("reduce-motion", settings.reduceMotion);
-  }, [settings.reduceMotion]);
-
-  useEffect(() => {
-    document.documentElement.dataset.glass = settings.glassStyle ? "on" : "off";
-  }, [settings.glassStyle]);
+    applyResolvedThemeToDocument(resolvedTheme, {
+      glassStyle: settings.glassStyle,
+      reduceMotion: settings.reduceMotion,
+    });
+  }, [resolvedTheme, settings.glassStyle, settings.reduceMotion]);
 
   useEffect(() => {
     if (!hasDesktopBridge()) {

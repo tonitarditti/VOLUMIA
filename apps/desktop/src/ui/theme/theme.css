@@ -1,0 +1,53 @@
+:root {
+  --bg: #ede8e0;
+  --surface-1: rgba(246, 241, 233, 0.94);
+  --surface-2: rgba(251, 248, 243, 0.97);
+  --surface-3: #ffffff;
+  --surface-raised: #f8f3ec;
+  --input-bg: rgba(255, 255, 255, 0.72);
+  --input-border: rgba(183, 172, 150, 0.38);
+  --border: rgba(183, 172, 150, 0.28);
+  --border-strong: rgba(164, 150, 125, 0.42);
+  --text: #2a2927;
+  --text-muted: rgba(114, 110, 103, 0.92);
+  --text-faint: rgba(160, 155, 147, 0.92);
+  --accent: #9a6e3a;
+  --accent-2: #b8874a;
+  --accent-soft: rgba(154, 110, 58, 0.09);
+  --success: #3d8f5f;
+  --warning: #b87030;
+  --danger: #c0404a;
+  --success-bg: rgba(61, 143, 95, 0.12);
+  --warning-bg: rgba(184, 112, 48, 0.12);
+  --danger-bg: rgba(192, 64, 74, 0.1);
+  --shadow: 0 2px 12px rgba(0, 0, 0, 0.07), 0 1px 3px rgba(0, 0, 0, 0.04);
+  --shadow-panel: 0 18px 48px rgba(62, 51, 38, 0.08), 0 2px 12px rgba(0, 0, 0, 0.05);
+  --focus-ring: rgba(154, 110, 58, 0.22);
+  --glass-bg: rgba(255, 255, 255, 0.58);
+  --glass-bg-strong: rgba(255, 255, 255, 0.74);
+  --glass-border: rgba(183, 172, 150, 0.28);
+  --glass-shadow: 0 10px 26px rgba(78, 65, 50, 0.08);
+  --shell-topbar: rgba(251, 248, 243, 0.97);
+  --shell-toolbar: rgba(246, 242, 236, 0.96);
+  --shell-panel: rgba(246, 241, 233, 0.93);
+  --shell-viewport: #edeae3;
+  --shell-tag: rgba(183, 172, 150, 0.18);
+  --shell-overlay: rgba(42, 41, 39, 0.08);
+  --glass-blur: 18px;
+}
+
+html,
+body,
+#root {
+  background-color: var(--bg);
+  color: var(--text);
+}
+
+body {
+  font-family: "Segoe UI Variable Text", "Aptos", "Segoe UI", sans-serif;
+  background-image:
+    radial-gradient(circle at top, rgba(255, 255, 255, 0.35), transparent 34%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.24), rgba(255, 255, 255, 0)),
+    linear-gradient(180deg, rgba(154, 110, 58, 0.035), rgba(154, 110, 58, 0)),
+    var(--bg);
+}
