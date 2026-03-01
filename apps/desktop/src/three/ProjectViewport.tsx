@@ -1212,17 +1212,17 @@ function getViewportThemeConfig(theme: ViewportTheme): ViewportThemeConfig {
 
   return {
     isDark: true,
-    background: "#0c0a09",
-    ground: "#433f39",
+    background: "#0d0b0a",
+    ground: "#3d3832",
     gridMain: "#3a352f",
     gridSub: "#36322d",
-    gridOpacity: 0.35,
-    ambientIntensity: 0.22,
-    hemisphereIntensity: 0.9,
-    keyIntensity: 2.2,
-    fillIntensity: 1.1,
-    rimIntensity: 0.6,
-    envMapIntensity: 1.1,
+    gridOpacity: 0.3,
+    ambientIntensity: 0.18,
+    hemisphereIntensity: 0.78,
+    keyIntensity: 2.35,
+    fillIntensity: 0.95,
+    rimIntensity: 0.5,
+    envMapIntensity: 1.05,
   };
 }
 
@@ -1638,6 +1638,7 @@ export function ProjectViewport({
           </div>
         ) : null}
         <div className="relative flex-1 min-h-0 w-full overflow-hidden">
+          <div className="pointer-events-none absolute inset-0 z-10 bg-[linear-gradient(180deg,rgba(86,75,62,0.08)_0%,rgba(24,21,19,0.03)_36%,rgba(8,8,8,0)_100%)]" />
           {loadError ? (
             <div className="pointer-events-none absolute inset-x-3 top-3 z-20 rounded-md border border-[#7e2d2d] bg-[#3c1515]/90 px-3 py-2 text-[11px] leading-snug text-[#ffd7d7]">
               {loadError}
@@ -1718,8 +1719,8 @@ export function ProjectViewport({
                   shadow-camera-right={SHADOW_CAMERA_BOUNDS}
                   shadow-camera-top={SHADOW_CAMERA_BOUNDS}
                   shadow-camera-bottom={-SHADOW_CAMERA_BOUNDS}
-                  shadow-bias={-0.00012}
-                  shadow-normalBias={0.025}
+                  shadow-bias={-0.0001}
+                  shadow-normalBias={0.024}
                   shadow-radius={2.2}
                 />
                 <directionalLight

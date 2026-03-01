@@ -30,6 +30,8 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
   const [backendStatus, setBackendStatus] = useState<BackendStatusResponse | null>(null);
   const [comfyStatus, setComfyStatus] = useState<ComfyStatusResponse | null>(null);
   const [backendMessage, setBackendMessage] = useState("Backend idle.");
+  const [logsOpen, setLogsOpen] = useState(false);
+  const [engineOpen, setEngineOpen] = useState(false);
   const [runningWorkflowTest, setRunningWorkflowTest] = useState(false);
   const [importingWorkflow, setImportingWorkflow] = useState(false);
   const [startingComfy, setStartingComfy] = useState(false);
@@ -98,6 +100,22 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
       window.clearInterval(timer);
     };
   }, []);
+
+  const comfyBadge = useMemo(() => {
+    if (!comfyStatus) {
+      return { label: "Idle", className: "border-[rgba(138,148,163,0.26)] bg-[rgba(138,148,163,0.12)] text-[#c6ceda]" };
+    }
+    if (comfyStatus.lastError || comfyStatus.state === "ERROR") {
+      return { label: "Error", className: "border-[rgba(165,91,91,0.34)] bg-[rgba(165,91,91,0.16)] text-[#dfb3b3]" };
+    }
+    if (comfyStatus.state === "STARTING") {
+      return { label: "Busy", className: "border-[rgba(182,133,65,0.36)] bg-[rgba(182,133,65,0.16)] text-[#d6bf8b]" };
+    }
+    if (comfyStatus.running) {
+      return { label: "Ready", className: "border-[rgba(90,151,108,0.34)] bg-[rgba(90,151,108,0.16)] text-[#b7d9bf]" };
+    }
+    return { label: "Idle", className: "border-[rgba(138,148,163,0.26)] bg-[rgba(138,148,163,0.12)] text-[#c6ceda]" };
+  }, [comfyStatus]);
 
   const runWorkflowTest = async () => {
     if (!hasDesktopBridge()) {
@@ -247,72 +265,100 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
             </Button>
           </div>
         </div>
-        <div className="mt-4 rounded-xl border border-[var(--border)] bg-[var(--surface-2)] p-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-xs font-medium text-[var(--text)]">
-              ComfyUI: {comfyStatus?.state ?? "UNKNOWN"} ({comfyStatus?.url ?? "http://127.0.0.1:8188"})
-            </p>
-            <p className="text-xs text-[var(--text-muted)]">
-              Workflow activo: {backendStatus?.workflows.activeName ?? "n/a"}
-            </p>
+        <div className="mt-4 rounded-xl border border-[var(--border)] bg-[var(--surface-2)] p-4">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <p className="text-[11px] uppercase tracking-[0.18em] text-[var(--text-muted)]">Engine status</p>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <span className={`rounded-full border px-3 py-1 text-[11px] font-medium tracking-[0.08em] ${comfyBadge.className}`}>
+                  {comfyBadge.label}
+                </span>
+                <span className="text-xs text-[var(--text-muted)]">
+                  {comfyStatus?.url ?? "http://127.0.0.1:8188"}
+                </span>
+              </div>
+              <p className="mt-2 text-xs text-[var(--text-muted)]">
+                Workflow: {backendStatus?.workflows.activeName ?? "n/a"} · {backendMessage}
+              </p>
+            </div>
+
             <div className="flex items-center gap-2">
-              <Button
-                variant="secondary"
-                className="h-8 px-3 text-xs"
-                disabled={startingComfy}
-                onClick={() => void startComfy()}
-              >
-                {startingComfy ? "Starting..." : "Start"}
+              <Button variant="secondary" className="h-8 px-3 text-xs" onClick={() => setLogsOpen((current) => !current)}>
+                {logsOpen ? "Hide logs" : "Show logs"}
               </Button>
-              <Button
-                variant="secondary"
-                className="h-8 px-3 text-xs"
-                disabled={stoppingComfy}
-                onClick={() => void stopComfy()}
-              >
-                {stoppingComfy ? "Stopping..." : "Stop"}
-              </Button>
-              <Button
-                variant="primary"
-                className="h-8 px-3 text-xs"
-                disabled={runningWorkflowTest}
-                onClick={() => void runWorkflowTest()}
-              >
-                Run workflow (test)
-              </Button>
-              <Button
-                variant="secondary"
-                className="h-8 px-3 text-xs"
-                disabled={importingWorkflow}
-                onClick={() => void importWorkflowJson()}
-              >
-                Import workflow JSON
-              </Button>
-              <Button
-                variant="secondary"
-                className="h-8 px-3 text-xs"
-                onClick={() => void refreshComfyStatus()}
-              >
-                Refresh status
+              <Button variant="ghost" className="h-8 px-3 text-xs" onClick={() => setEngineOpen((current) => !current)}>
+                {engineOpen ? "Hide advanced" : "Advanced / Engine"}
               </Button>
             </div>
           </div>
-          <div className="mt-2 max-w-xl">
-            <TextField
-              value={workflowImagePath}
-              onChange={(event) => setWorkflowImagePath(event.target.value)}
-              placeholder="Image path for LoadImage (optional)"
-              aria-label="Workflow image path"
-            />
-          </div>
-          <p className="mt-2 text-xs text-[var(--text-muted)]">{backendMessage}</p>
-          <div className="mt-2 max-h-28 overflow-auto rounded-md border border-[var(--border)] bg-[var(--surface-3)] p-2">
-            {(comfyStatus?.lastLogs ?? []).slice(-8).map((line, index) => (
-              <p key={`${index}-${line}`} className="font-mono text-[10px] leading-relaxed text-[var(--text-muted)]">
-                {line}
-              </p>
-            ))}
-          </div>
+
+          {logsOpen ? (
+            <div className="mt-3 max-h-28 overflow-auto rounded-lg border border-[var(--border)] bg-[var(--surface-3)] p-3">
+              {(comfyStatus?.lastLogs ?? []).slice(-8).map((line, index) => (
+                <p key={`${index}-${line}`} className="font-mono text-[10px] leading-relaxed text-[var(--text-muted)]">
+                  {line}
+                </p>
+              ))}
+            </div>
+          ) : null}
+
+          {engineOpen ? (
+            <div className="mt-4 space-y-3 rounded-lg border border-[var(--border)] bg-[var(--surface-3)] p-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  variant="secondary"
+                  className="h-8 px-3 text-xs"
+                  disabled={startingComfy}
+                  onClick={() => void startComfy()}
+                >
+                  {startingComfy ? "Starting..." : "Start"}
+                </Button>
+                <Button
+                  variant="secondary"
+                  className="h-8 px-3 text-xs"
+                  disabled={stoppingComfy}
+                  onClick={() => void stopComfy()}
+                >
+                  {stoppingComfy ? "Stopping..." : "Stop"}
+                </Button>
+                <Button
+                  variant="secondary"
+                  className="h-8 px-3 text-xs"
+                  disabled={importingWorkflow}
+                  onClick={() => void importWorkflowJson()}
+                >
+                  Import workflow JSON
+                </Button>
+                <Button
+                  variant="ghost"
+                  className="h-8 px-3 text-xs"
+                  onClick={() => void refreshComfyStatus()}
+                >
+                  Refresh status
+                </Button>
+              </div>
+
+              <div className="max-w-xl">
+                <TextField
+                  value={workflowImagePath}
+                  onChange={(event) => setWorkflowImagePath(event.target.value)}
+                  placeholder="Image path for LoadImage (optional)"
+                  aria-label="Workflow image path"
+                />
+              </div>
+
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="primary"
+                  className="h-8 px-3 text-xs"
+                  disabled={runningWorkflowTest}
+                  onClick={() => void runWorkflowTest()}
+                >
+                  Run workflow (test)
+                </Button>
+              </div>
+            </div>
+          ) : null}
         </div>
       </Card>
 

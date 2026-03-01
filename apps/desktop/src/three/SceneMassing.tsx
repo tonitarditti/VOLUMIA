@@ -22,6 +22,7 @@ const FLOOR_Y = 0;
 const GROUND_THICKNESS = 0.1;
 const GROUND_TOP_OFFSET = -0.01;
 const GRID_OFFSET = 0.001;
+const GRID_OPACITY_SCALE = 0.52;
 const groundPosY = (FLOOR_Y + GROUND_TOP_OFFSET) - (GROUND_THICKNESS / 2);
 
 function applyGridOpacity(grid: THREE.GridHelper, opacity: number) {
@@ -35,15 +36,23 @@ function applyGridOpacity(grid: THREE.GridHelper, opacity: number) {
 }
 
 export function SceneMassing({ showMassing, groundColor, gridMain, gridSub, gridOpacity }: SceneMassingProps) {
+  const groundMaterialColor = useMemo(() => {
+    return new THREE.Color(groundColor).multiplyScalar(0.76);
+  }, [groundColor]);
+
   const grid = useMemo(() => {
     const nextGrid = new THREE.GridHelper(100, 20, gridMain, gridSub);
-    applyGridOpacity(nextGrid, gridOpacity);
+    applyGridOpacity(nextGrid, gridOpacity * GRID_OPACITY_SCALE);
     return nextGrid;
   }, [gridMain, gridOpacity, gridSub]);
 
   useFrame(({ camera }) => {
     const dist = camera.position.length();
-    const opacity = THREE.MathUtils.clamp(gridOpacity * (1.0 - (dist - 5) / 40), 0.08, gridOpacity);
+    const opacity = THREE.MathUtils.clamp(
+      gridOpacity * GRID_OPACITY_SCALE * (1.0 - (dist - 5) / 40),
+      0.05,
+      gridOpacity * GRID_OPACITY_SCALE
+    );
     applyGridOpacity(grid, opacity);
   });
 
@@ -53,7 +62,7 @@ export function SceneMassing({ showMassing, groundColor, gridMain, gridSub, grid
       <mesh position={[0, groundPosY, 0]} receiveShadow>
         <boxGeometry args={[18, GROUND_THICKNESS, 18]} />
         <meshStandardMaterial
-          color={groundColor}
+          color={groundMaterialColor}
           roughness={0.95}
           metalness={0.0}
           polygonOffset
