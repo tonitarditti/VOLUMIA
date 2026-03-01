@@ -10,7 +10,13 @@ import {
   selectActiveProject,
   selectProjectsSortedByUpdatedAt,
 } from "@/projects/selectors";
-import { Button, Card, TextField } from "@/ui/primitives";
+import {
+  Badge,
+  Button,
+  Card,
+  type BadgeTone,
+  TextField,
+} from "@/ui/primitives";
 import { useT } from "@/volumia/i18n/useT";
 
 type DashboardPageProps = {
@@ -46,8 +52,7 @@ function statusTone(comfyStatus: ComfyStatusResponse | null) {
       label: "Idle",
       summary: "No engine status yet.",
       detail: "Waiting for engine telemetry.",
-      className:
-        "border-[var(--border)] bg-[var(--surface-2)] text-[var(--text-muted)]",
+      tone: "neutral" as BadgeTone,
     };
   }
 
@@ -56,8 +61,7 @@ function statusTone(comfyStatus: ComfyStatusResponse | null) {
       label: "Error",
       summary: "AI engine stopped",
       detail: comfyStatus.lastError ?? comfyStatus.message,
-      className:
-        "border-[var(--danger)] bg-[var(--danger-bg)] text-[var(--danger)]",
+      tone: "danger" as BadgeTone,
     };
   }
 
@@ -66,8 +70,7 @@ function statusTone(comfyStatus: ComfyStatusResponse | null) {
       label: "Busy",
       summary: "AI engine is starting",
       detail: comfyStatus.message,
-      className:
-        "border-[var(--warning)] bg-[var(--warning-bg)] text-[var(--warning)]",
+      tone: "warning" as BadgeTone,
     };
   }
 
@@ -76,8 +79,7 @@ function statusTone(comfyStatus: ComfyStatusResponse | null) {
       label: "Ready",
       summary: "AI engine is available",
       detail: comfyStatus.message,
-      className:
-        "border-[var(--success)] bg-[var(--success-bg)] text-[var(--success)]",
+      tone: "success" as BadgeTone,
     };
   }
 
@@ -85,8 +87,7 @@ function statusTone(comfyStatus: ComfyStatusResponse | null) {
     label: "Idle",
     summary: "AI engine is idle",
     detail: comfyStatus.message,
-    className:
-      "border-[var(--border)] bg-[var(--surface-2)] text-[var(--text-muted)]",
+    tone: "neutral" as BadgeTone,
   };
 }
 
@@ -421,11 +422,9 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
                 Engine status
               </p>
               <div className="mt-3 flex items-center gap-2">
-                <span
-                  className={`rounded-full border px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.08em] ${engineTone.className}`}
-                >
+                <Badge tone={engineTone.tone} dot>
                   {engineTone.label}
-                </span>
+                </Badge>
                 <span className="text-xs text-[var(--text-muted)]">
                   {comfyStatus?.url ?? "127.0.0.1:8188"}
                 </span>

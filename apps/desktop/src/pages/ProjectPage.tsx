@@ -16,7 +16,7 @@ import {
   summarizeReply,
 } from "@/projects/mockAssistant";
 import { desktopApi, hasDesktopBridge } from "@/electron/desktopApi";
-import { Button, TextArea } from "@/ui/primitives";
+import { Badge, Button, TextArea, type BadgeTone } from "@/ui/primitives";
 import { BottomToolbar, RightPanel, TopBar } from "@/ui/shell";
 import { ProjectViewport } from "@/three/ProjectViewport";
 import {
@@ -668,12 +668,12 @@ export function ProjectPage() {
           : "busy";
   const isEngineReady = engineState === "ready";
   const engineLogs = comfyStatus?.lastLogs?.slice(-10) ?? [];
-  const engineBadgeClass =
+  const engineBadgeTone: BadgeTone =
     engineState === "ready"
-      ? "border-[var(--success)] bg-[var(--success-bg)] text-[var(--success)]"
+      ? "success"
       : engineState === "error"
-        ? "border-[var(--danger)] bg-[var(--danger-bg)] text-[var(--danger)]"
-        : "border-[var(--warning)] bg-[var(--warning-bg)] text-[var(--warning)]";
+        ? "danger"
+        : "warning";
   const engineBadgeLabel =
     engineState === "ready"
       ? "Ready"
@@ -909,19 +909,30 @@ export function ProjectPage() {
   const contrastSectionClass =
     "rounded-2xl border border-[var(--shell-contrast-border)] bg-[var(--shell-contrast-surface)] p-4";
   const contrastLabelClass =
-    "text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--shell-contrast-text-muted)]";
+    "text-[9px] font-semibold uppercase tracking-[0.14em] text-[var(--shell-contrast-text-muted)]";
   const contrastBodyClass =
     "text-[13px] leading-6 text-[var(--shell-contrast-text)]";
   const contrastSubtleClass =
     "text-[12px] leading-5 text-[var(--shell-contrast-text-muted)]";
   const contrastButtonClass =
-    "border-[var(--shell-contrast-border)] bg-[var(--shell-contrast-surface)] text-[var(--shell-contrast-text)] hover:border-[var(--accent)] hover:bg-[var(--shell-contrast-tag)]";
+    "border-[var(--shell-contrast-border)] bg-[var(--shell-contrast-tag)] text-[var(--shell-contrast-text-muted)] hover:border-[var(--accent)] hover:bg-[var(--shell-contrast-surface)] hover:text-[var(--shell-contrast-text)]";
   const contrastGhostButtonClass =
     "border-transparent bg-transparent text-[var(--shell-contrast-text-muted)] hover:border-[var(--shell-contrast-border)] hover:bg-[var(--shell-contrast-surface)] hover:text-[var(--shell-contrast-text)]";
   const contrastSelectClass =
-    "pointer-events-auto h-10 w-full appearance-none rounded-xl border border-[var(--shell-contrast-border)] bg-[var(--shell-contrast-surface)] px-3 text-sm text-[var(--shell-contrast-text)] outline-none hover:border-[var(--accent)] focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--focus-ring)]";
+    "pointer-events-auto h-10 w-full appearance-none rounded-lg border border-[var(--shell-contrast-border)] bg-[var(--shell-contrast-surface)] px-3 text-sm text-[var(--shell-contrast-text)] outline-none hover:border-[var(--accent)] focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--focus-ring)]";
   const contrastToggleClass =
-    "inline-flex h-10 w-full items-center gap-2 rounded-xl border border-[var(--shell-contrast-border)] bg-[var(--shell-contrast-surface)] px-3 text-xs text-[var(--shell-contrast-text)]";
+    "inline-flex h-10 w-full items-center gap-2 rounded-lg border border-[var(--shell-contrast-border)] bg-[var(--shell-contrast-surface)] px-3 text-xs text-[var(--shell-contrast-text)]";
+  const inspectorSectionClass =
+    "space-y-3 border-b border-[var(--shell-contrast-border)] pb-5 last:border-b-0 last:pb-0";
+  const inspectorRowsClass =
+    "grid grid-cols-[minmax(0,1fr)_auto] gap-x-4 gap-y-3";
+  const inspectorRowLabelClass =
+    "text-[11px] text-[var(--shell-contrast-text-muted)]";
+  const inspectorRowValueClass =
+    "text-[11px] font-medium text-[var(--shell-contrast-text)]";
+  const toolbarSecondaryButtonClass =
+    "border-[var(--shell-contrast-border)] bg-[var(--shell-contrast-tag)] text-[var(--shell-contrast-text)] hover:border-[var(--accent)] hover:bg-[var(--shell-contrast-surface)]";
+  const toolbarPrimaryButtonClass = "shadow-[var(--shadow)]";
   const railButtonClass = (isActive: boolean) =>
     `relative flex h-11 w-11 items-center justify-center rounded-xl border text-[10px] font-semibold tracking-[0.14em] transition-colors ${
       isActive
@@ -929,14 +940,14 @@ export function ProjectPage() {
         : "border-[var(--shell-contrast-border)] bg-[var(--shell-contrast-tag)] text-[var(--shell-contrast-text-muted)] hover:text-[var(--shell-contrast-text)]"
     }`;
   const bottomZoneClass = "flex h-full min-w-0 items-center gap-2 px-4";
-  const workspaceBadgeClass =
+  const workspaceBadgeTone: BadgeTone =
     workspaceStatus === "generating"
-      ? "border-[var(--warning)] bg-[var(--warning-bg)] text-[var(--warning)]"
+      ? "warning"
       : workspaceStatus === "ready"
-        ? "border-[var(--success)] bg-[var(--success-bg)] text-[var(--success)]"
+        ? "success"
         : workspaceStatus === "error"
-          ? "border-[var(--danger)] bg-[var(--danger-bg)] text-[var(--danger)]"
-          : "border-[var(--border)] bg-[var(--surface-2)] text-[var(--text-muted)]";
+          ? "danger"
+          : "neutral";
   const stopPanelWheel = (event: ReactWheelEvent<HTMLElement>) => {
     event.stopPropagation();
   };
@@ -949,11 +960,9 @@ export function ProjectPage() {
           title={project.name}
           breadcrumb={["Projects", project.name]}
           statusSlot={
-            <span
-              className={`rounded-full border px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.06em] ${engineBadgeClass}`}
-            >
+            <Badge tone={engineBadgeTone} dot>
               Engine {engineBadgeLabel}
-            </span>
+            </Badge>
           }
           rightSlot={
             <div className="flex items-center gap-2">
@@ -1102,8 +1111,10 @@ export function ProjectPage() {
                     </div>
                   </div>
                   <div className="flex flex-wrap justify-end gap-2">
-                    <span
-                      className={`rounded-full border px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.06em] ${workspaceBadgeClass}`}
+                    <Badge
+                      tone={workspaceBadgeTone}
+                      dot
+                      className="shadow-[var(--shadow)]"
                     >
                       {workspaceStatus === "ready"
                         ? "Ready"
@@ -1112,7 +1123,7 @@ export function ProjectPage() {
                           : workspaceStatus === "error"
                             ? "Error"
                             : "Idle"}
-                    </span>
+                    </Badge>
                     {generationDevice ? (
                       <span className={viewportMetaClass}>
                         {generationDevice.device.toUpperCase()}{" "}
@@ -1140,84 +1151,90 @@ export function ProjectPage() {
                 tone="contrast"
                 onWheelCapture={stopPanelWheel}
                 headerSlot={
-                  <span
-                    className={`rounded-full border px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.06em] ${engineBadgeClass}`}
-                  >
+                  <Badge tone={engineBadgeTone} dot>
                     {engineBadgeLabel}
-                  </span>
+                  </Badge>
                 }
               >
                 {activeTab === "model" ? (
-                  <div className="space-y-4">
-                    <div className={contrastSectionClass}>
+                  <div className="space-y-6">
+                    <section className={inspectorSectionClass}>
                       <p className={contrastLabelClass}>Model summary</p>
-                      <div className="mt-4 grid grid-cols-2 gap-2">
-                        <div className={contrastMetaClass}>
-                          Images {selectedImages.length}
-                        </div>
-                        <div className={contrastMetaClass}>
-                          Tier {reconstructionTier}
-                        </div>
-                        <div className={contrastMetaClass}>Mode auto</div>
-                        <div className={contrastMetaClass}>
-                          Multiview {multiviewEnabled ? "on" : "off"}
-                        </div>
+                      <div className={`mt-4 ${inspectorRowsClass}`}>
+                        <span className={inspectorRowLabelClass}>Images</span>
+                        <span className={inspectorRowValueClass}>
+                          {selectedImages.length}
+                        </span>
+                        <span className={inspectorRowLabelClass}>
+                          Reconstruction tier
+                        </span>
+                        <span className={inspectorRowValueClass}>
+                          {reconstructionTier}
+                        </span>
+                        <span className={inspectorRowLabelClass}>Mode</span>
+                        <span className={inspectorRowValueClass}>Auto</span>
+                        <span className={inspectorRowLabelClass}>
+                          Multiview
+                        </span>
+                        <span className={inspectorRowValueClass}>
+                          {multiviewEnabled ? "Enabled" : "Disabled"}
+                        </span>
                       </div>
-                    </div>
+                    </section>
 
-                    <div className={contrastSectionClass}>
+                    <section className={inspectorSectionClass}>
                       <p className={contrastLabelClass}>Asset path</p>
                       <p className="mt-3 break-all text-[12px] leading-5 text-[var(--shell-contrast-text-muted)]">
                         {project.model?.glbPath ??
                           "No generated model attached yet."}
                       </p>
-                    </div>
+                    </section>
                   </div>
                 ) : null}
 
                 {activeTab === "material" ? (
-                  <div className="space-y-4">
-                    <div className={contrastSectionClass}>
+                  <div className="space-y-6">
+                    <section className={inspectorSectionClass}>
                       <p className={contrastLabelClass}>Material pipeline</p>
                       <p className="mt-3 text-[13px] leading-6 text-[var(--shell-contrast-text)]">
                         Material slots stay intact here so the texture pass can
                         continue without replacing the loaded GLB.
                       </p>
-                    </div>
-                    <div className={contrastSectionClass}>
+                    </section>
+                    <section className={inspectorSectionClass}>
                       <p className={contrastLabelClass}>Current state</p>
                       <p className="mt-3 text-[12px] leading-5 text-[var(--shell-contrast-text-muted)]">
                         Use the model tab to verify geometry output, then
                         continue with texture and mapping work in the existing
                         pipeline.
                       </p>
-                    </div>
+                    </section>
                   </div>
                 ) : null}
 
                 {activeTab === "light" ? (
-                  <div className="space-y-4">
-                    <div className={contrastSectionClass}>
+                  <div className="space-y-6">
+                    <section className={inspectorSectionClass}>
                       <p className={contrastLabelClass}>Viewport lighting</p>
                       <p className={contrastBodyClass}>
                         The light-mode ground, grid and shadow balance were
                         tuned to keep the model as the brightest element while
                         preserving depth.
                       </p>
-                    </div>
-                    <div className={contrastSectionClass}>
+                    </section>
+                    <section className={inspectorSectionClass}>
                       <p className={contrastLabelClass}>Navigation</p>
                       <p className={contrastSubtleClass}>
                         The drawer and inspector remain in dedicated columns, so
                         wheel and scroll interactions stay away from the orbit
                         surface.
                       </p>
-                    </div>
+                    </section>
                   </div>
                 ) : null}
 
                 {activeTab === "ai" ? (
-                  <div className="space-y-4">
+                  <div className="space-y-6">
                     {!isEngineReady ? (
                       <div className="rounded-2xl border border-[var(--danger)] bg-[var(--danger-bg)] p-4">
                         <div className="flex items-start justify-between gap-3">
@@ -1246,7 +1263,7 @@ export function ProjectPage() {
                       </div>
                     ) : null}
 
-                    <div className={contrastSectionClass}>
+                    <section className={inspectorSectionClass}>
                       <p className={contrastLabelClass}>Generation controls</p>
                       <div className="mt-4 grid gap-3">
                         <Button
@@ -1377,9 +1394,9 @@ export function ProjectPage() {
                           </select>
                         ) : null}
                       </div>
-                    </div>
+                    </section>
 
-                    <div className={contrastSectionClass}>
+                    <section className={inspectorSectionClass}>
                       <div className="flex items-center justify-between gap-3">
                         <div>
                           <p className={contrastLabelClass}>Engine details</p>
@@ -1415,28 +1432,30 @@ export function ProjectPage() {
                           )}
                         </div>
                       ) : null}
-                    </div>
+                    </section>
                   </div>
                 ) : null}
 
                 {activeTab === "result" ? (
-                  <div className="space-y-4">
-                    <div className={contrastSectionClass}>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className={contrastMetaClass}>
+                  <div className="space-y-6">
+                    <section className={inspectorSectionClass}>
+                      <div className={`mb-4 ${inspectorRowsClass}`}>
+                        <span className={inspectorRowLabelClass}>Stage</span>
+                        <span className={inspectorRowValueClass}>
                           {generationStage}
                         </span>
-                        <span className={contrastMetaClass}>
-                          Progress {generationPercent}%
+                        <span className={inspectorRowLabelClass}>Progress</span>
+                        <span className={inspectorRowValueClass}>
+                          {generationPercent}%
                         </span>
-                        <span className={contrastMetaClass}>
-                          Profile{" "}
+                        <span className={inspectorRowLabelClass}>Profile</span>
+                        <span className={inspectorRowValueClass}>
                           {formatAutoProfileLabel(
                             settings.autoGenerationProfile,
                           )}
                         </span>
                       </div>
-                      <div className="mt-4 h-2 w-full overflow-hidden rounded-full bg-[var(--shell-contrast-tag)]">
+                      <div className="h-2 w-full overflow-hidden rounded-full bg-[var(--shell-contrast-tag)]">
                         <div
                           className="h-full bg-[linear-gradient(90deg,var(--accent),var(--accent-2))] transition-all duration-150 ease-out"
                           style={{ width: `${generationPercent}%` }}
@@ -1445,29 +1464,33 @@ export function ProjectPage() {
                       <p className="mt-4 text-[13px] leading-6 text-[var(--shell-contrast-text)]">
                         {generationMessage}
                       </p>
-                    </div>
+                    </section>
 
-                    <div className={contrastSectionClass}>
+                    <section className={inspectorSectionClass}>
                       <p className={contrastLabelClass}>Run metadata</p>
-                      <div className="mt-4 grid grid-cols-2 gap-2">
-                        <div className={contrastMetaClass}>Preset {preset}</div>
-                        <div className={contrastMetaClass}>
-                          Engine{" "}
+                      <div className={`mt-4 ${inspectorRowsClass}`}>
+                        <span className={inspectorRowLabelClass}>Preset</span>
+                        <span className={inspectorRowValueClass}>{preset}</span>
+                        <span className={inspectorRowLabelClass}>Engine</span>
+                        <span className={inspectorRowValueClass}>
                           {autoUsedEngine
                             ? formatAutoEngineLabel(autoUsedEngine)
                             : "pending"}
-                        </div>
-                        <div className={contrastMetaClass}>
-                          Auto{" "}
+                        </span>
+                        <span className={inspectorRowLabelClass}>
+                          Auto mode
+                        </span>
+                        <span className={inspectorRowValueClass}>
                           {autoUsedPreset
                             ? formatAutoPresetLabel(autoUsedPreset)
                             : "n/a"}
-                        </div>
-                        <div className={contrastMetaClass}>
+                        </span>
+                        <span className={inspectorRowLabelClass}>Output</span>
+                        <span className={inspectorRowValueClass}>
                           {project.model?.glbPath
                             ? "GLB ready"
                             : "Awaiting GLB"}
-                        </div>
+                        </span>
                       </div>
                       <div className="mt-4 flex flex-wrap gap-2">
                         <Button
@@ -1487,7 +1510,7 @@ export function ProjectPage() {
                           Abrir log
                         </Button>
                       </div>
-                    </div>
+                    </section>
                   </div>
                 ) : null}
               </RightPanel>
@@ -1505,7 +1528,7 @@ export function ProjectPage() {
                   </span>
                   <Button
                     variant="ghost"
-                    className={`h-9 px-3 text-xs ${contrastGhostButtonClass}`}
+                    className={`h-9 px-3 text-xs ${toolbarSecondaryButtonClass}`}
                     disabled={isGenerating}
                     onClick={() => setActiveTab("model")}
                   >
@@ -1513,7 +1536,7 @@ export function ProjectPage() {
                   </Button>
                   <Button
                     variant="ghost"
-                    className={`h-9 px-3 text-xs ${contrastGhostButtonClass}`}
+                    className={`h-9 px-3 text-xs ${toolbarSecondaryButtonClass}`}
                     disabled={isGenerating}
                     onClick={() => setActiveTab("light")}
                   >
@@ -1521,7 +1544,7 @@ export function ProjectPage() {
                   </Button>
                   <Button
                     variant="ghost"
-                    className={`h-9 px-3 text-xs ${contrastGhostButtonClass}`}
+                    className={`h-9 px-3 text-xs ${toolbarSecondaryButtonClass}`}
                     disabled={isGenerating}
                     onClick={() => setActiveTab("material")}
                   >
@@ -1572,7 +1595,7 @@ export function ProjectPage() {
                     </div>
                     <Button
                       variant="ghost"
-                      className={`h-9 px-3 text-xs ${contrastGhostButtonClass}`}
+                      className={`h-9 px-3 text-xs ${toolbarSecondaryButtonClass}`}
                       onClick={() => void handleCancelGeneration()}
                     >
                       Cancelar
@@ -1587,13 +1610,14 @@ export function ProjectPage() {
                     ) : null}
                     <Button
                       variant="secondary"
-                      className={contrastButtonClass}
+                      className={toolbarSecondaryButtonClass}
                       onClick={() => void handleSelectImages()}
                     >
                       Agregar imagenes
                     </Button>
                     <Button
                       variant="primary"
+                      className={toolbarPrimaryButtonClass}
                       onClick={() => void handleRunGeneration()}
                       disabled={selectedImages.length === 0 || !isEngineReady}
                       title={
@@ -1606,7 +1630,7 @@ export function ProjectPage() {
                     </Button>
                     <Button
                       variant="secondary"
-                      className={contrastButtonClass}
+                      className={toolbarSecondaryButtonClass}
                       onClick={() => void handleRunGenerationSkp()}
                       disabled={
                         selectedImages.length < 1 ||
@@ -1622,7 +1646,7 @@ export function ProjectPage() {
                     {!isEngineReady ? (
                       <Button
                         variant="secondary"
-                        className={contrastButtonClass}
+                        className={toolbarSecondaryButtonClass}
                         onClick={() => void restartEngine()}
                         disabled={isRestartingEngine}
                       >

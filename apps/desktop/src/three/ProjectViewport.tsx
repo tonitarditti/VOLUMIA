@@ -1310,21 +1310,21 @@ function getViewportThemeConfig(theme: ViewportTheme): ViewportThemeConfig {
   if (theme === "light") {
     return {
       isDark: false,
-      background: "#ece7df",
-      ground: "#918679",
-      gridMain: "#796f63",
-      gridSub: "#8b8174",
-      gridOpacity: 0.28,
-      ambientIntensity: 0.22,
-      hemisphereIntensity: 0.68,
-      keyIntensity: 1.72,
-      fillIntensity: 0.9,
+      background: "#e7e4de",
+      ground: "#998d80",
+      gridMain: "#807669",
+      gridSub: "#918678",
+      gridOpacity: 0.24,
+      ambientIntensity: 0.24,
+      hemisphereIntensity: 0.7,
+      keyIntensity: 1.74,
+      fillIntensity: 0.92,
       rimIntensity: 0.52,
       envMapIntensity: 0.96,
-      toneMappingExposure: 0.96,
-      contactShadowOpacity: 0.48,
+      toneMappingExposure: 0.94,
+      contactShadowOpacity: 0.52,
       overlayGradient:
-        "linear-gradient(180deg, rgba(112, 97, 79, 0.08) 0%, rgba(78, 68, 56, 0.035) 30%, rgba(10, 10, 10, 0) 100%)",
+        "linear-gradient(180deg, rgba(124, 109, 90, 0.07) 0%, rgba(92, 82, 70, 0.028) 34%, rgba(10, 10, 10, 0) 100%)",
     };
   }
 
