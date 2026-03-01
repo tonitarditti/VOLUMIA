@@ -23,7 +23,7 @@ export function Card({ className = "", children, padding = "none", hoverElevatio
 
   return (
     <section
-      className={`rounded-xl transition-[transform,border-color] duration-150 ease-out ${surfaceClass} ${hoverElevation ? "hover:-translate-y-px hover:border-[var(--accent)]" : ""} ${paddingClasses[padding]} ${className}`}
+      className={`rounded-xl transition-[border-color,background-color] duration-150 ease-out ${surfaceClass} ${hoverElevation ? "hover:border-[color:rgba(155,122,89,0.26)] hover:bg-[var(--surface-2)]" : ""} ${paddingClasses[padding]} ${className}`}
     >
       {children}
     </section>

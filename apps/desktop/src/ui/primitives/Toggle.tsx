@@ -12,10 +12,10 @@ type ToggleProps = {
 export function Toggle({ checked, onChange, label, helperText, disabled = false, className = "" }: ToggleProps) {
   return (
     <div
-      className={`flex items-center justify-between gap-3 rounded-lg border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2 ${className}`}
+      className={`flex items-center justify-between gap-3 rounded-lg border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2.5 ${className}`}
     >
       <div className="min-w-0">
-        {label ? <p className="text-sm text-[var(--text)]">{label}</p> : null}
+        {label ? <p className="text-sm font-normal text-[var(--text)]">{label}</p> : null}
         {helperText ? <p className="mt-0.5 text-xs text-[var(--text-muted)]">{helperText}</p> : null}
       </div>
       <button
@@ -31,7 +31,7 @@ export function Toggle({ checked, onChange, label, helperText, disabled = false,
         }`}
       >
         <span
-          className={`inline-block h-4 w-4 rounded-full bg-[var(--surface-1)] shadow-sm transition-transform duration-150 ease-out ${
+          className={`inline-block h-4 w-4 rounded-full bg-[var(--surface-1)] transition-transform duration-150 ease-out ${
             checked ? "translate-x-5" : "translate-x-1"
           }`}
         />
@@ -41,4 +41,3 @@ export function Toggle({ checked, onChange, label, helperText, disabled = false,
 }
 
 export type { ToggleProps };
-
