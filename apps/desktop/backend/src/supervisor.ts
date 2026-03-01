@@ -4,8 +4,18 @@ import { ComfyApi } from "./comfyApi";
 import { logger } from "./logger";
 import { checkModelsInstalled, ensureModels } from "./modelRegistry";
 import { getOutputsDir, getWorkflowsDir } from "./paths";
-import { killProcessTree, ProcessManager, waitForPort, type ManagedProcess } from "./processManager";
-import { loadBackendConfig, resolveComfyLaunchPlan, saveComfyUserConfig, type ComfyRuntimeConfig } from "./runtimeConfig";
+import {
+  killProcessTree,
+  ProcessManager,
+  waitForPort,
+  type ManagedProcess,
+} from "./processManager";
+import {
+  loadBackendConfig,
+  resolveComfyLaunchPlan,
+  saveComfyUserConfig,
+  type ComfyRuntimeConfig,
+} from "./runtimeConfig";
 import {
   applyImageInputToWorkflow,
   getActiveWorkflowInfo,
@@ -89,7 +99,12 @@ export type RunWorkflowResult = {
   outputGlbPath?: string;
 };
 
-export type ComfyWorkflowJobState = "QUEUED" | "RUNNING" | "RESULT_READY" | "ERROR" | "CANCELED";
+export type ComfyWorkflowJobState =
+  | "QUEUED"
+  | "RUNNING"
+  | "RESULT_READY"
+  | "ERROR"
+  | "CANCELED";
 
 export type ComfyWorkflowJobOutputs = {
   glbPath?: string;
@@ -153,10 +168,11 @@ function errorMessage(error: unknown) {
 
 function summarizeComfyIssue(error: unknown) {
   const raw = errorMessage(error).replace(/\r/g, "\n");
-  const firstLine = raw
-    .split("\n")
-    .map((line) => line.trim())
-    .find((line) => line.length > 0) ?? raw.trim();
+  const firstLine =
+    raw
+      .split("\n")
+      .map((line) => line.trim())
+      .find((line) => line.length > 0) ?? raw.trim();
   if (firstLine.length <= 220) {
     return firstLine;
   }
@@ -219,7 +235,7 @@ function listFilesSafe(dirPath: string): FileSnapshot[] {
 
 function newestGlb(files: FileSnapshot[]) {
   const candidates = files.filter(
-    (file) => file.size > 0 && file.name.toLowerCase().endsWith(".glb")
+    (file) => file.size > 0 && file.name.toLowerCase().endsWith(".glb"),
   );
   if (candidates.length === 0) {
     return null;
@@ -227,7 +243,11 @@ function newestGlb(files: FileSnapshot[]) {
   return candidates.sort((a, b) => b.mtimeMs - a.mtimeMs)[0] ?? null;
 }
 
-function findNewGlbFile(outputDir: string, before: FileSnapshot[], startedAtMs: number) {
+function findNewGlbFile(
+  outputDir: string,
+  before: FileSnapshot[],
+  startedAtMs: number,
+) {
   const beforeByName = new Map(before.map((item) => [item.name, item]));
   const startedThreshold = startedAtMs - 250;
   const nowFiles = listFilesSafe(outputDir);
@@ -273,7 +293,10 @@ function waitForNewGlbFile(params: {
   return null;
 }
 
-function extractPreviewImagesFromHistory(historyEntry: unknown, comfyDir: string) {
+function extractPreviewImagesFromHistory(
+  historyEntry: unknown,
+  comfyDir: string,
+) {
   const previews = new Set<string>();
 
   const visit = (node: unknown) => {
@@ -291,12 +314,21 @@ function extractPreviewImagesFromHistory(historyEntry: unknown, comfyDir: string
     }
 
     const recordNode = node as Record<string, unknown>;
-    const filename = typeof recordNode.filename === "string" ? recordNode.filename.trim() : "";
+    const filename =
+      typeof recordNode.filename === "string" ? recordNode.filename.trim() : "";
     if (filename && /\.(png|jpe?g|webp)$/i.test(filename)) {
-      const subfolder = typeof recordNode.subfolder === "string" ? recordNode.subfolder.trim() : "";
+      const subfolder =
+        typeof recordNode.subfolder === "string"
+          ? recordNode.subfolder.trim()
+          : "";
       const fullPath = path.isAbsolute(filename)
         ? filename
-        : path.join(comfyDir, "output", subfolder.replace(/\//g, path.sep), filename);
+        : path.join(
+            comfyDir,
+            "output",
+            subfolder.replace(/\//g, path.sep),
+            filename,
+          );
       previews.add(fullPath);
     }
 
@@ -341,7 +373,12 @@ export class BackendSupervisor {
     mode: "dev",
     startedAt: null,
     workflows: {
-      sourceDir: path.resolve(process.cwd(), "electron", "generation", "comfyui-workflows"),
+      sourceDir: path.resolve(
+        process.cwd(),
+        "electron",
+        "generation",
+        "comfyui-workflows",
+      ),
       targetDir: getWorkflowsDir(),
       copied: 0,
       replaced: 0,
@@ -445,14 +482,18 @@ export class BackendSupervisor {
   }
 
   private scheduleComfyAutoRestart(reason: string) {
-    if (this.stoppingComfy || this.comfyAutoRestartConsumed || this.comfyAutoRestartPromise) {
+    if (
+      this.stoppingComfy ||
+      this.comfyAutoRestartConsumed ||
+      this.comfyAutoRestartPromise
+    ) {
       return;
     }
 
     this.comfyAutoRestartConsumed = true;
     this.appendComfyLog(
       `AI engine stopped. Scheduling one auto-restart in ${COMFY_AUTO_RESTART_DELAY_MS}ms. Reason: ${reason}`,
-      "warn"
+      "warn",
     );
 
     this.comfyAutoRestartPromise = (async () => {
@@ -474,7 +515,10 @@ export class BackendSupervisor {
     });
   }
 
-  private handleComfyFailure(message: string, options?: { autoRestart?: boolean }) {
+  private handleComfyFailure(
+    message: string,
+    options?: { autoRestart?: boolean },
+  ) {
     const summary = this.setComfyError(message);
     this.appendComfyLog(summary, "warn");
     logger.warn(summary);
@@ -490,7 +534,10 @@ export class BackendSupervisor {
     }
 
     const tracked = this.comfyProcess;
-    this.appendComfyLog(`Clearing tracked ComfyUI process (${tracked.pid}) before restart. Reason: ${reason}`, "warn");
+    this.appendComfyLog(
+      `Clearing tracked ComfyUI process (${tracked.pid}) before restart. Reason: ${reason}`,
+      "warn",
+    );
     try {
       tracked.child.kill("SIGTERM");
     } catch {
@@ -505,7 +552,11 @@ export class BackendSupervisor {
   }
 
   private async resolvePortConflictBeforeStart() {
-    const portOpen = await waitForPort(this.config.comfy.host, this.config.comfy.port, 1_200);
+    const portOpen = await waitForPort(
+      this.config.comfy.host,
+      this.config.comfy.port,
+      1_200,
+    );
     if (!portOpen) {
       return;
     }
@@ -542,11 +593,14 @@ export class BackendSupervisor {
     }
 
     const summary = summarizeComfyIssue(health.message);
-    const shouldWatchHealth = this.comfyState === "READY" || Boolean(this.comfyProcess?.pid);
+    const shouldWatchHealth =
+      this.comfyState === "READY" || Boolean(this.comfyProcess?.pid);
     if (shouldWatchHealth) {
       this.comfyHealthFailureCount += 1;
       if (this.comfyHealthFailureCount >= COMFY_HEALTH_FAILURE_THRESHOLD) {
-        this.handleComfyFailure(health.message, { autoRestart: Boolean(this.comfyProcess?.pid) });
+        this.handleComfyFailure(health.message, {
+          autoRestart: Boolean(this.comfyProcess?.pid),
+        });
       } else {
         this.comfyLastError = summary;
         this.status.comfy.message = `Healthcheck failed (${this.comfyHealthFailureCount}/${COMFY_HEALTH_FAILURE_THRESHOLD}). ${summary}`;
@@ -580,7 +634,10 @@ export class BackendSupervisor {
     if (input?.imageBase64 && input.imageBase64.trim().length > 0) {
       const uploadsDir = path.join(getOutputsDir(), "uploads");
       fs.mkdirSync(uploadsDir, { recursive: true });
-      const tempFilePath = path.join(uploadsDir, `backend-upload-${Date.now()}.png`);
+      const tempFilePath = path.join(
+        uploadsDir,
+        `backend-upload-${Date.now()}.png`,
+      );
       const buffer = this.decodeBase64Image(input.imageBase64);
       fs.writeFileSync(tempFilePath, buffer);
       return tempFilePath;
@@ -589,17 +646,24 @@ export class BackendSupervisor {
     return null;
   }
 
-  private async validateCheckpointsAfterPatch(checkpointUsages: WorkflowCheckpointUsage[], availableCheckpoints: string[]) {
+  private async validateCheckpointsAfterPatch(
+    checkpointUsages: WorkflowCheckpointUsage[],
+    availableCheckpoints: string[],
+  ) {
     if (checkpointUsages.length === 0 || availableCheckpoints.length === 0) {
       return;
     }
 
-    const invalid = checkpointUsages.filter((usage) => !availableCheckpoints.includes(usage.ckptName));
+    const invalid = checkpointUsages.filter(
+      (usage) => !availableCheckpoints.includes(usage.ckptName),
+    );
     if (invalid.length === 0) {
       return;
     }
 
-    const invalidSummary = invalid.map((usage) => `${usage.ckptName} (node ${usage.nodeId})`).join(", ");
+    const invalidSummary = invalid
+      .map((usage) => `${usage.ckptName} (node ${usage.nodeId})`)
+      .join(", ");
     const message = [
       `Workflow usa checkpoints no disponibles en ComfyUI: ${invalidSummary}`,
       `Disponibles: ${availableCheckpoints.join(", ")}`,
@@ -626,15 +690,24 @@ export class BackendSupervisor {
       }
 
       const recordNode = node as Record<string, unknown>;
-      const directPath = typeof recordNode.path === "string" ? recordNode.path.trim() : "";
+      const directPath =
+        typeof recordNode.path === "string" ? recordNode.path.trim() : "";
       if (directPath.toLowerCase().endsWith(".glb")) {
         candidates.push(directPath);
       }
 
-      const filename = typeof recordNode.filename === "string" ? recordNode.filename.trim() : "";
+      const filename =
+        typeof recordNode.filename === "string"
+          ? recordNode.filename.trim()
+          : "";
       if (filename.toLowerCase().endsWith(".glb")) {
-        const subfolder = typeof recordNode.subfolder === "string" ? recordNode.subfolder.trim() : "";
-        const combined = subfolder ? `${subfolder.replace(/\\/g, "/")}/${filename}` : filename;
+        const subfolder =
+          typeof recordNode.subfolder === "string"
+            ? recordNode.subfolder.trim()
+            : "";
+        const combined = subfolder
+          ? `${subfolder.replace(/\\/g, "/")}/${filename}`
+          : filename;
         candidates.push(combined);
       }
 
@@ -661,9 +734,17 @@ export class BackendSupervisor {
     return path.join(this.config.comfy.comfyDir, "output", normalized);
   }
 
-  private copyDetectedGlb(promptId: string, startedAtMs: number, detected: FileSnapshot) {
+  private copyDetectedGlb(
+    promptId: string,
+    startedAtMs: number,
+    detected: FileSnapshot,
+  ) {
     const runId = `${promptId}-${startedAtMs}`;
-    const projectAssetsRoot = path.join(getOutputsDir(), "..", "project-assets");
+    const projectAssetsRoot = path.join(
+      getOutputsDir(),
+      "..",
+      "project-assets",
+    );
     const runDir = path.join(projectAssetsRoot, runId);
     const runLatest = path.join(runDir, "latest.glb");
     const globalLatest = path.join(projectAssetsRoot, "latest.glb");
@@ -681,16 +762,30 @@ export class BackendSupervisor {
     return runLatest;
   }
 
-  private finalizeWorkflowJobSuccess(job: WorkflowJobRecord, history?: unknown) {
+  private finalizeWorkflowJobSuccess(
+    job: WorkflowJobRecord,
+    history?: unknown,
+  ) {
     if (history) {
       job.history = history;
     }
 
-    const detected = findNewGlbFile(job.outputDir, job.outputBefore, job.startedAt);
-    const detectedGlbPath = detected ? this.copyDetectedGlb(job.promptId, job.startedAt, detected) : undefined;
-    const historyOutputPath = history ? this.buildOutputPathFromHistory(history) : null;
-    const resolvedGlbPath = detectedGlbPath || historyOutputPath || job.outputs?.glbPath;
-    const previewImages = history ? extractPreviewImagesFromHistory(history, this.config.comfy.comfyDir) : job.outputs?.previewImages;
+    const detected = findNewGlbFile(
+      job.outputDir,
+      job.outputBefore,
+      job.startedAt,
+    );
+    const detectedGlbPath = detected
+      ? this.copyDetectedGlb(job.promptId, job.startedAt, detected)
+      : undefined;
+    const historyOutputPath = history
+      ? this.buildOutputPathFromHistory(history)
+      : null;
+    const resolvedGlbPath =
+      detectedGlbPath || historyOutputPath || job.outputs?.glbPath;
+    const previewImages = history
+      ? extractPreviewImagesFromHistory(history, this.config.comfy.comfyDir)
+      : job.outputs?.previewImages;
 
     job.outputs = {
       glbPath: resolvedGlbPath ?? undefined,
@@ -707,7 +802,11 @@ export class BackendSupervisor {
     return job;
   }
 
-  private finalizeWorkflowJobError(job: WorkflowJobRecord, message: string, code?: string) {
+  private finalizeWorkflowJobError(
+    job: WorkflowJobRecord,
+    message: string,
+    code?: string,
+  ) {
     job.state = "ERROR";
     job.progress = Math.max(job.progress, 1);
     job.updatedAt = Date.now();
@@ -717,7 +816,10 @@ export class BackendSupervisor {
     return job;
   }
 
-  private async prepareWorkflowSubmission(workflowName?: string, input?: RunWorkflowInput): Promise<PreparedWorkflowSubmission> {
+  private async prepareWorkflowSubmission(
+    workflowName?: string,
+    input?: RunWorkflowInput,
+  ): Promise<PreparedWorkflowSubmission> {
     if (!this.started) {
       await this.startAll({ mode: "dev" });
     }
@@ -731,7 +833,7 @@ export class BackendSupervisor {
           this.comfyLastError ? `Detalle: ${this.comfyLastError}` : "",
         ]
           .filter(Boolean)
-          .join("\n")
+          .join("\n"),
       );
     }
 
@@ -740,7 +842,11 @@ export class BackendSupervisor {
     const imageInputPath = await this.resolveWorkflowInputImagePath(input);
     if (imageInputPath) {
       const uploaded = await this.comfyApi.uploadImage(imageInputPath);
-      const injected = applyImageInputToWorkflow(workflowJson, uploaded.name, uploaded.subfolder);
+      const injected = applyImageInputToWorkflow(
+        workflowJson,
+        uploaded.name,
+        uploaded.subfolder,
+      );
       workflowJson = injected.workflowJson;
       if (injected.appliedNodeIds.length > 0) {
         logger.info("Imagen de entrada aplicada en workflow.", {
@@ -749,10 +855,13 @@ export class BackendSupervisor {
           image: injected.imageValue,
         });
       } else {
-        logger.warn("Se subio imagen pero el workflow no tiene nodos LoadImage para aplicar entrada dinamica.", {
-          workflow: targetWorkflow.name,
-          image: uploaded.name,
-        });
+        logger.warn(
+          "Se subio imagen pero el workflow no tiene nodos LoadImage para aplicar entrada dinamica.",
+          {
+            workflow: targetWorkflow.name,
+            image: uploaded.name,
+          },
+        );
       }
     }
 
@@ -760,10 +869,16 @@ export class BackendSupervisor {
     try {
       availableCheckpoints = await this.comfyApi.getAvailableCheckpoints();
     } catch (error) {
-      this.appendComfyLog(`No se pudo leer checkpoints desde ComfyUI: ${errorMessage(error)}`, "warn");
+      this.appendComfyLog(
+        `No se pudo leer checkpoints desde ComfyUI: ${errorMessage(error)}`,
+        "warn",
+      );
     }
 
-    const patchResult = patchWorkflowCheckpoints(workflowJson, availableCheckpoints);
+    const patchResult = patchWorkflowCheckpoints(
+      workflowJson,
+      availableCheckpoints,
+    );
     workflowJson = patchResult.workflowJson;
     for (const replacement of patchResult.replaced) {
       const line = `Patched ckpt_name -> ${replacement.to} (node=${replacement.nodeId}, from=${replacement.from})`;
@@ -771,9 +886,16 @@ export class BackendSupervisor {
       logger.warn(line);
     }
 
-    await this.validateCheckpointsAfterPatch(getCheckpointUsages(workflowJson), patchResult.availableCheckpoints);
+    await this.validateCheckpointsAfterPatch(
+      getCheckpointUsages(workflowJson),
+      patchResult.availableCheckpoints,
+    );
 
-    const comfyOutputDir = path.join(this.config.comfy.comfyDir, "output", "mesh");
+    const comfyOutputDir = path.join(
+      this.config.comfy.comfyDir,
+      "output",
+      "mesh",
+    );
     const outputBefore = listFilesSafe(comfyOutputDir);
 
     return {
@@ -842,7 +964,10 @@ export class BackendSupervisor {
     }
 
     ensurePathExists(this.config.comfy.comfyDir, "Carpeta raiz de ComfyUI");
-    ensurePathExists(path.join(this.config.comfy.comfyDir, "main.py"), "Archivo main.py de ComfyUI");
+    ensurePathExists(
+      path.join(this.config.comfy.comfyDir, "main.py"),
+      "Archivo main.py de ComfyUI",
+    );
     this.comfyState = "STARTING";
     this.comfyLastError = null;
     this.comfyHealthFailureCount = 0;
@@ -859,23 +984,29 @@ export class BackendSupervisor {
       details: launchPlan.details,
       shell: false,
     });
-    this.appendComfyLog(`Launching ComfyUI (${launchPlan.mode}) ${launchPlan.details}`);
+    this.appendComfyLog(
+      `Launching ComfyUI (${launchPlan.mode}) ${launchPlan.details}`,
+    );
 
-    const managed = this.processManager.spawn(launchPlan.command, launchPlan.args, {
-      name: "comfyui",
-      cwd: launchPlan.cwd,
-      env: process.env,
-      windowsHide: true,
-      shell: false,
-      onStdoutLine: (line) => {
-        this.appendComfyLog(`[ComfyUI][stdout] ${line}`);
-        logger.info(`[ComfyUI][stdout] ${line}`);
+    const managed = this.processManager.spawn(
+      launchPlan.command,
+      launchPlan.args,
+      {
+        name: "comfyui",
+        cwd: launchPlan.cwd,
+        env: process.env,
+        windowsHide: true,
+        shell: false,
+        onStdoutLine: (line) => {
+          this.appendComfyLog(`[ComfyUI][stdout] ${line}`);
+          logger.info(`[ComfyUI][stdout] ${line}`);
+        },
+        onStderrLine: (line) => {
+          this.appendComfyLog(`[ComfyUI][stderr] ${line}`, "warn");
+          logger.warn(`[ComfyUI][stderr] ${line}`);
+        },
       },
-      onStderrLine: (line) => {
-        this.appendComfyLog(`[ComfyUI][stderr] ${line}`, "warn");
-        logger.warn(`[ComfyUI][stderr] ${line}`);
-      },
-    });
+    );
 
     this.comfyProcess = managed;
     this.refreshProcessSnapshot();
@@ -893,11 +1024,14 @@ export class BackendSupervisor {
       this.handleComfyFailure(message, { autoRestart: true });
     });
 
-    const opened = await waitForPort(this.config.comfy.host, this.config.comfy.port, this.config.comfy.startupTimeoutMs);
+    const opened = await waitForPort(
+      this.config.comfy.host,
+      this.config.comfy.port,
+      this.config.comfy.startupTimeoutMs,
+    );
     if (!opened) {
       await this.stopComfyUI("startup-timeout", true);
-      const message =
-        `ComfyUI no abrio puerto ${this.config.comfy.host}:${this.config.comfy.port} dentro de ${this.config.comfy.startupTimeoutMs}ms.`
+      const message = `ComfyUI no abrio puerto ${this.config.comfy.host}:${this.config.comfy.port} dentro de ${this.config.comfy.startupTimeoutMs}ms.`;
       this.setComfyError(message);
       throw new Error(message);
     }
@@ -935,7 +1069,12 @@ export class BackendSupervisor {
 
     try {
       const syncResult = await syncWorkflows();
-      this.status.workflows.sourceDir = path.resolve(process.cwd(), "electron", "generation", "comfyui-workflows");
+      this.status.workflows.sourceDir = path.resolve(
+        process.cwd(),
+        "electron",
+        "generation",
+        "comfyui-workflows",
+      );
       this.status.workflows.targetDir = getWorkflowsDir();
       this.status.workflows.copied = syncResult.copied.length;
       this.status.workflows.replaced = syncResult.replaced.length;
@@ -956,7 +1095,11 @@ export class BackendSupervisor {
     try {
       await ensureModels({
         onDownloadProgress: ({ targetPath, downloadedBytes, totalBytes }) => {
-          logger.info("Model download progress.", { targetPath, downloadedBytes, totalBytes });
+          logger.info("Model download progress.", {
+            targetPath,
+            downloadedBytes,
+            totalBytes,
+          });
         },
       });
       const modelCheck = await checkModelsInstalled();
@@ -1012,7 +1155,10 @@ export class BackendSupervisor {
     return activeWorkflow;
   }
 
-  async submitWorkflow(workflowName?: string, input?: RunWorkflowInput & { projectId?: string }) {
+  async submitWorkflow(
+    workflowName?: string,
+    input?: RunWorkflowInput & { projectId?: string },
+  ) {
     const prepared = await this.prepareWorkflowSubmission(workflowName, input);
     const queue = await this.comfyApi.queuePrompt(prepared.workflowJson);
 
@@ -1056,7 +1202,11 @@ export class BackendSupervisor {
       throw new Error(`ComfyUI job no encontrado: ${jobId}`);
     }
 
-    if (job.state === "RESULT_READY" || job.state === "ERROR" || job.state === "CANCELED") {
+    if (
+      job.state === "RESULT_READY" ||
+      job.state === "ERROR" ||
+      job.state === "CANCELED"
+    ) {
       return JSON.parse(JSON.stringify(job)) as ComfyWorkflowJobStatus;
     }
 
@@ -1084,7 +1234,10 @@ export class BackendSupervisor {
       const pendingIndex = queue.pending.indexOf(job.promptId);
       if (pendingIndex >= 0) {
         job.state = "QUEUED";
-        job.progress = Math.max(job.progress, Math.max(10, 30 - pendingIndex * 5));
+        job.progress = Math.max(
+          job.progress,
+          Math.max(10, 30 - pendingIndex * 5),
+        );
         job.queuePosition = pendingIndex;
         job.updatedAt = Date.now();
         job.message = `Workflow en cola en ComfyUI (posicion ${pendingIndex + 1})`;
@@ -1095,11 +1248,15 @@ export class BackendSupervisor {
         this.finalizeWorkflowJobError(
           job,
           `ComfyUI no reporta el job ${job.promptId} en queue/history.`,
-          "JOB_NOT_VISIBLE"
+          "JOB_NOT_VISIBLE",
         );
       }
     } catch (error) {
-      this.finalizeWorkflowJobError(job, errorMessage(error), "STATUS_POLL_FAILED");
+      this.finalizeWorkflowJobError(
+        job,
+        errorMessage(error),
+        "STATUS_POLL_FAILED",
+      );
     }
 
     return JSON.parse(JSON.stringify(job)) as ComfyWorkflowJobStatus;
@@ -1120,14 +1277,20 @@ export class BackendSupervisor {
         try {
           await this.comfyApi.interrupt();
         } catch (error) {
-          this.appendComfyLog(`ComfyUI interrupt fallo: ${errorMessage(error)}`, "warn");
+          this.appendComfyLog(
+            `ComfyUI interrupt fallo: ${errorMessage(error)}`,
+            "warn",
+          );
         }
       }
       if (queue.pending.includes(job.promptId)) {
         try {
           await this.comfyApi.deleteQueuedPrompt(job.promptId);
         } catch (error) {
-          this.appendComfyLog(`ComfyUI queue delete fallo: ${errorMessage(error)}`, "warn");
+          this.appendComfyLog(
+            `ComfyUI queue delete fallo: ${errorMessage(error)}`,
+            "warn",
+          );
         }
       }
     } finally {
@@ -1139,12 +1302,17 @@ export class BackendSupervisor {
     }
   }
 
-  async resolveWorkflowJobOutputs(jobId: string): Promise<ComfyWorkflowJobOutputs> {
+  async resolveWorkflowJobOutputs(
+    jobId: string,
+  ): Promise<ComfyWorkflowJobOutputs> {
     const status = await this.getWorkflowJobStatus(jobId);
     return status.outputs ?? {};
   }
 
-  async runWorkflow(workflowName?: string, input?: RunWorkflowInput): Promise<RunWorkflowResult> {
+  async runWorkflow(
+    workflowName?: string,
+    input?: RunWorkflowInput,
+  ): Promise<RunWorkflowResult> {
     const submitted = await this.submitWorkflow(workflowName, input);
     const deadline = Date.now() + 6 * 60 * 1000;
 
@@ -1175,10 +1343,14 @@ export class BackendSupervisor {
       await sleep(1_000);
     }
 
-    throw new Error(`ComfyUI timeout esperando resultado para promptId=${submitted.promptId}.`);
+    throw new Error(
+      `ComfyUI timeout esperando resultado para promptId=${submitted.promptId}.`,
+    );
   }
 
-  async runDefaultWorkflow(input?: RunWorkflowInput): Promise<RunWorkflowResult> {
+  async runDefaultWorkflow(
+    input?: RunWorkflowInput,
+  ): Promise<RunWorkflowResult> {
     return await this.runWorkflow(undefined, input);
   }
 
@@ -1220,7 +1392,9 @@ export class BackendSupervisor {
   }
 
   getComfyLogs(limit = 200) {
-    const parsedLimit = Number.isFinite(limit) ? Math.max(1, Math.min(this.comfyLogLimit, Math.floor(limit))) : 200;
+    const parsedLimit = Number.isFinite(limit)
+      ? Math.max(1, Math.min(this.comfyLogLimit, Math.floor(limit)))
+      : 200;
     return this.comfyLogs.slice(-parsedLimit);
   }
 

@@ -67,7 +67,8 @@ export const themeTokens: Record<Theme, ThemeTokens> = {
     warningBg: "rgba(184, 112, 48, 0.12)",
     dangerBg: "rgba(192, 64, 74, 0.1)",
     shadow: "0 2px 12px rgba(0, 0, 0, 0.07), 0 1px 3px rgba(0, 0, 0, 0.04)",
-    shadowPanel: "0 18px 48px rgba(62, 51, 38, 0.08), 0 2px 12px rgba(0, 0, 0, 0.05)",
+    shadowPanel:
+      "0 18px 48px rgba(62, 51, 38, 0.08), 0 2px 12px rgba(0, 0, 0, 0.05)",
     focusRing: "rgba(154, 110, 58, 0.22)",
     glassBg: "rgba(255, 255, 255, 0.58)",
     glassBgStrong: "rgba(255, 255, 255, 0.74)",
@@ -109,7 +110,8 @@ export const themeTokens: Record<Theme, ThemeTokens> = {
     warningBg: "rgba(212, 146, 74, 0.13)",
     dangerBg: "rgba(208, 80, 96, 0.14)",
     shadow: "0 2px 12px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.36)",
-    shadowPanel: "0 18px 52px rgba(0, 0, 0, 0.5), 0 2px 10px rgba(0, 0, 0, 0.3)",
+    shadowPanel:
+      "0 18px 52px rgba(0, 0, 0, 0.5), 0 2px 10px rgba(0, 0, 0, 0.3)",
     focusRing: "rgba(164, 124, 69, 0.28)",
     glassBg: "rgba(40, 40, 43, 0.72)",
     glassBgStrong: "rgba(28, 28, 30, 0.84)",

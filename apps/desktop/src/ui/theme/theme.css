@@ -21,7 +21,8 @@
   --warning-bg: rgba(184, 112, 48, 0.12);
   --danger-bg: rgba(192, 64, 74, 0.1);
   --shadow: 0 2px 12px rgba(0, 0, 0, 0.07), 0 1px 3px rgba(0, 0, 0, 0.04);
-  --shadow-panel: 0 18px 48px rgba(62, 51, 38, 0.08), 0 2px 12px rgba(0, 0, 0, 0.05);
+  --shadow-panel:
+    0 18px 48px rgba(62, 51, 38, 0.08), 0 2px 12px rgba(0, 0, 0, 0.05);
   --focus-ring: rgba(154, 110, 58, 0.22);
   --glass-bg: rgba(255, 255, 255, 0.58);
   --glass-bg-strong: rgba(255, 255, 255, 0.74);

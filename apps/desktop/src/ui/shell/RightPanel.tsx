@@ -36,11 +36,21 @@ export function RightPanel({
   const rootClass = isContrast
     ? "border-[var(--shell-contrast-border)] bg-[var(--shell-contrast-panel)] text-[var(--shell-contrast-text)]"
     : "border-[var(--border)] bg-[var(--shell-panel)] text-[var(--text)]";
-  const headerBorderClass = isContrast ? "border-[var(--shell-contrast-border)]" : "border-[var(--border)]";
-  const eyebrowClass = isContrast ? "text-[var(--shell-contrast-text-muted)]" : "text-[var(--text-faint)]";
-  const titleClass = isContrast ? "text-[var(--shell-contrast-text)]" : "text-[var(--text)]";
-  const subtitleClass = isContrast ? "text-[var(--shell-contrast-text-muted)]" : "text-[var(--text-muted)]";
-  const tabRowClass = isContrast ? "border-[var(--shell-contrast-border)]" : "border-[var(--border)]";
+  const headerBorderClass = isContrast
+    ? "border-[var(--shell-contrast-border)]"
+    : "border-[var(--border)]";
+  const eyebrowClass = isContrast
+    ? "text-[var(--shell-contrast-text-muted)]"
+    : "text-[var(--text-faint)]";
+  const titleClass = isContrast
+    ? "text-[var(--shell-contrast-text)]"
+    : "text-[var(--text)]";
+  const subtitleClass = isContrast
+    ? "text-[var(--shell-contrast-text-muted)]"
+    : "text-[var(--text-muted)]";
+  const tabRowClass = isContrast
+    ? "border-[var(--shell-contrast-border)]"
+    : "border-[var(--border)]";
   const activeTabClass = isContrast
     ? "border-[var(--accent)] bg-[var(--shell-contrast-surface)] text-[var(--shell-contrast-text)]"
     : "border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]";
@@ -56,9 +66,17 @@ export function RightPanel({
       <div className={`border-b px-5 py-4 ${headerBorderClass}`}>
         <div className="flex items-start justify-between gap-3">
           <div>
-            <p className={`text-[9px] font-semibold uppercase tracking-[0.14em] ${eyebrowClass}`}>{eyebrow}</p>
-            <h2 className={`mt-1 text-base font-medium ${titleClass}`}>{title}</h2>
-            {subtitle ? <p className={`mt-1 text-xs ${subtitleClass}`}>{subtitle}</p> : null}
+            <p
+              className={`text-[9px] font-semibold uppercase tracking-[0.14em] ${eyebrowClass}`}
+            >
+              {eyebrow}
+            </p>
+            <h2 className={`mt-1 text-base font-medium ${titleClass}`}>
+              {title}
+            </h2>
+            {subtitle ? (
+              <p className={`mt-1 text-xs ${subtitleClass}`}>{subtitle}</p>
+            ) : null}
           </div>
           {headerSlot}
         </div>

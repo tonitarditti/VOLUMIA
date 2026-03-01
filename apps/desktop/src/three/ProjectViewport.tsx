@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { ContactShadows, Environment, OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
@@ -50,10 +57,15 @@ type ViewportMultiviewCaptureArgs = {
 
 type ViewportGenerationBridge = {
   readGlb?: (path: string) => Promise<ArrayBuffer | Uint8Array>;
-  writePngBase64?: (payload: { outputPath: string; base64: string }) => Promise<string>;
-  captureViewportMultiview?: (payload: ViewportMultiviewCaptureArgs) => Promise<string[]>;
+  writePngBase64?: (payload: {
+    outputPath: string;
+    base64: string;
+  }) => Promise<string>;
+  captureViewportMultiview?: (
+    payload: ViewportMultiviewCaptureArgs,
+  ) => Promise<string[]>;
   setViewportMultiviewCaptureHandler?: (
-    handler: (payload: ViewportMultiviewCaptureArgs) => Promise<string[]>
+    handler: (payload: ViewportMultiviewCaptureArgs) => Promise<string[]>,
   ) => void;
   clearViewportMultiviewCaptureHandler?: () => void;
 };
@@ -166,10 +178,15 @@ type ViewportThemeConfig = {
 
 const VIEW_TARGET = new THREE.Vector3(0, 0, 0);
 const VIEWER_DEBUG = import.meta.env.DEV;
-const VIEWPORT_EVENT_DEBUG = import.meta.env.DEV && import.meta.env.VITE_VOLUMIA_DEBUG_VIEWPORT === "1";
-const VIEWPORT_CAPTURE_DEBUG = import.meta.env.VITE_VOLUMIA_DEBUG_VIEWPORT === "1";
-const DEFAULT_DEBUG_RENDER = import.meta.env.DEV && import.meta.env.VITE_VOLUMIA_DEBUG_RENDER === "1";
-const DEV_POLY_OFFSET_ALL_MESHES = import.meta.env.DEV && import.meta.env.VITE_VOLUMIA_POLYOFFSET_ALL_MESHES === "1";
+const VIEWPORT_EVENT_DEBUG =
+  import.meta.env.DEV && import.meta.env.VITE_VOLUMIA_DEBUG_VIEWPORT === "1";
+const VIEWPORT_CAPTURE_DEBUG =
+  import.meta.env.VITE_VOLUMIA_DEBUG_VIEWPORT === "1";
+const DEFAULT_DEBUG_RENDER =
+  import.meta.env.DEV && import.meta.env.VITE_VOLUMIA_DEBUG_RENDER === "1";
+const DEV_POLY_OFFSET_ALL_MESHES =
+  import.meta.env.DEV &&
+  import.meta.env.VITE_VOLUMIA_POLYOFFSET_ALL_MESHES === "1";
 const SHADOW_CAMERA_BOUNDS = 12;
 const SHADOW_CAMERA_NEAR = 0.5;
 const SHADOW_CAMERA_FAR = 40;
@@ -248,14 +265,17 @@ function hideLikelyEmbeddedBaseMeshes(root: THREE.Object3D) {
     const center = meshBox.getCenter(new THREE.Vector3());
     const isThin = size.y <= thinThreshold;
     const isNearGlobalMin = Math.abs(center.y - globalMinY) <= nearMinThreshold;
-    const hasLargeFootprint = size.x >= footprintThreshold && size.z >= footprintThreshold;
+    const hasLargeFootprint =
+      size.x >= footprintThreshold && size.z >= footprintThreshold;
     if (!isThin || !isNearGlobalMin || !hasLargeFootprint) {
       return;
     }
 
     child.visible = false;
     removed += 1;
-    debug.push(`${child.name || "(unnamed)"} size=(${size.x.toFixed(3)},${size.y.toFixed(3)},${size.z.toFixed(3)})`);
+    debug.push(
+      `${child.name || "(unnamed)"} size=(${size.x.toFixed(3)},${size.y.toFixed(3)},${size.z.toFixed(3)})`,
+    );
   });
 
   if (removed > 0) {
@@ -281,7 +301,7 @@ function applyCameraSnapshot(
   camera: THREE.PerspectiveCamera,
   controlsRef: { current: OrbitControlsImpl | null },
   snapshot: CameraSnapshot,
-  controlsFromThree: OrbitControlsImpl | null = null
+  controlsFromThree: OrbitControlsImpl | null = null,
 ) {
   camera.position.copy(snapshot.position);
   camera.near = snapshot.near;
@@ -307,12 +327,18 @@ function asOrbitControls(value: unknown): OrbitControlsImpl | null {
   return maybe as OrbitControlsImpl;
 }
 
-function resolveFitKey(glbPath?: string, glbVersion?: number, modelUrl?: string) {
+function resolveFitKey(
+  glbPath?: string,
+  glbVersion?: number,
+  modelUrl?: string,
+) {
   if (modelUrl) {
     return modelUrl;
   }
   if (glbPath) {
-    return typeof glbVersion === "number" ? `${glbPath}::${glbVersion}` : glbPath;
+    return typeof glbVersion === "number"
+      ? `${glbPath}::${glbVersion}`
+      : glbPath;
   }
   return "";
 }
@@ -329,9 +355,11 @@ function normalizeTextureColorSpace(texture: THREE.Texture) {
   if ("colorSpace" in texture) {
     texture.colorSpace = THREE.SRGBColorSpace;
   } else {
-    const legacyEncoding = (THREE as unknown as { sRGBEncoding?: number }).sRGBEncoding;
+    const legacyEncoding = (THREE as unknown as { sRGBEncoding?: number })
+      .sRGBEncoding;
     if (legacyEncoding !== undefined) {
-      (texture as THREE.Texture & { encoding?: number }).encoding = legacyEncoding;
+      (texture as THREE.Texture & { encoding?: number }).encoding =
+        legacyEncoding;
     }
   }
   texture.needsUpdate = true;
@@ -392,7 +420,9 @@ function analyzeCoplanarRisk(root: THREE.Object3D): CoplanarHeuristicStats {
     }
   }
 
-  const suspicious = duplicateBoxKeyCount > 0 || thinMeshCount >= Math.max(2, Math.floor(meshCount * 0.2));
+  const suspicious =
+    duplicateBoxKeyCount > 0 ||
+    thinMeshCount >= Math.max(2, Math.floor(meshCount * 0.2));
   return {
     meshCount,
     thinMeshCount,
@@ -403,7 +433,11 @@ function analyzeCoplanarRisk(root: THREE.Object3D): CoplanarHeuristicStats {
 
 function applyModelVisualSettings(
   object: THREE.Object3D,
-  options: { envMapIntensity: number; wireframe: boolean; polygonOffset: boolean }
+  options: {
+    envMapIntensity: number;
+    wireframe: boolean;
+    polygonOffset: boolean;
+  },
 ): MaterialStabilityStats {
   const stats: MaterialStabilityStats = {
     totalMaterials: 0,
@@ -429,7 +463,9 @@ function applyModelVisualSettings(
       });
     }
 
-    const sourceMaterials = Array.isArray(child.material) ? child.material : [child.material];
+    const sourceMaterials = Array.isArray(child.material)
+      ? child.material
+      : [child.material];
     const normalizedMaterials = sourceMaterials.map((material) => {
       if (!material) {
         return new THREE.MeshStandardMaterial({
@@ -440,18 +476,22 @@ function applyModelVisualSettings(
       }
 
       const materialName = (material.name ?? "").trim().toLowerCase();
-      const isDefaultMaterial = materialName === "" || materialName === "default";
+      const isDefaultMaterial =
+        materialName === "" || materialName === "default";
       if (!isDefaultMaterial) {
         return material;
       }
 
-      if (material instanceof THREE.MeshStandardMaterial || material instanceof THREE.MeshPhysicalMaterial) {
+      if (
+        material instanceof THREE.MeshStandardMaterial ||
+        material instanceof THREE.MeshPhysicalMaterial
+      ) {
         const hasTextureMaps = Boolean(
           material.map ||
           material.normalMap ||
           material.roughnessMap ||
           material.metalnessMap ||
-          material.aoMap
+          material.aoMap,
         );
         if (!hasTextureMaps) {
           material.color.set("#c8c8c8");
@@ -482,12 +522,17 @@ function applyModelVisualSettings(
       }
       stats.totalMaterials += 1;
 
-      if (material instanceof THREE.MeshStandardMaterial || material instanceof THREE.MeshPhysicalMaterial) {
+      if (
+        material instanceof THREE.MeshStandardMaterial ||
+        material instanceof THREE.MeshPhysicalMaterial
+      ) {
         material.envMapIntensity = options.envMapIntensity;
       }
 
       if ("wireframe" in material) {
-        const wireframeMaterial = material as THREE.Material & { wireframe?: boolean };
+        const wireframeMaterial = material as THREE.Material & {
+          wireframe?: boolean;
+        };
         if (typeof wireframeMaterial.wireframe === "boolean") {
           wireframeMaterial.wireframe = options.wireframe;
         }
@@ -502,7 +547,8 @@ function applyModelVisualSettings(
         polygonOffsetFactor?: number;
         polygonOffsetUnits?: number;
       };
-      const opacity = typeof alphaMaterial.opacity === "number" ? alphaMaterial.opacity : 1;
+      const opacity =
+        typeof alphaMaterial.opacity === "number" ? alphaMaterial.opacity : 1;
       const wasTransparent = alphaMaterial.transparent === true;
       if (wasTransparent) {
         stats.transparentMaterials += 1;
@@ -513,7 +559,9 @@ function applyModelVisualSettings(
         stats.forcedOpaqueMaterials += 1;
       }
 
-      const isTranslucent = alphaMaterial.transparent === true && (alphaMaterial.opacity ?? 1) < 0.99;
+      const isTranslucent =
+        alphaMaterial.transparent === true &&
+        (alphaMaterial.opacity ?? 1) < 0.99;
       if (isTranslucent) {
         stats.translucentMaterials += 1;
       }
@@ -547,12 +595,16 @@ function applyTextures(root: THREE.Object3D, materialMap: TextureMaterialMap) {
     if (!(child instanceof THREE.Mesh)) {
       return;
     }
-    const materials = Array.isArray(child.material) ? child.material : [child.material];
+    const materials = Array.isArray(child.material)
+      ? child.material
+      : [child.material];
     for (const material of materials) {
       if (!material) {
         continue;
       }
-      const keyCandidates = [material.name, child.name].filter((value) => value && value.trim().length > 0) as string[];
+      const keyCandidates = [material.name, child.name].filter(
+        (value) => value && value.trim().length > 0,
+      ) as string[];
       let assignment: TextureAssignment | undefined;
       for (const key of keyCandidates) {
         if (materialMap[key]) {
@@ -605,14 +657,19 @@ function disposeObject3D(object: THREE.Object3D | null) {
     }
 
     child.geometry?.dispose();
-    const materials = Array.isArray(child.material) ? child.material : [child.material];
+    const materials = Array.isArray(child.material)
+      ? child.material
+      : [child.material];
     for (const material of materials) {
       material?.dispose();
     }
   });
 }
 
-function normalizeAndStabilizeModel(root: THREE.Object3D, options: NormalizeAndStabilizeOptions): ModelStabilizationResult | null {
+function normalizeAndStabilizeModel(
+  root: THREE.Object3D,
+  options: NormalizeAndStabilizeOptions,
+): ModelStabilizationResult | null {
   root.position.set(0, 0, 0);
   root.rotation.set(0, 0, 0);
   root.updateMatrixWorld(true);
@@ -626,9 +683,14 @@ function normalizeAndStabilizeModel(root: THREE.Object3D, options: NormalizeAndS
   const preScaleSize = bbox.getSize(new THREE.Vector3());
   const preScaleDiagonal = preScaleSize.length();
   let scaleApplied = 1;
-  const isScaleClearlyWrong = preScaleDiagonal > 0 && (preScaleDiagonal < 0.02 || preScaleDiagonal > 200);
+  const isScaleClearlyWrong =
+    preScaleDiagonal > 0 && (preScaleDiagonal < 0.02 || preScaleDiagonal > 200);
   if (isScaleClearlyWrong) {
-    scaleApplied = THREE.MathUtils.clamp(TARGET_MODEL_DIAGONAL / preScaleDiagonal, 0.001, 1000);
+    scaleApplied = THREE.MathUtils.clamp(
+      TARGET_MODEL_DIAGONAL / preScaleDiagonal,
+      0.001,
+      1000,
+    );
     root.scale.multiplyScalar(scaleApplied);
     root.updateMatrixWorld(true);
     bbox = computeVisibleBoundingBox(root);
@@ -679,7 +741,8 @@ function normalizeAndStabilizeModel(root: THREE.Object3D, options: NormalizeAndS
   }
 
   const coplanar = analyzeCoplanarRisk(root);
-  const polygonOffsetEngaged = options.forcePolygonOffsetAllMeshes || coplanar.suspicious;
+  const polygonOffsetEngaged =
+    options.forcePolygonOffsetAllMeshes || coplanar.suspicious;
   const material = applyModelVisualSettings(root, {
     envMapIntensity: options.envMapIntensity,
     wireframe: options.wireframe,
@@ -743,7 +806,8 @@ function LoadedModel({
   const modelRef = useRef<THREE.Group>(null);
   const loadedSceneRef = useRef<THREE.Object3D | null>(null);
   const [loadedModel, setLoadedModel] = useState<THREE.Object3D | null>(null);
-  const [stabilization, setStabilization] = useState<ModelStabilizationResult | null>(null);
+  const [stabilization, setStabilization] =
+    useState<ModelStabilizationResult | null>(null);
   const cameraFitKeyRef = useRef<string | null>(null);
   const loadSeqRef = useRef(0);
   const invalidateRef = useRef(invalidate);
@@ -803,7 +867,9 @@ function LoadedModel({
     }
 
     const loader = new GLTFLoader();
-    const readGlb = (window as { volumia?: { generation?: ViewportGenerationBridge } }).volumia?.generation?.readGlb;
+    const readGlb = (
+      window as { volumia?: { generation?: ViewportGenerationBridge } }
+    ).volumia?.generation?.readGlb;
 
     if (!readGlb) {
       onLoadErrorRef.current("GLB reader unavailable in this environment.");
@@ -814,7 +880,9 @@ function LoadedModel({
     let cancelled = false;
     onLoadErrorRef.current(null);
 
-    const shouldRetry = !loadedSceneRef.current && /(?:^|[\\/])latest\.glb(?:\?.*)?$/i.test(glbPath);
+    const shouldRetry =
+      !loadedSceneRef.current &&
+      /(?:^|[\\/])latest\.glb(?:\?.*)?$/i.test(glbPath);
     const retryDelaysMs = shouldRetry ? [0, 300, 800, 1500] : [0];
 
     const wait = (ms: number) =>
@@ -856,7 +924,7 @@ function LoadedModel({
           },
           (error) => {
             reject(error);
-          }
+          },
         );
       });
 
@@ -867,7 +935,8 @@ function LoadedModel({
         if (cancelled || seq !== loadSeqRef.current) {
           return;
         }
-        const source = buffer instanceof ArrayBuffer ? new Uint8Array(buffer) : buffer;
+        const source =
+          buffer instanceof ArrayBuffer ? new Uint8Array(buffer) : buffer;
         const bytes = new Uint8Array(source.byteLength);
         bytes.set(source);
         nextModel = await parseModel(bytes.buffer);
@@ -983,16 +1052,29 @@ function LoadedModel({
       return;
     }
 
-    const radius = Math.max(box.getSize(new THREE.Vector3()).length() * 0.5, 0.01);
+    const radius = Math.max(
+      box.getSize(new THREE.Vector3()).length() * 0.5,
+      0.01,
+    );
     const { near, far } = deriveCameraPlanes(radius);
-    if (!Number.isFinite(near) || !Number.isFinite(far) || near <= 0 || near >= far) {
+    if (
+      !Number.isFinite(near) ||
+      !Number.isFinite(far) ||
+      near <= 0 ||
+      near >= far
+    ) {
       if (debugRenderEnabled) {
-        console.warn("[ProjectViewport][debug-render] Invalid derived planes", { near, far, radius });
+        console.warn("[ProjectViewport][debug-render] Invalid derived planes", {
+          near,
+          far,
+          radius,
+        });
       }
       return;
     }
 
-    const changed = Math.abs(camera.near - near) > 1e-6 || Math.abs(camera.far - far) > 1e-3;
+    const changed =
+      Math.abs(camera.near - near) > 1e-6 || Math.abs(camera.far - far) > 1e-3;
     if (changed) {
       camera.near = near;
       camera.far = far;
@@ -1030,10 +1112,17 @@ function LoadedModel({
     }
 
     const fovRad = THREE.MathUtils.degToRad(camera.fov);
-    const cameraDistance = Math.max((radius / Math.tan(fovRad / 2)) * 1.25, radius * 2.2);
+    const cameraDistance = Math.max(
+      (radius / Math.tan(fovRad / 2)) * 1.25,
+      radius * 2.2,
+    );
     const { near, far } = deriveCameraPlanes(radius);
     const nextTarget = new THREE.Vector3(0, 0, 0);
-    const nextPosition = new THREE.Vector3(0, Math.max(size.y * 0.5, radius * 0.9), cameraDistance);
+    const nextPosition = new THREE.Vector3(
+      0,
+      Math.max(size.y * 0.5, radius * 0.9),
+      cameraDistance,
+    );
     const snapshot: CameraSnapshot = {
       position: nextPosition,
       target: nextTarget,
@@ -1052,8 +1141,16 @@ function LoadedModel({
       far: snapshot.far,
     });
     if (debugRenderEnabled) {
-      if (!Number.isFinite(snapshot.near) || !Number.isFinite(snapshot.far) || snapshot.near <= 0 || snapshot.near >= snapshot.far) {
-        console.warn("[ProjectViewport][debug-render] Invalid camera near/far", snapshot);
+      if (
+        !Number.isFinite(snapshot.near) ||
+        !Number.isFinite(snapshot.far) ||
+        snapshot.near <= 0 ||
+        snapshot.near >= snapshot.far
+      ) {
+        console.warn(
+          "[ProjectViewport][debug-render] Invalid camera near/far",
+          snapshot,
+        );
       } else {
         console.debug("[ProjectViewport][debug-render] Camera fit", {
           near: snapshot.near,
@@ -1088,7 +1185,8 @@ function LoadedModel({
     applyModelVisualSettings(loadedModel, {
       envMapIntensity,
       wireframe,
-      polygonOffset: stabilization?.polygonOffsetEngaged ?? DEV_POLY_OFFSET_ALL_MESHES,
+      polygonOffset:
+        stabilization?.polygonOffsetEngaged ?? DEV_POLY_OFFSET_ALL_MESHES,
     });
     invalidate();
   }, [envMapIntensity, invalidate, loadedModel, stabilization, wireframe]);
@@ -1134,7 +1232,12 @@ function ViewportResizeSync({ width, height }: ViewportResizeSyncProps) {
   return null;
 }
 
-function OrbitTargetClamp({ controlsRef, radius, minY, maxY }: OrbitTargetClampProps) {
+function OrbitTargetClamp({
+  controlsRef,
+  radius,
+  minY,
+  maxY,
+}: OrbitTargetClampProps) {
   useEffect(() => {
     const controls = controlsRef.current;
     if (!controls) {
@@ -1183,13 +1286,21 @@ function resolveViewportTheme(theme: string | undefined): ViewportTheme {
       return dataTheme;
     }
 
-    if (document.documentElement.classList.contains("dark") || document.body.classList.contains("dark")) {
+    if (
+      document.documentElement.classList.contains("dark") ||
+      document.body.classList.contains("dark")
+    ) {
       return "dark";
     }
   }
 
-  if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
-    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  if (
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function"
+  ) {
+    return window.matchMedia("(prefers-color-scheme: dark)").matches
+      ? "dark"
+      : "light";
   }
 
   return "dark";
@@ -1266,12 +1377,22 @@ export function ProjectViewport({
   });
   const [size, setSize] = useState<ViewportSize>({ width: 0, height: 0 });
   const [wireframeInternal, setWireframeInternal] = useState(false);
-  const [debugRenderEnabled, setDebugRenderEnabled] = useState(DEFAULT_DEBUG_RENDER);
+  const [debugRenderEnabled, setDebugRenderEnabled] =
+    useState(DEFAULT_DEBUG_RENDER);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [modelNormalizationDebug, setModelNormalizationDebug] = useState<ModelNormalizationDebug | null>(null);
+  const [modelNormalizationDebug, setModelNormalizationDebug] =
+    useState<ModelNormalizationDebug | null>(null);
   const wireframe = wireframeProp ?? wireframeInternal;
   const isOrbitingRef = useRef(false);
-  const url = useMemo(() => (glbPath ? (glbVersion ? `${glbPath}?v=${glbVersion}` : glbPath) : undefined), [glbPath, glbVersion]);
+  const url = useMemo(
+    () =>
+      glbPath
+        ? glbVersion
+          ? `${glbPath}?v=${glbVersion}`
+          : glbPath
+        : undefined,
+    [glbPath, glbVersion],
+  );
   const isFinalStage = useMemo(() => {
     const stage = (generationStage ?? "").toLowerCase();
     return stage === "done" || stage === "ready" || stage === "final";
@@ -1332,9 +1453,12 @@ export function ProjectViewport({
   const themeConfig = getViewportThemeConfig(viewportTheme);
   const bgClass = themeConfig.isDark ? "bg-[#0c0a09]" : "bg-[#f4f1ee]";
   const shadowMapSize = settings.fpsLimit >= 120 ? 1024 : 2048;
-  const headerClass = "shrink-0 border-b border-[var(--border)] bg-[var(--surface-1)] px-3 py-2";
-  const chipClass = "rounded-md border border-[var(--border)] bg-[var(--surface-1)] px-2 py-1";
-  const hintChipClass = "rounded-md border border-[var(--border)] bg-[var(--surface-2)] px-2 py-1";
+  const headerClass =
+    "shrink-0 border-b border-[var(--border)] bg-[var(--surface-1)] px-3 py-2";
+  const chipClass =
+    "rounded-md border border-[var(--border)] bg-[var(--surface-1)] px-2 py-1";
+  const hintChipClass =
+    "rounded-md border border-[var(--border)] bg-[var(--surface-2)] px-2 py-1";
   const utilityButtonBaseClass =
     "rounded-md border border-[var(--border)] bg-[var(--surface-1)] px-2 py-1 text-[10px] uppercase tracking-[0.08em] text-[var(--text-muted)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text)]";
   const utilityWireframeClass = `rounded-md border border-[var(--border)] px-2 py-1 text-[10px] uppercase tracking-[0.08em] transition-colors ${
@@ -1389,141 +1513,173 @@ export function ProjectViewport({
     }
   }, []);
 
-  const captureMultiviewSnapshots = useCallback(async (args: ViewportMultiviewCaptureArgs) => {
-    const renderer = rendererRef.current;
-    const camera = cameraRef.current;
-    const scene = sceneRef.current;
-    const model = loadedModelRef.current;
-    const invalidate = invalidateRef.current;
-    const generation = (window as { volumia?: { generation?: ViewportGenerationBridge } }).volumia?.generation;
+  const captureMultiviewSnapshots = useCallback(
+    async (args: ViewportMultiviewCaptureArgs) => {
+      const renderer = rendererRef.current;
+      const camera = cameraRef.current;
+      const scene = sceneRef.current;
+      const model = loadedModelRef.current;
+      const invalidate = invalidateRef.current;
+      const generation = (
+        window as { volumia?: { generation?: ViewportGenerationBridge } }
+      ).volumia?.generation;
 
-    if (!renderer || !camera || !scene || !model) {
-      throw new Error("Viewport capture unavailable: renderer, camera, scene, or model is missing.");
-    }
-    if (!generation?.writePngBase64) {
-      throw new Error("Viewport capture unavailable: PNG writer bridge is missing.");
-    }
-    if (!Number.isFinite(args.width) || !Number.isFinite(args.height) || args.width < 32 || args.height < 32) {
-      throw new Error("Viewport capture received invalid dimensions.");
-    }
-    if (!args.outputDir.trim() || !args.baseName.trim()) {
-      throw new Error("Viewport capture requires outputDir and baseName.");
-    }
-
-    model.updateMatrixWorld(true);
-    const bbox = new THREE.Box3().setFromObject(model);
-    if (bbox.isEmpty()) {
-      throw new Error("Viewport capture failed: model bounding box is empty.");
-    }
-    const bboxSize = bbox.getSize(new THREE.Vector3());
-    const target = bbox.getCenter(new THREE.Vector3());
-    const maxDim = Math.max(bboxSize.x, bboxSize.y, bboxSize.z);
-    const modelRadius = Math.max(bboxSize.length() * 0.5, 0.01);
-    if (!Number.isFinite(maxDim) || maxDim <= 0) {
-      throw new Error("Viewport capture failed: invalid model dimensions.");
-    }
-
-    const radius = maxDim * 1.6;
-    const elevation = target.y + maxDim * 0.35;
-    const controls = controlsRef.current;
-    const previousTarget = controls ? controls.target.clone() : target.clone();
-    const previousSnapshot: CameraSnapshot = {
-      position: camera.position.clone(),
-      target: previousTarget,
-      near: camera.near,
-      far: camera.far,
-    };
-    cameraSnapshotRef.current = {
-      position: previousSnapshot.position.clone(),
-      target: previousSnapshot.target.clone(),
-      near: previousSnapshot.near,
-      far: previousSnapshot.far,
-    };
-
-    const previousSize = renderer.getSize(new THREE.Vector2());
-    const previousPixelRatio = renderer.getPixelRatio();
-    const previousViewport = renderer.getViewport(new THREE.Vector4());
-    const previousScissor = renderer.getScissor(new THREE.Vector4());
-    const previousScissorTest = renderer.getScissorTest();
-    const previousAutoClear = renderer.autoClear;
-    const outputPaths: string[] = [];
-    const views: Array<{ name: "front" | "right" | "rear" | "left"; yawDeg: number }> = [
-      { name: "front", yawDeg: 0 },
-      { name: "right", yawDeg: 90 },
-      { name: "rear", yawDeg: 180 },
-      { name: "left", yawDeg: 270 },
-    ];
-
-    if (VIEWPORT_CAPTURE_DEBUG) {
-      console.debug("[ProjectViewport][capture] bbox", {
-        center: { x: target.x, y: target.y, z: target.z },
-        size: { x: bboxSize.x, y: bboxSize.y, z: bboxSize.z },
-        radius,
-        width: args.width,
-        height: args.height,
-      });
-    }
-
-    try {
-      renderer.setPixelRatio(1);
-      renderer.setSize(args.width, args.height, false);
-      renderer.setViewport(0, 0, args.width, args.height);
-      renderer.setScissorTest(false);
-      renderer.autoClear = true;
-      camera.aspect = args.width / args.height;
-      const capturePlanes = deriveCameraPlanes(modelRadius);
-      camera.near = capturePlanes.near;
-      camera.far = capturePlanes.far;
-      camera.updateProjectionMatrix();
-
-      for (const view of views) {
-        const yaw = THREE.MathUtils.degToRad(view.yawDeg);
-        const x = target.x + Math.sin(yaw) * radius;
-        const z = target.z + Math.cos(yaw) * radius;
-        camera.position.set(x, elevation, z);
-        camera.lookAt(target);
-        camera.updateProjectionMatrix();
-
-        if (controls) {
-          controls.target.copy(target);
-          controls.update();
-        }
-
-        if (VIEWPORT_CAPTURE_DEBUG) {
-          console.debug("[ProjectViewport][capture] view", {
-            name: view.name,
-            yawDeg: view.yawDeg,
-            camera: { x, y: elevation, z },
-          });
-        }
-
-        invalidate?.();
-        renderer.render(scene, camera);
-
-        const dataUrl = renderer.domElement.toDataURL("image/png");
-        const base64 = dataUrl.replace(/^data:image\/png;base64,/, "");
-        const outputPath = `${args.outputDir}/${args.baseName}_${view.name}.png`;
-        const savedPath = await generation.writePngBase64({
-          outputPath,
-          base64,
-        });
-        outputPaths.push(savedPath);
+      if (!renderer || !camera || !scene || !model) {
+        throw new Error(
+          "Viewport capture unavailable: renderer, camera, scene, or model is missing.",
+        );
+      }
+      if (!generation?.writePngBase64) {
+        throw new Error(
+          "Viewport capture unavailable: PNG writer bridge is missing.",
+        );
+      }
+      if (
+        !Number.isFinite(args.width) ||
+        !Number.isFinite(args.height) ||
+        args.width < 32 ||
+        args.height < 32
+      ) {
+        throw new Error("Viewport capture received invalid dimensions.");
+      }
+      if (!args.outputDir.trim() || !args.baseName.trim()) {
+        throw new Error("Viewport capture requires outputDir and baseName.");
       }
 
-      return outputPaths;
-    } finally {
-      renderer.setPixelRatio(previousPixelRatio);
-      renderer.setSize(previousSize.x, previousSize.y, false);
-      renderer.setViewport(previousViewport.x, previousViewport.y, previousViewport.z, previousViewport.w);
-      renderer.setScissor(previousScissor.x, previousScissor.y, previousScissor.z, previousScissor.w);
-      renderer.setScissorTest(previousScissorTest);
-      renderer.autoClear = previousAutoClear;
-      camera.aspect = previousSize.y > 0 ? previousSize.x / previousSize.y : camera.aspect;
-      applyCameraSnapshot(camera, controlsRef, cameraSnapshotRef.current);
-      invalidate?.();
-      renderer.render(scene, camera);
-    }
-  }, []);
+      model.updateMatrixWorld(true);
+      const bbox = new THREE.Box3().setFromObject(model);
+      if (bbox.isEmpty()) {
+        throw new Error(
+          "Viewport capture failed: model bounding box is empty.",
+        );
+      }
+      const bboxSize = bbox.getSize(new THREE.Vector3());
+      const target = bbox.getCenter(new THREE.Vector3());
+      const maxDim = Math.max(bboxSize.x, bboxSize.y, bboxSize.z);
+      const modelRadius = Math.max(bboxSize.length() * 0.5, 0.01);
+      if (!Number.isFinite(maxDim) || maxDim <= 0) {
+        throw new Error("Viewport capture failed: invalid model dimensions.");
+      }
+
+      const radius = maxDim * 1.6;
+      const elevation = target.y + maxDim * 0.35;
+      const controls = controlsRef.current;
+      const previousTarget = controls
+        ? controls.target.clone()
+        : target.clone();
+      const previousSnapshot: CameraSnapshot = {
+        position: camera.position.clone(),
+        target: previousTarget,
+        near: camera.near,
+        far: camera.far,
+      };
+      cameraSnapshotRef.current = {
+        position: previousSnapshot.position.clone(),
+        target: previousSnapshot.target.clone(),
+        near: previousSnapshot.near,
+        far: previousSnapshot.far,
+      };
+
+      const previousSize = renderer.getSize(new THREE.Vector2());
+      const previousPixelRatio = renderer.getPixelRatio();
+      const previousViewport = renderer.getViewport(new THREE.Vector4());
+      const previousScissor = renderer.getScissor(new THREE.Vector4());
+      const previousScissorTest = renderer.getScissorTest();
+      const previousAutoClear = renderer.autoClear;
+      const outputPaths: string[] = [];
+      const views: Array<{
+        name: "front" | "right" | "rear" | "left";
+        yawDeg: number;
+      }> = [
+        { name: "front", yawDeg: 0 },
+        { name: "right", yawDeg: 90 },
+        { name: "rear", yawDeg: 180 },
+        { name: "left", yawDeg: 270 },
+      ];
+
+      if (VIEWPORT_CAPTURE_DEBUG) {
+        console.debug("[ProjectViewport][capture] bbox", {
+          center: { x: target.x, y: target.y, z: target.z },
+          size: { x: bboxSize.x, y: bboxSize.y, z: bboxSize.z },
+          radius,
+          width: args.width,
+          height: args.height,
+        });
+      }
+
+      try {
+        renderer.setPixelRatio(1);
+        renderer.setSize(args.width, args.height, false);
+        renderer.setViewport(0, 0, args.width, args.height);
+        renderer.setScissorTest(false);
+        renderer.autoClear = true;
+        camera.aspect = args.width / args.height;
+        const capturePlanes = deriveCameraPlanes(modelRadius);
+        camera.near = capturePlanes.near;
+        camera.far = capturePlanes.far;
+        camera.updateProjectionMatrix();
+
+        for (const view of views) {
+          const yaw = THREE.MathUtils.degToRad(view.yawDeg);
+          const x = target.x + Math.sin(yaw) * radius;
+          const z = target.z + Math.cos(yaw) * radius;
+          camera.position.set(x, elevation, z);
+          camera.lookAt(target);
+          camera.updateProjectionMatrix();
+
+          if (controls) {
+            controls.target.copy(target);
+            controls.update();
+          }
+
+          if (VIEWPORT_CAPTURE_DEBUG) {
+            console.debug("[ProjectViewport][capture] view", {
+              name: view.name,
+              yawDeg: view.yawDeg,
+              camera: { x, y: elevation, z },
+            });
+          }
+
+          invalidate?.();
+          renderer.render(scene, camera);
+
+          const dataUrl = renderer.domElement.toDataURL("image/png");
+          const base64 = dataUrl.replace(/^data:image\/png;base64,/, "");
+          const outputPath = `${args.outputDir}/${args.baseName}_${view.name}.png`;
+          const savedPath = await generation.writePngBase64({
+            outputPath,
+            base64,
+          });
+          outputPaths.push(savedPath);
+        }
+
+        return outputPaths;
+      } finally {
+        renderer.setPixelRatio(previousPixelRatio);
+        renderer.setSize(previousSize.x, previousSize.y, false);
+        renderer.setViewport(
+          previousViewport.x,
+          previousViewport.y,
+          previousViewport.z,
+          previousViewport.w,
+        );
+        renderer.setScissor(
+          previousScissor.x,
+          previousScissor.y,
+          previousScissor.z,
+          previousScissor.w,
+        );
+        renderer.setScissorTest(previousScissorTest);
+        renderer.autoClear = previousAutoClear;
+        camera.aspect =
+          previousSize.y > 0 ? previousSize.x / previousSize.y : camera.aspect;
+        applyCameraSnapshot(camera, controlsRef, cameraSnapshotRef.current);
+        invalidate?.();
+        renderer.render(scene, camera);
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     if (typeof resetSignal === "number") {
@@ -1532,7 +1688,9 @@ export function ProjectViewport({
   }, [handleResetView, resetSignal]);
 
   useEffect(() => {
-    const generation = (window as { volumia?: { generation?: ViewportGenerationBridge } }).volumia?.generation;
+    const generation = (
+      window as { volumia?: { generation?: ViewportGenerationBridge } }
+    ).volumia?.generation;
     if (!generation?.setViewportMultiviewCaptureHandler) {
       return;
     }
@@ -1562,16 +1720,22 @@ export function ProjectViewport({
     document.body.classList.remove("is-orbiting");
   }, []);
 
-  const handleViewportPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!(event.target instanceof Element) || !event.target.closest("canvas")) {
-      return;
-    }
-    if (VIEWPORT_EVENT_DEBUG) {
-      console.debug("[ProjectViewport][events] pointerdown on canvas");
-    }
-    isOrbitingRef.current = true;
-    document.body.classList.add("is-orbiting");
-  }, []);
+  const handleViewportPointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (
+        !(event.target instanceof Element) ||
+        !event.target.closest("canvas")
+      ) {
+        return;
+      }
+      if (VIEWPORT_EVENT_DEBUG) {
+        console.debug("[ProjectViewport][events] pointerdown on canvas");
+      }
+      isOrbitingRef.current = true;
+      document.body.classList.add("is-orbiting");
+    },
+    [],
+  );
 
   const handleViewportPointerUp = useCallback(() => {
     stopOrbiting();
@@ -1604,10 +1768,14 @@ export function ProjectViewport({
           <div className={headerClass}>
             <div className="flex items-center justify-between gap-2">
               <div className="flex items-center gap-2">
-                <span className={`${chipClass} text-[10px] uppercase tracking-[0.16em] text-[var(--text-muted)]`}>
+                <span
+                  className={`${chipClass} text-[10px] uppercase tracking-[0.16em] text-[var(--text-muted)]`}
+                >
                   {t("project.viewport")}
                 </span>
-                <span className={`${hintChipClass} text-[10px] text-[var(--text-muted)]`}>
+                <span
+                  className={`${hintChipClass} text-[10px] text-[var(--text-muted)]`}
+                >
                   {t("project.viewportHint")}
                 </span>
               </div>
@@ -1649,7 +1817,10 @@ export function ProjectViewport({
           </div>
         ) : null}
         <div className="relative flex-1 min-h-0 w-full overflow-hidden">
-          <div className="pointer-events-none absolute inset-0 z-10" style={{ backgroundImage: themeConfig.overlayGradient }} />
+          <div
+            className="pointer-events-none absolute inset-0 z-10"
+            style={{ backgroundImage: themeConfig.overlayGradient }}
+          />
           {loadError ? (
             <div className="pointer-events-none absolute inset-x-3 top-3 z-20 rounded-md border border-[#7e2d2d] bg-[#3c1515]/90 px-3 py-2 text-[11px] leading-snug text-[#ffd7d7]">
               {loadError}
@@ -1665,14 +1836,25 @@ export function ProjectViewport({
               <Canvas
                 key={`viewport-fps-${settings.fpsLimit}`}
                 className="block h-full w-full"
-                style={{ display: "block", width: "100%", height: "100%", pointerEvents: "auto", touchAction: "none" }}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  height: "100%",
+                  pointerEvents: "auto",
+                  touchAction: "none",
+                }}
                 eventSource={hostRef.current ?? undefined}
                 eventPrefix="client"
                 camera={{ position: [8, 6, 8], fov: 48, near: 0.1, far: 200 }}
                 dpr={[1, 2]}
                 frameloop="demand"
                 shadows
-                gl={{ antialias: true, alpha: false, preserveDrawingBuffer: true, logarithmicDepthBuffer: true }}
+                gl={{
+                  antialias: true,
+                  alpha: false,
+                  preserveDrawingBuffer: true,
+                  logarithmicDepthBuffer: true,
+                }}
                 onCreated={({ gl, camera, scene, invalidate }) => {
                   rendererRef.current = gl;
                   sceneRef.current = scene;
@@ -1681,9 +1863,13 @@ export function ProjectViewport({
                   if ("outputColorSpace" in gl) {
                     gl.outputColorSpace = THREE.SRGBColorSpace;
                   } else {
-                    const legacyEncoding = (THREE as unknown as { sRGBEncoding?: number }).sRGBEncoding;
+                    const legacyEncoding = (
+                      THREE as unknown as { sRGBEncoding?: number }
+                    ).sRGBEncoding;
                     if (legacyEncoding !== undefined) {
-                      (gl as THREE.WebGLRenderer & { outputEncoding: number }).outputEncoding = legacyEncoding;
+                      (
+                        gl as THREE.WebGLRenderer & { outputEncoding: number }
+                      ).outputEncoding = legacyEncoding;
                     }
                   }
                   gl.toneMapping = THREE.ACESFilmicToneMapping;
@@ -1691,7 +1877,11 @@ export function ProjectViewport({
                   gl.shadowMap.enabled = true;
                   gl.shadowMap.type = THREE.PCFSoftShadowMap;
                   if ("physicallyCorrectLights" in gl) {
-                    (gl as THREE.WebGLRenderer & { physicallyCorrectLights: boolean }).physicallyCorrectLights = true;
+                    (
+                      gl as THREE.WebGLRenderer & {
+                        physicallyCorrectLights: boolean;
+                      }
+                    ).physicallyCorrectLights = true;
                   }
 
                   if (camera instanceof THREE.PerspectiveCamera) {
@@ -1706,7 +1896,11 @@ export function ProjectViewport({
                     }
                     camera.up.set(0, 1, 0);
                     cameraRef.current = camera;
-                    applyCameraSnapshot(camera, controlsRef, cameraSnapshotRef.current);
+                    applyCameraSnapshot(
+                      camera,
+                      controlsRef,
+                      cameraSnapshotRef.current,
+                    );
                     controlsRef.current?.update();
                   }
                 }}
@@ -1714,9 +1908,17 @@ export function ProjectViewport({
                 <ViewportResizeSync width={size.width} height={size.height} />
                 <FrameLimiter fpsLimit={settings.fpsLimit} />
                 <color attach="background" args={[themeConfig.background]} />
-                <Environment preset={themeConfig.isDark ? "warehouse" : "studio"} background={false} />
-                <ambientLight intensity={themeConfig.ambientIntensity} color="#efe5d5" />
-                <hemisphereLight args={["#f2e8d8", "#7f7468", themeConfig.hemisphereIntensity]} />
+                <Environment
+                  preset={themeConfig.isDark ? "warehouse" : "studio"}
+                  background={false}
+                />
+                <ambientLight
+                  intensity={themeConfig.ambientIntensity}
+                  color="#efe5d5"
+                />
+                <hemisphereLight
+                  args={["#f2e8d8", "#7f7468", themeConfig.hemisphereIntensity]}
+                />
                 <directionalLight
                   intensity={themeConfig.keyIntensity}
                   color="#f8f0e3"
@@ -1809,7 +2011,12 @@ export function ProjectViewport({
                     }
                   }}
                 />
-                <OrbitTargetClamp controlsRef={controlsRef} radius={4} minY={0} maxY={2.5} />
+                <OrbitTargetClamp
+                  controlsRef={controlsRef}
+                  radius={4}
+                  minY={0}
+                  maxY={2.5}
+                />
               </Canvas>
             </div>
           ) : null}

@@ -47,23 +47,30 @@ const cssVariableMap: Record<keyof ThemeTokens, string> = {
 };
 
 function detectSystemTheme(): Theme {
-  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+  if (
+    typeof window === "undefined" ||
+    typeof window.matchMedia !== "function"
+  ) {
     return "light";
   }
 
-  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  return window.matchMedia("(prefers-color-scheme: dark)").matches
+    ? "dark"
+    : "light";
 }
 
 function applyThemeVariables(root: HTMLElement, theme: Theme) {
   const tokens = themeTokens[theme];
-  for (const [tokenName, cssVar] of Object.entries(cssVariableMap) as Array<[keyof ThemeTokens, string]>) {
+  for (const [tokenName, cssVar] of Object.entries(cssVariableMap) as Array<
+    [keyof ThemeTokens, string]
+  >) {
     root.style.setProperty(cssVar, tokens[tokenName]);
   }
 }
 
 export function applyResolvedThemeToDocument(
   resolvedTheme: Theme,
-  options: { glassStyle?: boolean; reduceMotion?: boolean } = {}
+  options: { glassStyle?: boolean; reduceMotion?: boolean } = {},
 ) {
   if (typeof document === "undefined") {
     return resolvedTheme;
@@ -78,7 +85,10 @@ export function applyResolvedThemeToDocument(
   return resolvedTheme;
 }
 
-export function applySettingsThemeToDocument(settings: AppSettings, systemTheme = detectSystemTheme()) {
+export function applySettingsThemeToDocument(
+  settings: AppSettings,
+  systemTheme = detectSystemTheme(),
+) {
   const resolvedTheme = resolveTheme(settings, systemTheme, new Date());
   applyResolvedThemeToDocument(resolvedTheme, {
     glassStyle: settings.glassStyle,

@@ -1,9 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { desktopApi, hasDesktopBridge } from "@/electron/desktopApi";
-import type { BackendStatusResponse, ComfyStatusResponse } from "@/electron/channels";
+import type {
+  BackendStatusResponse,
+  ComfyStatusResponse,
+} from "@/electron/channels";
 import { useProjects } from "@/projects/context";
-import { selectActiveProject, selectProjectsSortedByUpdatedAt } from "@/projects/selectors";
+import {
+  selectActiveProject,
+  selectProjectsSortedByUpdatedAt,
+} from "@/projects/selectors";
 import { Button, Card, TextField } from "@/ui/primitives";
 import { useT } from "@/volumia/i18n/useT";
 
@@ -38,51 +44,71 @@ function statusTone(comfyStatus: ComfyStatusResponse | null) {
   if (!comfyStatus) {
     return {
       label: "Idle",
-      detail: "No engine status yet.",
-      className: "border-[var(--border)] bg-[var(--surface-2)] text-[var(--text-muted)]",
+      summary: "No engine status yet.",
+      detail: "Waiting for engine telemetry.",
+      className:
+        "border-[var(--border)] bg-[var(--surface-2)] text-[var(--text-muted)]",
     };
   }
 
   if (comfyStatus.lastError || comfyStatus.state === "ERROR") {
     return {
-      label: "Attention",
+      label: "Error",
+      summary: "AI engine stopped",
       detail: comfyStatus.lastError ?? comfyStatus.message,
-      className: "border-[var(--danger)] bg-[var(--danger-bg)] text-[var(--danger)]",
+      className:
+        "border-[var(--danger)] bg-[var(--danger-bg)] text-[var(--danger)]",
     };
   }
 
   if (comfyStatus.state === "STARTING") {
     return {
-      label: "Starting",
+      label: "Busy",
+      summary: "AI engine is starting",
       detail: comfyStatus.message,
-      className: "border-[var(--warning)] bg-[var(--warning-bg)] text-[var(--warning)]",
+      className:
+        "border-[var(--warning)] bg-[var(--warning-bg)] text-[var(--warning)]",
     };
   }
 
   if (comfyStatus.running) {
     return {
       label: "Ready",
+      summary: "AI engine is available",
       detail: comfyStatus.message,
-      className: "border-[var(--success)] bg-[var(--success-bg)] text-[var(--success)]",
+      className:
+        "border-[var(--success)] bg-[var(--success-bg)] text-[var(--success)]",
     };
   }
 
   return {
     label: "Idle",
+    summary: "AI engine is idle",
     detail: comfyStatus.message,
-    className: "border-[var(--border)] bg-[var(--surface-2)] text-[var(--text-muted)]",
+    className:
+      "border-[var(--border)] bg-[var(--surface-2)] text-[var(--text-muted)]",
   };
 }
 
 export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
   const { t, language } = useT();
   const navigate = useNavigate();
-  const { state, createProject, duplicateProject, deleteProject, renameProject, setActiveProject } = useProjects();
+  const {
+    state,
+    createProject,
+    duplicateProject,
+    deleteProject,
+    renameProject,
+    setActiveProject,
+  } = useProjects();
 
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState("");
-  const [backendStatus, setBackendStatus] = useState<BackendStatusResponse | null>(null);
-  const [comfyStatus, setComfyStatus] = useState<ComfyStatusResponse | null>(null);
+  const [backendStatus, setBackendStatus] =
+    useState<BackendStatusResponse | null>(null);
+  const [comfyStatus, setComfyStatus] = useState<ComfyStatusResponse | null>(
+    null,
+  );
   const [backendMessage, setBackendMessage] = useState("Backend idle.");
   const [logsOpen, setLogsOpen] = useState(false);
   const [engineOpen, setEngineOpen] = useState(false);
@@ -93,14 +119,19 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
   const [workflowImagePath, setWorkflowImagePath] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
 
-  const projects = useMemo(() => selectProjectsSortedByUpdatedAt(state.projects), [state.projects]);
+  const projects = useMemo(
+    () => selectProjectsSortedByUpdatedAt(state.projects),
+    [state.projects],
+  );
   const filteredProjects = useMemo(() => {
     const normalized = searchQuery.trim().toLowerCase();
     if (!normalized) {
       return projects;
     }
 
-    return projects.filter((project) => project.name.toLowerCase().includes(normalized));
+    return projects.filter((project) =>
+      project.name.toLowerCase().includes(normalized),
+    );
   }, [projects, searchQuery]);
   const activeProject = useMemo(() => selectActiveProject(state), [state]);
   const engineTone = useMemo(() => statusTone(comfyStatus), [comfyStatus]);
@@ -138,12 +169,22 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
     }
 
     try {
-      const [status, comfy] = await Promise.all([desktopApi.getBackendStatus(), desktopApi.getComfyStatus()]);
+      const [status, comfy] = await Promise.all([
+        desktopApi.getBackendStatus(),
+        desktopApi.getComfyStatus(),
+      ]);
       setBackendStatus(status);
       setComfyStatus(comfy);
-      setBackendMessage(comfy.running ? `Engine ready at ${comfy.url}` : comfy.lastError ?? comfy.message);
+      setBackendMessage(
+        comfy.running
+          ? `Engine ready at ${comfy.url}`
+          : (comfy.lastError ?? comfy.message),
+      );
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Could not read engine status.";
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Could not read engine status.";
       setBackendMessage(message);
     }
   };
@@ -158,18 +199,29 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
 
     const run = async () => {
       try {
-        const [status, comfy] = await Promise.all([desktopApi.getBackendStatus(), desktopApi.getComfyStatus()]);
+        const [status, comfy] = await Promise.all([
+          desktopApi.getBackendStatus(),
+          desktopApi.getComfyStatus(),
+        ]);
         if (!active) {
           return;
         }
         setBackendStatus(status);
         setComfyStatus(comfy);
-        setBackendMessage(comfy.running ? `Engine ready at ${comfy.url}` : comfy.lastError ?? comfy.message);
+        setBackendMessage(
+          comfy.running
+            ? `Engine ready at ${comfy.url}`
+            : (comfy.lastError ?? comfy.message),
+        );
       } catch (error) {
         if (!active) {
           return;
         }
-        setBackendMessage(error instanceof Error ? error.message : "Could not read engine status.");
+        setBackendMessage(
+          error instanceof Error
+            ? error.message
+            : "Could not read engine status.",
+        );
       }
     };
 
@@ -194,9 +246,13 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
         imagePath: workflowImagePath.trim() || undefined,
       });
       setComfyStatus(result.comfy);
-      setBackendMessage(result.ok ? result.message : result.error ?? result.message);
+      setBackendMessage(
+        result.ok ? result.message : (result.error ?? result.message),
+      );
     } catch (error) {
-      setBackendMessage(error instanceof Error ? error.message : "Could not run workflow test.");
+      setBackendMessage(
+        error instanceof Error ? error.message : "Could not run workflow test.",
+      );
     } finally {
       setRunningWorkflowTest(false);
     }
@@ -212,9 +268,13 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
     try {
       const result = await desktopApi.importBackendWorkflow();
       setBackendStatus(result.status);
-      setBackendMessage(result.ok ? result.message : result.error ?? result.message);
+      setBackendMessage(
+        result.ok ? result.message : (result.error ?? result.message),
+      );
     } catch (error) {
-      setBackendMessage(error instanceof Error ? error.message : "Could not import workflow.");
+      setBackendMessage(
+        error instanceof Error ? error.message : "Could not import workflow.",
+      );
     } finally {
       setImportingWorkflow(false);
     }
@@ -230,9 +290,15 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
     try {
       const comfy = await desktopApi.startComfy();
       setComfyStatus(comfy);
-      setBackendMessage(comfy.running ? `Engine ready at ${comfy.url}` : comfy.lastError ?? comfy.message);
+      setBackendMessage(
+        comfy.running
+          ? `Engine ready at ${comfy.url}`
+          : (comfy.lastError ?? comfy.message),
+      );
     } catch (error) {
-      setBackendMessage(error instanceof Error ? error.message : "Could not start engine.");
+      setBackendMessage(
+        error instanceof Error ? error.message : "Could not start engine.",
+      );
     } finally {
       setStartingComfy(false);
     }
@@ -248,9 +314,15 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
     try {
       const comfy = await desktopApi.stopComfy();
       setComfyStatus(comfy);
-      setBackendMessage(comfy.running ? `Engine ready at ${comfy.url}` : comfy.lastError ?? comfy.message);
+      setBackendMessage(
+        comfy.running
+          ? `Engine ready at ${comfy.url}`
+          : (comfy.lastError ?? comfy.message),
+      );
     } catch (error) {
-      setBackendMessage(error instanceof Error ? error.message : "Could not stop engine.");
+      setBackendMessage(
+        error instanceof Error ? error.message : "Could not stop engine.",
+      );
     } finally {
       setStoppingComfy(false);
     }
@@ -270,9 +342,15 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
       }
       const comfy = await desktopApi.startComfy();
       setComfyStatus(comfy);
-      setBackendMessage(comfy.running ? `Engine restarted at ${comfy.url}` : comfy.lastError ?? comfy.message);
+      setBackendMessage(
+        comfy.running
+          ? `Engine restarted at ${comfy.url}`
+          : (comfy.lastError ?? comfy.message),
+      );
     } catch (error) {
-      setBackendMessage(error instanceof Error ? error.message : "Could not restart engine.");
+      setBackendMessage(
+        error instanceof Error ? error.message : "Could not restart engine.",
+      );
     } finally {
       setStartingComfy(false);
       setStoppingComfy(false);
@@ -288,12 +366,20 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
               <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--text-faint)]">
                 {t("dashboard.workspace")}
               </p>
-              <h1 className="mt-2 text-3xl font-medium tracking-[-0.02em] text-[var(--text)]">{t("dashboard.title")}</h1>
-              <p className="mt-3 text-sm leading-6 text-[var(--text-muted)]">{t("dashboard.subtitle")}</p>
+              <h1 className="mt-2 text-3xl font-medium tracking-[-0.02em] text-[var(--text)]">
+                {t("dashboard.title")}
+              </h1>
+              <p className="mt-3 text-sm leading-6 text-[var(--text-muted)]">
+                {t("dashboard.subtitle")}
+              </p>
             </div>
 
             <div className="flex flex-wrap gap-2">
-              <Button variant="primary" onClick={() => activeProject && openProject(activeProject.id)} disabled={!activeProject}>
+              <Button
+                variant="primary"
+                onClick={() => activeProject && openProject(activeProject.id)}
+                disabled={!activeProject}
+              >
                 Open Project
               </Button>
               <Button variant="secondary" onClick={() => createProject()}>
@@ -312,7 +398,9 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
             <div className="rounded-[20px] border border-[var(--border)] bg-[var(--surface-1)] p-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--text-faint)]">Projects</p>
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--text-faint)]">
+                    Projects
+                  </p>
                   <p className="mt-1 text-sm text-[var(--text-muted)]">
                     {filteredProjects.length} visible of {projects.length} total
                   </p>
@@ -329,19 +417,47 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
             </div>
 
             <div className="rounded-[20px] border border-[var(--border)] bg-[var(--surface-1)] p-4">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--text-faint)]">Engine status</p>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--text-faint)]">
+                Engine status
+              </p>
               <div className="mt-3 flex items-center gap-2">
-                <span className={`rounded-full border px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.08em] ${engineTone.className}`}>
+                <span
+                  className={`rounded-full border px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.08em] ${engineTone.className}`}
+                >
                   {engineTone.label}
                 </span>
-                <span className="text-xs text-[var(--text-muted)]">{comfyStatus?.url ?? "127.0.0.1:8188"}</span>
+                <span className="text-xs text-[var(--text-muted)]">
+                  {comfyStatus?.url ?? "127.0.0.1:8188"}
+                </span>
               </div>
-              <p className="mt-3 text-sm text-[var(--text-muted)]">{engineTone.detail}</p>
-              <div className="mt-4 flex gap-2">
-                <Button variant="secondary" className="h-8 px-3 text-xs" onClick={() => setEngineOpen((value) => !value)}>
+              <p className="mt-3 text-sm font-medium text-[var(--text)]">
+                {engineTone.summary}
+              </p>
+              <p className="mt-2 text-sm text-[var(--text-muted)]">
+                {engineTone.detail}
+              </p>
+              <div className="mt-4 flex flex-wrap gap-2">
+                {engineCrashed ? (
+                  <Button
+                    variant="danger"
+                    className="h-8 px-3 text-xs"
+                    onClick={() => void restartComfy()}
+                  >
+                    Restart Engine
+                  </Button>
+                ) : null}
+                <Button
+                  variant="secondary"
+                  className="h-8 px-3 text-xs"
+                  onClick={() => setEngineOpen((value) => !value)}
+                >
                   {engineOpen ? "Hide Advanced" : "Advanced / Engine"}
                 </Button>
-                <Button variant="ghost" className="h-8 px-3 text-xs" onClick={() => setLogsOpen((value) => !value)}>
+                <Button
+                  variant="ghost"
+                  className="h-8 px-3 text-xs"
+                  onClick={() => setLogsOpen((value) => !value)}
+                >
                   {logsOpen ? "Hide Logs" : "Show Logs"}
                 </Button>
               </div>
@@ -358,8 +474,12 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
                     +
                   </div>
                   <div>
-                    <p className="text-lg font-medium text-[var(--text)]">{t("dashboard.emptyTitle")}</p>
-                    <p className="mt-2 text-sm text-[var(--text-muted)]">{t("dashboard.emptyDescription")}</p>
+                    <p className="text-lg font-medium text-[var(--text)]">
+                      {t("dashboard.emptyTitle")}
+                    </p>
+                    <p className="mt-2 text-sm text-[var(--text-muted)]">
+                      {t("dashboard.emptyDescription")}
+                    </p>
                   </div>
                   <Button variant="primary" onClick={() => createProject()}>
                     {t("dashboard.newProject")}
@@ -377,8 +497,13 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
                     +
                   </div>
                   <div>
-                    <p className="text-lg font-medium text-[var(--text)]">New Project</p>
-                    <p className="mt-2 text-sm text-[var(--text-muted)]">Create a new design container with the real project state and actions.</p>
+                    <p className="text-lg font-medium text-[var(--text)]">
+                      New Project
+                    </p>
+                    <p className="mt-2 text-sm text-[var(--text-muted)]">
+                      Create a new design container with the real project state
+                      and actions.
+                    </p>
                   </div>
                 </button>
 
@@ -386,8 +511,14 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
                   const isEditing = editingProjectId === project.id;
 
                   return (
-                    <Card key={project.id} padding="none" className="overflow-hidden rounded-[24px]">
-                      <div className={`relative h-36 bg-gradient-to-br ${projectGradient(index)}`}>
+                    <Card
+                      key={project.id}
+                      padding="none"
+                      className="overflow-hidden rounded-[24px]"
+                    >
+                      <div
+                        className={`relative h-36 bg-gradient-to-br ${projectGradient(index)}`}
+                      >
                         <div className="absolute inset-0 bg-[linear-gradient(180deg,transparent_40%,rgba(0,0,0,0.35)_100%)]" />
                         <div className="absolute right-4 top-4 rounded-full border border-white/20 bg-black/25 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-white/88">
                           {formatProjectType(index)}
@@ -403,7 +534,9 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
                       <div className="space-y-4 p-5">
                         <div className="flex items-start justify-between gap-4">
                           <div>
-                            <h2 className="text-xl font-medium text-[var(--text)]">{project.name}</h2>
+                            <h2 className="text-xl font-medium text-[var(--text)]">
+                              {project.name}
+                            </h2>
                             <p className="mt-1 text-xs uppercase tracking-[0.08em] text-[var(--text-faint)]">
                               Updated {toHumanDate(project.updatedAt, language)}
                             </p>
@@ -421,10 +554,16 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
                           <div className="flex items-center gap-2">
                             <TextField
                               value={editingName}
-                              onChange={(event) => setEditingName(event.target.value)}
+                              onChange={(event) =>
+                                setEditingName(event.target.value)
+                              }
                               aria-label={t("dashboard.projectNameLabel")}
                             />
-                            <Button variant="primary" className="h-10 px-4" onClick={submitRename}>
+                            <Button
+                              variant="primary"
+                              className="h-10 px-4"
+                              onClick={submitRename}
+                            >
                               {t("common.save")}
                             </Button>
                             <Button
@@ -441,13 +580,27 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
                         ) : null}
 
                         <div className="flex flex-wrap gap-2">
-                          <Button variant="ghost" className="h-8 px-3 text-xs" onClick={() => beginRename(project.id, project.name)}>
+                          <Button
+                            variant="ghost"
+                            className="h-8 px-3 text-xs"
+                            onClick={() =>
+                              beginRename(project.id, project.name)
+                            }
+                          >
                             {t("dashboard.rename")}
                           </Button>
-                          <Button variant="ghost" className="h-8 px-3 text-xs" onClick={() => duplicateProject(project.id)}>
+                          <Button
+                            variant="ghost"
+                            className="h-8 px-3 text-xs"
+                            onClick={() => duplicateProject(project.id)}
+                          >
                             {t("dashboard.duplicate")}
                           </Button>
-                          <Button variant="danger" className="h-8 px-3 text-xs" onClick={() => deleteProject(project.id)}>
+                          <Button
+                            variant="danger"
+                            className="h-8 px-3 text-xs"
+                            onClick={() => deleteProject(project.id)}
+                          >
                             {t("dashboard.delete")}
                           </Button>
                         </div>
@@ -462,76 +615,111 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
           <aside className="min-h-0 overflow-y-auto">
             <div className="space-y-5">
               <Card padding="md" className="rounded-[24px]">
-                <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--text-faint)]">System</p>
+                <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--text-faint)]">
+                  System
+                </p>
                 <div className="mt-4 space-y-3">
                   <div className="flex items-center justify-between border-b border-[var(--border)] pb-3">
-                    <span className="text-sm text-[var(--text-muted)]">Workflow</span>
+                    <span className="text-sm text-[var(--text-muted)]">
+                      Workflow
+                    </span>
                     <span className="text-sm font-medium text-[var(--text)]">
                       {backendStatus?.workflows.activeName ?? "Not loaded"}
                     </span>
                   </div>
                   <div className="flex items-center justify-between border-b border-[var(--border)] pb-3">
-                    <span className="text-sm text-[var(--text-muted)]">ComfyUI</span>
-                    <span className="text-sm font-medium text-[var(--text)]">{comfyStatus?.state ?? "Unknown"}</span>
+                    <span className="text-sm text-[var(--text-muted)]">
+                      ComfyUI
+                    </span>
+                    <span className="text-sm font-medium text-[var(--text)]">
+                      {comfyStatus?.state ?? "Unknown"}
+                    </span>
                   </div>
                   <div className="flex items-center justify-between border-b border-[var(--border)] pb-3">
-                    <span className="text-sm text-[var(--text-muted)]">Processes</span>
-                    <span className="text-sm font-medium text-[var(--text)]">{backendStatus?.activeProcesses.length ?? 0}</span>
+                    <span className="text-sm text-[var(--text-muted)]">
+                      Processes
+                    </span>
+                    <span className="text-sm font-medium text-[var(--text)]">
+                      {backendStatus?.activeProcesses.length ?? 0}
+                    </span>
                   </div>
                   <div className="flex items-center justify-between">
-                    <span className="text-sm text-[var(--text-muted)]">Project focus</span>
-                    <span className="text-sm font-medium text-[var(--text)]">{activeProject?.name ?? "None selected"}</span>
+                    <span className="text-sm text-[var(--text-muted)]">
+                      Project focus
+                    </span>
+                    <span className="text-sm font-medium text-[var(--text)]">
+                      {activeProject?.name ?? "None selected"}
+                    </span>
                   </div>
                 </div>
               </Card>
 
-              {engineCrashed ? (
-                <Card padding="md" className="rounded-[24px] border-[var(--danger)] bg-[var(--danger-bg)]">
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--danger)]">Engine issue</p>
-                  <p className="mt-3 text-sm text-[var(--text)]">
-                    The engine exited or reported an error. Use Restart Engine to recover without exposing raw logs by default.
-                  </p>
-                  <p className="mt-2 text-xs text-[var(--text-muted)]">{backendMessage}</p>
-                  <div className="mt-4">
-                    <Button variant="danger" className="h-9 px-4 text-xs" onClick={() => void restartComfy()}>
-                      Restart Engine
-                    </Button>
-                  </div>
-                </Card>
-              ) : null}
-
               {engineOpen ? (
                 <Card padding="md" className="rounded-[24px]">
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--text-faint)]">Advanced / Engine</p>
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--text-faint)]">
+                    Advanced / Engine
+                  </p>
                   <div className="mt-4 flex flex-wrap gap-2">
-                    <Button variant="secondary" className="h-8 px-3 text-xs" disabled={startingComfy} onClick={() => void startComfy()}>
+                    <Button
+                      variant="secondary"
+                      className="h-8 px-3 text-xs"
+                      disabled={startingComfy}
+                      onClick={() => void startComfy()}
+                    >
                       {startingComfy ? "Starting..." : "Start"}
                     </Button>
-                    <Button variant="secondary" className="h-8 px-3 text-xs" disabled={stoppingComfy} onClick={() => void stopComfy()}>
+                    <Button
+                      variant="secondary"
+                      className="h-8 px-3 text-xs"
+                      disabled={stoppingComfy}
+                      onClick={() => void stopComfy()}
+                    >
                       {stoppingComfy ? "Stopping..." : "Stop"}
                     </Button>
-                    <Button variant="secondary" className="h-8 px-3 text-xs" onClick={() => void restartComfy()}>
+                    <Button
+                      variant="secondary"
+                      className="h-8 px-3 text-xs"
+                      onClick={() => void restartComfy()}
+                    >
                       Restart Engine
                     </Button>
-                    <Button variant="ghost" className="h-8 px-3 text-xs" onClick={() => void refreshStatus()}>
+                    <Button
+                      variant="ghost"
+                      className="h-8 px-3 text-xs"
+                      onClick={() => void refreshStatus()}
+                    >
                       Refresh Status
                     </Button>
-                    <Button variant="ghost" className="h-8 px-3 text-xs" disabled={importingWorkflow} onClick={() => void importWorkflowJson()}>
-                      {importingWorkflow ? "Importing..." : "Import workflow JSON"}
+                    <Button
+                      variant="ghost"
+                      className="h-8 px-3 text-xs"
+                      disabled={importingWorkflow}
+                      onClick={() => void importWorkflowJson()}
+                    >
+                      {importingWorkflow
+                        ? "Importing..."
+                        : "Import workflow JSON"}
                     </Button>
                   </div>
 
                   <div className="mt-4">
                     <TextField
                       value={workflowImagePath}
-                      onChange={(event) => setWorkflowImagePath(event.target.value)}
+                      onChange={(event) =>
+                        setWorkflowImagePath(event.target.value)
+                      }
                       placeholder="Optional image path for workflow test"
                       aria-label="Workflow image path"
                     />
                   </div>
 
                   <div className="mt-3">
-                    <Button variant="primary" className="h-9 px-4 text-xs" disabled={runningWorkflowTest} onClick={() => void runWorkflowTest()}>
+                    <Button
+                      variant="primary"
+                      className="h-9 px-4 text-xs"
+                      disabled={runningWorkflowTest}
+                      onClick={() => void runWorkflowTest()}
+                    >
                       {runningWorkflowTest ? "Running..." : "Run workflow test"}
                     </Button>
                   </div>
@@ -540,16 +728,23 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
 
               {logsOpen ? (
                 <Card padding="md" className="rounded-[24px]">
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--text-faint)]">Engine logs</p>
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--text-faint)]">
+                    Engine logs
+                  </p>
                   <div className="mt-4 max-h-72 space-y-2 overflow-y-auto rounded-2xl border border-[var(--border)] bg-[var(--surface-1)] p-3">
                     {recentLogs.length > 0 ? (
                       recentLogs.map((line, index) => (
-                        <p key={`${index}-${line}`} className="font-mono text-[11px] leading-relaxed text-[var(--text-muted)]">
+                        <p
+                          key={`${index}-${line}`}
+                          className="font-mono text-[11px] leading-relaxed text-[var(--text-muted)]"
+                        >
                           {line}
                         </p>
                       ))
                     ) : (
-                      <p className="text-xs text-[var(--text-muted)]">No logs available.</p>
+                      <p className="text-xs text-[var(--text-muted)]">
+                        No logs available.
+                      </p>
                     )}
                   </div>
                 </Card>
