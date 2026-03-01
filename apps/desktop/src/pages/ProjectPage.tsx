@@ -7,8 +7,7 @@ import type { GenerationPreset, ProjectModel } from "@/projects/types";
 import { buildMockAssistantReply, summarizeReply } from "@/projects/mockAssistant";
 import { desktopApi, hasDesktopBridge } from "@/electron/desktopApi";
 import { Button, TextArea } from "@/ui/primitives";
-import { getSurfaceClass } from "@/ui/surfaceClass";
-import { TopBar } from "@/ui/shell";
+import { BottomToolbar, RightPanel, TopBar } from "@/ui/shell";
 import { ProjectViewport } from "@/three/ProjectViewport";
 import { DEFAULT_COMFY_WORKFLOW_ID, useGenerationJobStore } from "@/services/comfyui";
 import { useT } from "@/volumia/i18n/useT";
@@ -208,6 +207,10 @@ export function ProjectPage() {
   const [activeTab, setActiveTab] = useState<InspectorTab>("model");
   const [isReferenceDrawerOpen, setIsReferenceDrawerOpen] = useState(true);
   const [toolShortcut, setToolShortcut] = useState("tools");
+  const [comfyStatus, setComfyStatus] = useState<Awaited<ReturnType<typeof desktopApi.getComfyStatus>> | null>(null);
+  const [engineMessage, setEngineMessage] = useState("Checking AI engine...");
+  const [isRestartingEngine, setIsRestartingEngine] = useState(false);
+  const [showEngineLogs, setShowEngineLogs] = useState(false);
   const historyBottomRef = useRef<HTMLDivElement | null>(null);
   const projectModel = getProjectModel(project?.model);
   const currentProjectId = project?.id ?? "";
@@ -312,6 +315,39 @@ export function ProjectPage() {
       active = false;
     };
   }, [selectedImages]);
+
+  useEffect(() => {
+    if (!hasDesktopBridge()) {
+      setEngineMessage("Desktop bridge unavailable.");
+      return;
+    }
+
+    let active = true;
+
+    const readEngineStatus = async () => {
+      try {
+        const status = await desktopApi.getComfyStatus();
+        if (!active) {
+          return;
+        }
+        setComfyStatus(status);
+        setEngineMessage(status.lastError ?? status.message);
+      } catch (error) {
+        if (!active) {
+          return;
+        }
+        setEngineMessage(error instanceof Error ? error.message : "Could not read AI engine state.");
+      }
+    };
+
+    void readEngineStatus();
+    const timer = window.setInterval(() => void readEngineStatus(), 4_000);
+
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, []);
 
   const handleGenerationDone = useCallback((payload: {
     projectId: string;

@@ -38,6 +38,12 @@ const cssVariableMap: Record<keyof ThemeTokens, string> = {
   shellViewport: "--shell-viewport",
   shellTag: "--shell-tag",
   shellOverlay: "--shell-overlay",
+  shellContrastPanel: "--shell-contrast-panel",
+  shellContrastSurface: "--shell-contrast-surface",
+  shellContrastBorder: "--shell-contrast-border",
+  shellContrastText: "--shell-contrast-text",
+  shellContrastTextMuted: "--shell-contrast-text-muted",
+  shellContrastTag: "--shell-contrast-tag",
 };
 
 function detectSystemTheme(): Theme {

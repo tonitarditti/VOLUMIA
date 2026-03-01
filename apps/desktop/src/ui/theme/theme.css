@@ -33,6 +33,12 @@
   --shell-viewport: #edeae3;
   --shell-tag: rgba(183, 172, 150, 0.18);
   --shell-overlay: rgba(42, 41, 39, 0.08);
+  --shell-contrast-panel: rgba(68, 63, 57, 0.94);
+  --shell-contrast-surface: rgba(255, 246, 233, 0.05);
+  --shell-contrast-border: rgba(255, 240, 222, 0.1);
+  --shell-contrast-text: rgba(248, 241, 233, 0.96);
+  --shell-contrast-text-muted: rgba(217, 205, 193, 0.78);
+  --shell-contrast-tag: rgba(255, 246, 233, 0.08);
   --glass-blur: 18px;
 }
 

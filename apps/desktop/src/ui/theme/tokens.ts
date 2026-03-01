@@ -35,6 +35,12 @@ export type ThemeTokens = {
   shellViewport: string;
   shellTag: string;
   shellOverlay: string;
+  shellContrastPanel: string;
+  shellContrastSurface: string;
+  shellContrastBorder: string;
+  shellContrastText: string;
+  shellContrastTextMuted: string;
+  shellContrastTag: string;
 };
 
 export const themeTokens: Record<Theme, ThemeTokens> = {
@@ -73,6 +79,12 @@ export const themeTokens: Record<Theme, ThemeTokens> = {
     shellViewport: "#edeae3",
     shellTag: "rgba(183, 172, 150, 0.18)",
     shellOverlay: "rgba(42, 41, 39, 0.08)",
+    shellContrastPanel: "rgba(68, 63, 57, 0.94)",
+    shellContrastSurface: "rgba(255, 246, 233, 0.05)",
+    shellContrastBorder: "rgba(255, 240, 222, 0.1)",
+    shellContrastText: "rgba(248, 241, 233, 0.96)",
+    shellContrastTextMuted: "rgba(217, 205, 193, 0.78)",
+    shellContrastTag: "rgba(255, 246, 233, 0.08)",
   },
   dark: {
     bg: "#1e1e20",
@@ -109,5 +121,11 @@ export const themeTokens: Record<Theme, ThemeTokens> = {
     shellViewport: "#141416",
     shellTag: "rgba(58, 58, 61, 0.5)",
     shellOverlay: "rgba(255, 255, 255, 0.06)",
+    shellContrastPanel: "rgba(32, 32, 35, 0.98)",
+    shellContrastSurface: "rgba(255, 255, 255, 0.04)",
+    shellContrastBorder: "rgba(255, 255, 255, 0.08)",
+    shellContrastText: "rgba(232, 228, 222, 0.96)",
+    shellContrastTextMuted: "rgba(169, 163, 155, 0.76)",
+    shellContrastTag: "rgba(255, 255, 255, 0.06)",
   },
 };

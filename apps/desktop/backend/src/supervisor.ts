@@ -151,6 +151,18 @@ function errorMessage(error: unknown) {
   return String(error);
 }
 
+function summarizeComfyIssue(error: unknown) {
+  const raw = errorMessage(error).replace(/\r/g, "\n");
+  const firstLine = raw
+    .split("\n")
+    .map((line) => line.trim())
+    .find((line) => line.length > 0) ?? raw.trim();
+  if (firstLine.length <= 220) {
+    return firstLine;
+  }
+  return `${firstLine.slice(0, 217)}...`;
+}
+
 function ensurePathExists(targetPath: string, label: string) {
   if (!fs.existsSync(targetPath)) {
     throw new Error(`${label} no existe: ${targetPath}`);
@@ -303,6 +315,9 @@ function sleep(ms: number) {
   });
 }
 
+const COMFY_HEALTH_FAILURE_THRESHOLD = 3;
+const COMFY_AUTO_RESTART_DELAY_MS = 1_500;
+
 export class BackendSupervisor {
   private readonly processManager = new ProcessManager();
   private readonly comfyLogs: string[] = [];
@@ -318,6 +333,9 @@ export class BackendSupervisor {
   private started = false;
   private comfyProcess: ManagedProcess | null = null;
   private stoppingComfy = false;
+  private comfyHealthFailureCount = 0;
+  private comfyAutoRestartConsumed = false;
+  private comfyAutoRestartPromise: Promise<void> | null = null;
 
   private status: BackendStatus = {
     mode: "dev",
@@ -408,17 +426,136 @@ export class BackendSupervisor {
     this.status.comfy.message = snapshot.message;
   }
 
+  private setComfyError(message: string) {
+    const summary = summarizeComfyIssue(message);
+    this.comfyState = "ERROR";
+    this.comfyLastError = summary;
+    this.status.comfy.message = summary;
+    this.updateLegacyComfyFromSnapshot(this.getComfyStatus());
+    return summary;
+  }
+
+  private markComfyReady(message: string) {
+    this.comfyState = "READY";
+    this.comfyLastError = null;
+    this.comfyHealthFailureCount = 0;
+    this.comfyAutoRestartConsumed = false;
+    this.status.comfy.message = message;
+    this.updateLegacyComfyFromSnapshot(this.getComfyStatus());
+  }
+
+  private scheduleComfyAutoRestart(reason: string) {
+    if (this.stoppingComfy || this.comfyAutoRestartConsumed || this.comfyAutoRestartPromise) {
+      return;
+    }
+
+    this.comfyAutoRestartConsumed = true;
+    this.appendComfyLog(
+      `AI engine stopped. Scheduling one auto-restart in ${COMFY_AUTO_RESTART_DELAY_MS}ms. Reason: ${reason}`,
+      "warn"
+    );
+
+    this.comfyAutoRestartPromise = (async () => {
+      await sleep(COMFY_AUTO_RESTART_DELAY_MS);
+      if (this.stoppingComfy) {
+        return;
+      }
+
+      try {
+        await this.startComfyUI();
+        this.appendComfyLog("ComfyUI auto-restart completed successfully.");
+      } catch (error) {
+        const summary = summarizeComfyIssue(error);
+        this.appendComfyLog(`ComfyUI auto-restart failed: ${summary}`, "warn");
+        this.setComfyError(summary);
+      }
+    })().finally(() => {
+      this.comfyAutoRestartPromise = null;
+    });
+  }
+
+  private handleComfyFailure(message: string, options?: { autoRestart?: boolean }) {
+    const summary = this.setComfyError(message);
+    this.appendComfyLog(summary, "warn");
+    logger.warn(summary);
+
+    if (options?.autoRestart) {
+      this.scheduleComfyAutoRestart(summary);
+    }
+  }
+
+  private async clearTrackedComfyProcess(reason: string) {
+    if (!this.comfyProcess?.pid) {
+      return;
+    }
+
+    const tracked = this.comfyProcess;
+    this.appendComfyLog(`Clearing tracked ComfyUI process (${tracked.pid}) before restart. Reason: ${reason}`, "warn");
+    try {
+      tracked.child.kill("SIGTERM");
+    } catch {
+      // best effort
+    }
+    await killProcessTree(tracked.pid);
+    await Promise.race([tracked.exit.catch(() => undefined), sleep(1_500)]);
+    if (this.comfyProcess?.pid === tracked.pid) {
+      this.comfyProcess = null;
+    }
+    this.refreshProcessSnapshot();
+  }
+
+  private async resolvePortConflictBeforeStart() {
+    const portOpen = await waitForPort(this.config.comfy.host, this.config.comfy.port, 1_200);
+    if (!portOpen) {
+      return;
+    }
+
+    const health = await this.comfyApi.health();
+    if (health.ok) {
+      this.markComfyReady(health.message);
+      return;
+    }
+
+    if (this.comfyProcess?.pid) {
+      await this.clearTrackedComfyProcess("non-responsive port occupant");
+      return;
+    }
+
+    const message = [
+      `Puerto ${this.config.comfy.host}:${this.config.comfy.port} ya esta en uso, pero ComfyUI no responde.`,
+      "Cierra el proceso anterior o cambia el puerto configurado antes de reiniciar el engine.",
+    ].join(" ");
+    this.setComfyError(message);
+    throw new Error(message);
+  }
+
   private async refreshComfyHealth() {
     const health = await this.comfyApi.health();
-    if (health.ok && this.comfyState !== "STARTING") {
-      this.comfyState = "READY";
-      this.comfyLastError = null;
-      this.status.comfy.message = health.message;
+    if (health.ok) {
+      this.comfyHealthFailureCount = 0;
+      if (this.comfyState !== "STARTING") {
+        this.markComfyReady(health.message);
+      } else {
+        this.status.comfy.message = health.message;
+      }
+      return health;
     }
-    if (!health.ok && this.comfyState === "READY") {
-      this.comfyState = "ERROR";
-      this.comfyLastError = health.message;
-      this.status.comfy.message = health.message;
+
+    const summary = summarizeComfyIssue(health.message);
+    const shouldWatchHealth = this.comfyState === "READY" || Boolean(this.comfyProcess?.pid);
+    if (shouldWatchHealth) {
+      this.comfyHealthFailureCount += 1;
+      if (this.comfyHealthFailureCount >= COMFY_HEALTH_FAILURE_THRESHOLD) {
+        this.handleComfyFailure(health.message, { autoRestart: Boolean(this.comfyProcess?.pid) });
+      } else {
+        this.comfyLastError = summary;
+        this.status.comfy.message = `Healthcheck failed (${this.comfyHealthFailureCount}/${COMFY_HEALTH_FAILURE_THRESHOLD}). ${summary}`;
+        this.updateLegacyComfyFromSnapshot(this.getComfyStatus());
+      }
+    } else if (this.comfyState === "ERROR") {
+      this.comfyLastError = summary;
+      this.status.comfy.message = summary;
+      this.updateLegacyComfyFromSnapshot(this.getComfyStatus());
     }
     return health;
   }
@@ -655,6 +792,8 @@ export class BackendSupervisor {
       if (!this.comfyProcess?.pid) {
         this.comfyState = "STOPPED";
         this.comfyLastError = null;
+        this.comfyHealthFailureCount = 0;
+        this.comfyAutoRestartConsumed = false;
         this.updateLegacyComfyFromSnapshot(this.getComfyStatus());
         return this.getComfyStatus();
       }
@@ -674,6 +813,8 @@ export class BackendSupervisor {
       this.refreshProcessSnapshot();
       this.comfyState = "STOPPED";
       this.comfyLastError = null;
+      this.comfyHealthFailureCount = 0;
+      this.comfyAutoRestartConsumed = false;
       this.status.comfy.message = "ComfyUI detenido.";
       this.appendComfyLog(`ComfyUI detenido (${reason}).`);
       this.updateLegacyComfyFromSnapshot(this.getComfyStatus());
@@ -685,12 +826,18 @@ export class BackendSupervisor {
 
   async startComfyUI() {
     this.refreshConfig(true);
+    if (this.comfyState === "STARTING" && this.comfyProcess?.pid) {
+      return this.getComfyStatus();
+    }
+
     const health = await this.comfyApi.health();
     if (health.ok) {
-      this.comfyState = "READY";
-      this.comfyLastError = null;
-      this.status.comfy.message = health.message;
-      this.updateLegacyComfyFromSnapshot(this.getComfyStatus());
+      this.markComfyReady(health.message);
+      return this.getComfyStatus();
+    }
+
+    await this.resolvePortConflictBeforeStart();
+    if (this.getComfyStatus().running) {
       return this.getComfyStatus();
     }
 
@@ -698,6 +845,7 @@ export class BackendSupervisor {
     ensurePathExists(path.join(this.config.comfy.comfyDir, "main.py"), "Archivo main.py de ComfyUI");
     this.comfyState = "STARTING";
     this.comfyLastError = null;
+    this.comfyHealthFailureCount = 0;
     this.status.comfy.message = `Iniciando ComfyUI en ${this.config.comfy.baseUrl}...`;
     this.updateLegacyComfyFromSnapshot(this.getComfyStatus());
 
@@ -734,16 +882,15 @@ export class BackendSupervisor {
     this.updateLegacyComfyFromSnapshot(this.getComfyStatus());
 
     void managed.exit.then(({ code, signal }) => {
+      if (this.comfyProcess?.pid === managed.pid) {
+        this.comfyProcess = null;
+      }
       this.refreshProcessSnapshot();
       if (this.stoppingComfy) {
         return;
       }
       const message = `ComfyUI process exited (code=${String(code)} signal=${String(signal)})`;
-      this.comfyState = "ERROR";
-      this.comfyLastError = message;
-      this.appendComfyLog(message, "warn");
-      this.updateLegacyComfyFromSnapshot(this.getComfyStatus());
-      logger.warn(message);
+      this.handleComfyFailure(message, { autoRestart: true });
     });
 
     const opened = await waitForPort(this.config.comfy.host, this.config.comfy.port, this.config.comfy.startupTimeoutMs);
@@ -751,24 +898,17 @@ export class BackendSupervisor {
       await this.stopComfyUI("startup-timeout", true);
       const message =
         `ComfyUI no abrio puerto ${this.config.comfy.host}:${this.config.comfy.port} dentro de ${this.config.comfy.startupTimeoutMs}ms.`
-      this.comfyState = "ERROR";
-      this.comfyLastError = message;
-      this.updateLegacyComfyFromSnapshot(this.getComfyStatus());
+      this.setComfyError(message);
       throw new Error(message);
     }
 
     const startedHealth = await this.comfyApi.health();
     if (!startedHealth.ok) {
       await this.stopComfyUI("healthcheck-failed-after-spawn", true);
-      this.comfyState = "ERROR";
-      this.comfyLastError = startedHealth.message;
-      this.updateLegacyComfyFromSnapshot(this.getComfyStatus());
+      this.setComfyError(startedHealth.message);
       throw new Error(startedHealth.message);
     }
-    this.comfyState = "READY";
-    this.comfyLastError = null;
-    this.status.comfy.message = startedHealth.message;
-    this.updateLegacyComfyFromSnapshot(this.getComfyStatus());
+    this.markComfyReady(startedHealth.message);
     return this.getComfyStatus();
   }
 
@@ -777,11 +917,9 @@ export class BackendSupervisor {
       await this.startComfyUI();
       return;
     } catch (error) {
-      const message = errorMessage(error);
-      this.comfyState = "ERROR";
-      this.comfyLastError = message;
+      const message = summarizeComfyIssue(error);
+      this.setComfyError(message);
       this.appendComfyLog(message, "warn");
-      this.updateLegacyComfyFromSnapshot(this.getComfyStatus());
       logger.warn("ComfyUI start failed.", message);
       if (mode === "prod") {
         throw error;

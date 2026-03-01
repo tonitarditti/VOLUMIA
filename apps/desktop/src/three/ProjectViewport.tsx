@@ -159,6 +159,9 @@ type ViewportThemeConfig = {
   fillIntensity: number;
   rimIntensity: number;
   envMapIntensity: number;
+  toneMappingExposure: number;
+  contactShadowOpacity: number;
+  overlayGradient: string;
 };
 
 const VIEW_TARGET = new THREE.Vector3(0, 0, 0);
@@ -1196,17 +1199,21 @@ function getViewportThemeConfig(theme: ViewportTheme): ViewportThemeConfig {
   if (theme === "light") {
     return {
       isDark: false,
-      background: "#f4f1ee",
-      ground: "#8e867c",
-      gridMain: "#756d63",
-      gridSub: "#7f776d",
-      gridOpacity: 0.38,
-      ambientIntensity: 0.18,
-      hemisphereIntensity: 0.6,
-      keyIntensity: 1.6,
-      fillIntensity: 0.8,
-      rimIntensity: 0.45,
-      envMapIntensity: 0.9,
+      background: "#ece7df",
+      ground: "#918679",
+      gridMain: "#796f63",
+      gridSub: "#8b8174",
+      gridOpacity: 0.28,
+      ambientIntensity: 0.22,
+      hemisphereIntensity: 0.68,
+      keyIntensity: 1.72,
+      fillIntensity: 0.9,
+      rimIntensity: 0.52,
+      envMapIntensity: 0.96,
+      toneMappingExposure: 0.96,
+      contactShadowOpacity: 0.48,
+      overlayGradient:
+        "linear-gradient(180deg, rgba(112, 97, 79, 0.08) 0%, rgba(78, 68, 56, 0.035) 30%, rgba(10, 10, 10, 0) 100%)",
     };
   }
 
@@ -1223,6 +1230,10 @@ function getViewportThemeConfig(theme: ViewportTheme): ViewportThemeConfig {
     fillIntensity: 0.95,
     rimIntensity: 0.5,
     envMapIntensity: 1.05,
+    toneMappingExposure: 1.15,
+    contactShadowOpacity: 0.5,
+    overlayGradient:
+      "linear-gradient(180deg, rgba(86, 75, 62, 0.08) 0%, rgba(24, 21, 19, 0.03) 36%, rgba(8, 8, 8, 0) 100%)",
   };
 }
 
@@ -1638,7 +1649,7 @@ export function ProjectViewport({
           </div>
         ) : null}
         <div className="relative flex-1 min-h-0 w-full overflow-hidden">
-          <div className="pointer-events-none absolute inset-0 z-10 bg-[linear-gradient(180deg,rgba(86,75,62,0.08)_0%,rgba(24,21,19,0.03)_36%,rgba(8,8,8,0)_100%)]" />
+          <div className="pointer-events-none absolute inset-0 z-10" style={{ backgroundImage: themeConfig.overlayGradient }} />
           {loadError ? (
             <div className="pointer-events-none absolute inset-x-3 top-3 z-20 rounded-md border border-[#7e2d2d] bg-[#3c1515]/90 px-3 py-2 text-[11px] leading-snug text-[#ffd7d7]">
               {loadError}
@@ -1676,7 +1687,7 @@ export function ProjectViewport({
                     }
                   }
                   gl.toneMapping = THREE.ACESFilmicToneMapping;
-                  gl.toneMappingExposure = viewportTheme === "dark" ? 1.15 : 1.0;
+                  gl.toneMappingExposure = themeConfig.toneMappingExposure;
                   gl.shadowMap.enabled = true;
                   gl.shadowMap.type = THREE.PCFSoftShadowMap;
                   if ("physicallyCorrectLights" in gl) {
@@ -1742,9 +1753,9 @@ export function ProjectViewport({
                 />
                 <ContactShadows
                   position={[0, 0.002, 0]}
-                  opacity={themeConfig.isDark ? 0.5 : 0.4}
+                  opacity={themeConfig.contactShadowOpacity}
                   scale={14}
-                  blur={2.2}
+                  blur={themeConfig.isDark ? 2.2 : 1.7}
                   far={8}
                   resolution={1024}
                 />
