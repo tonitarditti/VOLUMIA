@@ -3,6 +3,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 import { createProject } from "@/projects/factory";
 import { ProjectsProvider } from "@/projects/context";
+import { GenerationJobProvider } from "@/services/comfyui";
 import { STORAGE_KEYS } from "@/storage/keys";
 import { SettingsProvider } from "@/volumia/settings/context";
 import { ProjectPage } from "./ProjectPage";
@@ -25,13 +26,15 @@ describe("ProjectPage", () => {
     );
     render(
       <SettingsProvider>
-        <ProjectsProvider>
-          <MemoryRouter initialEntries={[`/project/${project.id}`]}>
-            <Routes>
-              <Route path="/project/:projectId" element={<ProjectPage />} />
-            </Routes>
-          </MemoryRouter>
-        </ProjectsProvider>
+        <GenerationJobProvider>
+          <ProjectsProvider>
+            <MemoryRouter initialEntries={[`/project/${project.id}`]}>
+              <Routes>
+                <Route path="/project/:projectId" element={<ProjectPage />} />
+              </Routes>
+            </MemoryRouter>
+          </ProjectsProvider>
+        </GenerationJobProvider>
       </SettingsProvider>
     );
 

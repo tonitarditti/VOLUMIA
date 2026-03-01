@@ -4,7 +4,6 @@ import { desktopApi, hasDesktopBridge } from "@/electron/desktopApi";
 import type { BackendStatusResponse, ComfyStatusResponse } from "@/electron/channels";
 import { useProjects } from "@/projects/context";
 import { selectActiveProject, selectProjectsSortedByUpdatedAt } from "@/projects/selectors";
-import { EmptyState } from "@/ui/EmptyState";
 import { Button, Card, TextField } from "@/ui/primitives";
 import { useT } from "@/volumia/i18n/useT";
 
@@ -18,6 +17,61 @@ function toHumanDate(value: string, locale: string) {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(new Date(value));
+}
+
+function formatProjectType(index: number) {
+  const labels = ["Residential", "Commercial", "Cultural", "Urban"];
+  return labels[index % labels.length] ?? "Project";
+}
+
+function projectGradient(index: number) {
+  const gradients = [
+    "from-[#1c1610] to-[#28200e]",
+    "from-[#0e1420] to-[#121c2e]",
+    "from-[#141418] to-[#1c1c22]",
+    "from-[#0c1618] to-[#10202a]",
+  ];
+  return gradients[index % gradients.length] ?? gradients[0];
+}
+
+function statusTone(comfyStatus: ComfyStatusResponse | null) {
+  if (!comfyStatus) {
+    return {
+      label: "Idle",
+      detail: "No engine status yet.",
+      className: "border-[var(--border)] bg-[var(--surface-2)] text-[var(--text-muted)]",
+    };
+  }
+
+  if (comfyStatus.lastError || comfyStatus.state === "ERROR") {
+    return {
+      label: "Attention",
+      detail: comfyStatus.lastError ?? comfyStatus.message,
+      className: "border-[var(--danger)] bg-[var(--danger-bg)] text-[var(--danger)]",
+    };
+  }
+
+  if (comfyStatus.state === "STARTING") {
+    return {
+      label: "Starting",
+      detail: comfyStatus.message,
+      className: "border-[var(--warning)] bg-[var(--warning-bg)] text-[var(--warning)]",
+    };
+  }
+
+  if (comfyStatus.running) {
+    return {
+      label: "Ready",
+      detail: comfyStatus.message,
+      className: "border-[var(--success)] bg-[var(--success-bg)] text-[var(--success)]",
+    };
+  }
+
+  return {
+    label: "Idle",
+    detail: comfyStatus.message,
+    className: "border-[var(--border)] bg-[var(--surface-2)] text-[var(--text-muted)]",
+  };
 }
 
 export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
@@ -37,9 +91,25 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
   const [startingComfy, setStartingComfy] = useState(false);
   const [stoppingComfy, setStoppingComfy] = useState(false);
   const [workflowImagePath, setWorkflowImagePath] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
 
   const projects = useMemo(() => selectProjectsSortedByUpdatedAt(state.projects), [state.projects]);
+  const filteredProjects = useMemo(() => {
+    const normalized = searchQuery.trim().toLowerCase();
+    if (!normalized) {
+      return projects;
+    }
+
+    return projects.filter((project) => project.name.toLowerCase().includes(normalized));
+  }, [projects, searchQuery]);
   const activeProject = useMemo(() => selectActiveProject(state), [state]);
+  const engineTone = useMemo(() => statusTone(comfyStatus), [comfyStatus]);
+  const recentLogs = comfyStatus?.lastLogs?.slice(-12) ?? [];
+  const engineCrashed =
+    Boolean(comfyStatus?.lastError) ||
+    comfyStatus?.state === "ERROR" ||
+    /process exited/i.test(comfyStatus?.message ?? "") ||
+    /process exited/i.test(backendMessage);
 
   const openProject = (projectId: string) => {
     setActiveProject(projectId);
@@ -52,48 +122,59 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
   };
 
   const submitRename = () => {
-    if (!editingProjectId) return;
+    if (!editingProjectId) {
+      return;
+    }
+
     renameProject(editingProjectId, editingName);
     setEditingProjectId(null);
     setEditingName("");
   };
 
+  const refreshStatus = async () => {
+    if (!hasDesktopBridge()) {
+      setBackendMessage("Desktop bridge unavailable.");
+      return;
+    }
+
+    try {
+      const [status, comfy] = await Promise.all([desktopApi.getBackendStatus(), desktopApi.getComfyStatus()]);
+      setBackendStatus(status);
+      setComfyStatus(comfy);
+      setBackendMessage(comfy.running ? `Engine ready at ${comfy.url}` : comfy.lastError ?? comfy.message);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not read engine status.";
+      setBackendMessage(message);
+    }
+  };
+
   useEffect(() => {
     if (!hasDesktopBridge()) {
-      setBackendMessage("Desktop bridge no disponible.");
+      setBackendMessage("Desktop bridge unavailable.");
       return;
     }
 
     let active = true;
-    const refreshStatus = async () => {
+
+    const run = async () => {
       try {
-        const [status, comfy] = await Promise.all([
-          desktopApi.getBackendStatus(),
-          desktopApi.getComfyStatus(),
-        ]);
+        const [status, comfy] = await Promise.all([desktopApi.getBackendStatus(), desktopApi.getComfyStatus()]);
         if (!active) {
           return;
         }
         setBackendStatus(status);
         setComfyStatus(comfy);
-        setBackendMessage(
-          comfy.running
-            ? `Backend OK (${comfy.url})`
-            : comfy.lastError ?? comfy.message
-        );
+        setBackendMessage(comfy.running ? `Engine ready at ${comfy.url}` : comfy.lastError ?? comfy.message);
       } catch (error) {
         if (!active) {
           return;
         }
-        const message = error instanceof Error ? error.message : "No se pudo consultar backend.";
-        setBackendMessage(message);
+        setBackendMessage(error instanceof Error ? error.message : "Could not read engine status.");
       }
     };
 
-    void refreshStatus();
-    const timer = window.setInterval(() => {
-      void refreshStatus();
-    }, 4000);
+    void run();
+    const timer = window.setInterval(() => void run(), 4000);
 
     return () => {
       active = false;
@@ -101,45 +182,21 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
     };
   }, []);
 
-  const comfyBadge = useMemo(() => {
-    if (!comfyStatus) {
-      return { label: "Idle", className: "border-[var(--border)] bg-[var(--surface-3)] text-[var(--text-muted)]" };
-    }
-    if (comfyStatus.lastError || comfyStatus.state === "ERROR") {
-      return { label: "Error", className: "border-[var(--danger)] bg-[var(--danger-bg)] text-[var(--danger)]" };
-    }
-    if (comfyStatus.state === "STARTING") {
-      return { label: "Busy", className: "border-[var(--warning)] bg-[var(--warning-bg)] text-[var(--warning)]" };
-    }
-    if (comfyStatus.running) {
-      return { label: "Ready", className: "border-[var(--success)] bg-[var(--success-bg)] text-[var(--success)]" };
-    }
-    return { label: "Idle", className: "border-[var(--border)] bg-[var(--surface-3)] text-[var(--text-muted)]" };
-  }, [comfyStatus]);
-
   const runWorkflowTest = async () => {
     if (!hasDesktopBridge()) {
-      setBackendMessage("Desktop bridge no disponible.");
+      setBackendMessage("Desktop bridge unavailable.");
       return;
     }
+
     setRunningWorkflowTest(true);
     try {
       const result = await desktopApi.runComfyWorkflow({
         imagePath: workflowImagePath.trim() || undefined,
       });
       setComfyStatus(result.comfy);
-      if (result.ok) {
-        setBackendMessage(
-          result.outputGlbPath
-            ? `Workflow OK. promptId=${result.promptId ?? "n/a"} GLB=${result.outputGlbPath}`
-            : `Workflow encolado. promptId=${result.promptId ?? "n/a"}`
-        );
-      } else {
-        setBackendMessage(result.error ?? result.message);
-      }
+      setBackendMessage(result.ok ? result.message : result.error ?? result.message);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "No se pudo ejecutar workflow de prueba.";
-      setBackendMessage(message);
+      setBackendMessage(error instanceof Error ? error.message : "Could not run workflow test.");
     } finally {
       setRunningWorkflowTest(false);
     }
@@ -147,60 +204,35 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
 
   const importWorkflowJson = async () => {
     if (!hasDesktopBridge()) {
-      setBackendMessage("Desktop bridge no disponible.");
+      setBackendMessage("Desktop bridge unavailable.");
       return;
     }
+
     setImportingWorkflow(true);
     try {
       const result = await desktopApi.importBackendWorkflow();
       setBackendStatus(result.status);
-      if (result.ok) {
-        setBackendMessage(result.message);
-      } else if (result.canceled) {
-        setBackendMessage("Import canceled.");
-      } else {
-        setBackendMessage(result.error ?? result.message);
-      }
+      setBackendMessage(result.ok ? result.message : result.error ?? result.message);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "No se pudo importar workflow.";
-      setBackendMessage(message);
+      setBackendMessage(error instanceof Error ? error.message : "Could not import workflow.");
     } finally {
       setImportingWorkflow(false);
     }
   };
 
-  const refreshComfyStatus = async () => {
-    if (!hasDesktopBridge()) {
-      setBackendMessage("Desktop bridge no disponible.");
-      return;
-    }
-    try {
-      const [status, comfy] = await Promise.all([
-        desktopApi.getBackendStatus(),
-        desktopApi.getComfyStatus(),
-      ]);
-      setBackendStatus(status);
-      setComfyStatus(comfy);
-      setBackendMessage(comfy.running ? `Backend OK (${comfy.url})` : comfy.lastError ?? comfy.message);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "No se pudo consultar backend.";
-      setBackendMessage(message);
-    }
-  };
-
   const startComfy = async () => {
     if (!hasDesktopBridge()) {
-      setBackendMessage("Desktop bridge no disponible.");
+      setBackendMessage("Desktop bridge unavailable.");
       return;
     }
+
     setStartingComfy(true);
     try {
       const comfy = await desktopApi.startComfy();
       setComfyStatus(comfy);
-      setBackendMessage(comfy.running ? `Backend OK (${comfy.url})` : comfy.lastError ?? comfy.message);
+      setBackendMessage(comfy.running ? `Engine ready at ${comfy.url}` : comfy.lastError ?? comfy.message);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "No se pudo iniciar ComfyUI.";
-      setBackendMessage(message);
+      setBackendMessage(error instanceof Error ? error.message : "Could not start engine.");
     } finally {
       setStartingComfy(false);
     }
@@ -208,226 +240,323 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
 
   const stopComfy = async () => {
     if (!hasDesktopBridge()) {
-      setBackendMessage("Desktop bridge no disponible.");
+      setBackendMessage("Desktop bridge unavailable.");
       return;
     }
+
     setStoppingComfy(true);
     try {
       const comfy = await desktopApi.stopComfy();
       setComfyStatus(comfy);
-      setBackendMessage(comfy.running ? `Backend OK (${comfy.url})` : comfy.lastError ?? comfy.message);
+      setBackendMessage(comfy.running ? `Engine ready at ${comfy.url}` : comfy.lastError ?? comfy.message);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "No se pudo detener ComfyUI.";
-      setBackendMessage(message);
+      setBackendMessage(error instanceof Error ? error.message : "Could not stop engine.");
     } finally {
       setStoppingComfy(false);
     }
   };
 
+  const restartComfy = async () => {
+    if (!hasDesktopBridge()) {
+      setBackendMessage("Desktop bridge unavailable.");
+      return;
+    }
+
+    setStartingComfy(true);
+    setStoppingComfy(true);
+    try {
+      if (comfyStatus?.running) {
+        await desktopApi.stopComfy();
+      }
+      const comfy = await desktopApi.startComfy();
+      setComfyStatus(comfy);
+      setBackendMessage(comfy.running ? `Engine restarted at ${comfy.url}` : comfy.lastError ?? comfy.message);
+    } catch (error) {
+      setBackendMessage(error instanceof Error ? error.message : "Could not restart engine.");
+    } finally {
+      setStartingComfy(false);
+      setStoppingComfy(false);
+    }
+  };
+
   return (
-    <div className="flex h-full min-h-0 w-full flex-col gap-5">
-      <Card padding="md">
-        <div className="flex flex-wrap items-end justify-between gap-4">
-          <div>
-            <p className="text-[10px] tracking-[0.12em] text-[var(--text-muted)]">{t("dashboard.workspace")}</p>
-            <h1 className="mt-1 text-2xl font-medium tracking-[0.02em] text-[var(--text)]">{t("dashboard.title")}</h1>
-            <p className="mt-2 max-w-2xl text-sm text-[var(--text-muted)]">
-              {t("dashboard.subtitle")}
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              variant="primary"
-              className="min-w-28"
-              onClick={() => {
-                if (activeProject) {
-                  openProject(activeProject.id);
-                }
-              }}
-              disabled={!activeProject}
-            >
-              Open Project
-            </Button>
-            <Button
-              variant="secondary"
-              className="min-w-28"
-              onClick={() => {
-                createProject();
-              }}
-            >
-              {t("dashboard.newProject")}
-            </Button>
-            <Button variant="secondary" className="min-w-28" onClick={() => void onImport()}>
-              {t("dashboard.importJson")}
-            </Button>
-            <Button variant="secondary" className="min-w-28" onClick={() => void onExport()}>
-              {t("dashboard.exportJson")}
-            </Button>
-          </div>
-        </div>
-        <div className="mt-5 rounded-xl border border-[var(--border)] bg-[var(--surface-2)] p-4">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div>
-              <p className="text-[10px] tracking-[0.12em] text-[var(--text-muted)]">Engine status</p>
-              <div className="mt-2 flex flex-wrap items-center gap-2">
-                <span className={`rounded-full border px-3 py-1 text-[10px] font-normal tracking-[0.04em] ${comfyBadge.className}`}>
-                  {comfyBadge.label}
-                </span>
-                <span className="text-xs text-[var(--text-muted)]">
-                  {comfyStatus?.url ?? "http://127.0.0.1:8188"}
-                </span>
-              </div>
-              <p className="mt-2 text-xs text-[var(--text-muted)]">
-                Workflow: {backendStatus?.workflows.activeName ?? "n/a"} · {backendMessage}
+    <div className="grid h-full min-h-0 w-full grid-cols-[minmax(0,1fr)_260px] gap-0 overflow-hidden">
+      <div className="min-h-0 overflow-y-auto px-8 py-7">
+        <section className="rounded-[24px] border border-[var(--border)] bg-[var(--surface-2)] p-6 shadow-[var(--shadow-panel)]">
+          <div className="flex flex-wrap items-start justify-between gap-5">
+            <div className="max-w-3xl">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--text-faint)]">
+                {t("dashboard.workspace")}
               </p>
+              <h1 className="mt-2 text-3xl font-medium tracking-[-0.02em] text-[var(--text)]">{t("dashboard.title")}</h1>
+              <p className="mt-3 text-sm leading-6 text-[var(--text-muted)]">{t("dashboard.subtitle")}</p>
             </div>
 
-            <div className="flex items-center gap-2">
-              <Button variant="secondary" className="h-8 px-3 text-xs" onClick={() => setLogsOpen((current) => !current)}>
-                {logsOpen ? "Hide logs" : "Show logs"}
+            <div className="flex flex-wrap gap-2">
+              <Button variant="primary" onClick={() => activeProject && openProject(activeProject.id)} disabled={!activeProject}>
+                Open Project
               </Button>
-              <Button variant="ghost" className="h-8 px-3 text-xs" onClick={() => setEngineOpen((current) => !current)}>
-                {engineOpen ? "Hide advanced" : "Advanced / Engine"}
+              <Button variant="secondary" onClick={() => createProject()}>
+                {t("dashboard.newProject")}
+              </Button>
+              <Button variant="secondary" onClick={() => void onImport()}>
+                {t("dashboard.importJson")}
+              </Button>
+              <Button variant="secondary" onClick={() => void onExport()}>
+                {t("dashboard.exportJson")}
               </Button>
             </div>
           </div>
 
-          {logsOpen ? (
-            <div className="mt-3 max-h-28 overflow-auto rounded-lg border border-[var(--border)] bg-[var(--surface-3)] p-3">
-              {(comfyStatus?.lastLogs ?? []).slice(-8).map((line, index) => (
-                <p key={`${index}-${line}`} className="font-mono text-[10px] leading-relaxed text-[var(--text-muted)]">
-                  {line}
-                </p>
-              ))}
+          <div className="mt-6 grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+            <div className="rounded-[20px] border border-[var(--border)] bg-[var(--surface-1)] p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--text-faint)]">Projects</p>
+                  <p className="mt-1 text-sm text-[var(--text-muted)]">
+                    {filteredProjects.length} visible of {projects.length} total
+                  </p>
+                </div>
+                <div className="w-full max-w-xs">
+                  <TextField
+                    value={searchQuery}
+                    onChange={(event) => setSearchQuery(event.target.value)}
+                    placeholder="Search projects"
+                    aria-label="Search projects"
+                  />
+                </div>
+              </div>
             </div>
-          ) : null}
 
-          {engineOpen ? (
-            <div className="mt-4 space-y-3 rounded-lg border border-[var(--border)] bg-[var(--surface-3)] p-3">
-              <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  variant="secondary"
-                  className="h-8 px-3 text-xs"
-                  disabled={startingComfy}
-                  onClick={() => void startComfy()}
-                >
-                  {startingComfy ? "Starting..." : "Start"}
-                </Button>
-                <Button
-                  variant="secondary"
-                  className="h-8 px-3 text-xs"
-                  disabled={stoppingComfy}
-                  onClick={() => void stopComfy()}
-                >
-                  {stoppingComfy ? "Stopping..." : "Stop"}
-                </Button>
-                <Button
-                  variant="secondary"
-                  className="h-8 px-3 text-xs"
-                  disabled={importingWorkflow}
-                  onClick={() => void importWorkflowJson()}
-                >
-                  Import workflow JSON
-                </Button>
-                <Button
-                  variant="ghost"
-                  className="h-8 px-3 text-xs"
-                  onClick={() => void refreshComfyStatus()}
-                >
-                  Refresh status
-                </Button>
+            <div className="rounded-[20px] border border-[var(--border)] bg-[var(--surface-1)] p-4">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--text-faint)]">Engine status</p>
+              <div className="mt-3 flex items-center gap-2">
+                <span className={`rounded-full border px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.08em] ${engineTone.className}`}>
+                  {engineTone.label}
+                </span>
+                <span className="text-xs text-[var(--text-muted)]">{comfyStatus?.url ?? "127.0.0.1:8188"}</span>
               </div>
-
-              <div className="max-w-xl">
-                <TextField
-                  value={workflowImagePath}
-                  onChange={(event) => setWorkflowImagePath(event.target.value)}
-                  placeholder="Image path for LoadImage (optional)"
-                  aria-label="Workflow image path"
-                />
-              </div>
-
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="primary"
-                  className="h-8 px-3 text-xs"
-                  disabled={runningWorkflowTest}
-                  onClick={() => void runWorkflowTest()}
-                >
-                  Run workflow (test)
+              <p className="mt-3 text-sm text-[var(--text-muted)]">{engineTone.detail}</p>
+              <div className="mt-4 flex gap-2">
+                <Button variant="secondary" className="h-8 px-3 text-xs" onClick={() => setEngineOpen((value) => !value)}>
+                  {engineOpen ? "Hide Advanced" : "Advanced / Engine"}
+                </Button>
+                <Button variant="ghost" className="h-8 px-3 text-xs" onClick={() => setLogsOpen((value) => !value)}>
+                  {logsOpen ? "Hide Logs" : "Show Logs"}
                 </Button>
               </div>
             </div>
-          ) : null}
-        </div>
-      </Card>
+          </div>
+        </section>
 
-      <div className="min-h-0 flex-1 overflow-y-auto pr-1.5">
-        {projects.length === 0 ? (
-          <EmptyState title={t("dashboard.emptyTitle")} description={t("dashboard.emptyDescription")} />
-        ) : (
-          <div className="grid grid-cols-1 gap-4 2xl:grid-cols-2">
-            {projects.map((project) => {
-              const isEditing = editingProjectId === project.id;
+        <div className="mt-6 grid gap-5 xl:grid-cols-[minmax(0,1fr)_320px]">
+          <div className="min-h-0">
+            {filteredProjects.length === 0 ? (
+              <Card padding="lg" className="rounded-[24px] border-dashed">
+                <div className="flex min-h-72 flex-col items-center justify-center gap-4 text-center">
+                  <div className="grid h-14 w-14 place-items-center rounded-2xl border border-[var(--border)] bg-[var(--accent-soft)] text-xl text-[var(--accent)]">
+                    +
+                  </div>
+                  <div>
+                    <p className="text-lg font-medium text-[var(--text)]">{t("dashboard.emptyTitle")}</p>
+                    <p className="mt-2 text-sm text-[var(--text-muted)]">{t("dashboard.emptyDescription")}</p>
+                  </div>
+                  <Button variant="primary" onClick={() => createProject()}>
+                    {t("dashboard.newProject")}
+                  </Button>
+                </div>
+              </Card>
+            ) : (
+              <div className="grid grid-cols-1 gap-5 2xl:grid-cols-2">
+                <button
+                  type="button"
+                  onClick={() => createProject()}
+                  className="flex min-h-[220px] flex-col items-center justify-center gap-4 rounded-[24px] border border-dashed border-[var(--border-strong)] bg-[var(--surface-2)] p-6 text-center transition-colors hover:border-[var(--accent)] hover:bg-[var(--accent-soft)]"
+                >
+                  <div className="grid h-12 w-12 place-items-center rounded-2xl border border-[var(--accent)] bg-[var(--accent-soft)] text-2xl text-[var(--accent)]">
+                    +
+                  </div>
+                  <div>
+                    <p className="text-lg font-medium text-[var(--text)]">New Project</p>
+                    <p className="mt-2 text-sm text-[var(--text-muted)]">Create a new design container with the real project state and actions.</p>
+                  </div>
+                </button>
 
-              return (
-                <Card key={project.id} padding="md" hoverElevation>
-                  <div className="flex items-start justify-between gap-3">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      className="h-auto items-start justify-start p-0 text-left hover:border-transparent hover:bg-transparent"
-                      onClick={() => {
-                        openProject(project.id);
-                      }}
-                    >
-                      <div>
-                        <h2 className="text-lg font-medium tracking-[0.02em] text-[var(--text)]">{project.name}</h2>
-                        <p className="mt-1 text-xs tracking-[0.06em] text-[var(--text-muted)]">
-                          {t("dashboard.updated", { date: toHumanDate(project.updatedAt, language) })}
-                        </p>
+                {filteredProjects.map((project, index) => {
+                  const isEditing = editingProjectId === project.id;
+
+                  return (
+                    <Card key={project.id} padding="none" className="overflow-hidden rounded-[24px]">
+                      <div className={`relative h-36 bg-gradient-to-br ${projectGradient(index)}`}>
+                        <div className="absolute inset-0 bg-[linear-gradient(180deg,transparent_40%,rgba(0,0,0,0.35)_100%)]" />
+                        <div className="absolute right-4 top-4 rounded-full border border-white/20 bg-black/25 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-white/88">
+                          {formatProjectType(index)}
+                        </div>
+                        <button
+                          type="button"
+                          className="absolute inset-0"
+                          aria-label={`Open ${project.name}`}
+                          onClick={() => openProject(project.id)}
+                        />
                       </div>
+
+                      <div className="space-y-4 p-5">
+                        <div className="flex items-start justify-between gap-4">
+                          <div>
+                            <h2 className="text-xl font-medium text-[var(--text)]">{project.name}</h2>
+                            <p className="mt-1 text-xs uppercase tracking-[0.08em] text-[var(--text-faint)]">
+                              Updated {toHumanDate(project.updatedAt, language)}
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            className="rounded-full border border-[var(--border)] bg-[var(--surface-2)] px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--text-muted)] transition-colors hover:border-[var(--accent)] hover:text-[var(--accent)]"
+                            onClick={() => openProject(project.id)}
+                          >
+                            Open
+                          </button>
+                        </div>
+
+                        {isEditing ? (
+                          <div className="flex items-center gap-2">
+                            <TextField
+                              value={editingName}
+                              onChange={(event) => setEditingName(event.target.value)}
+                              aria-label={t("dashboard.projectNameLabel")}
+                            />
+                            <Button variant="primary" className="h-10 px-4" onClick={submitRename}>
+                              {t("common.save")}
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              className="h-10 px-4"
+                              onClick={() => {
+                                setEditingProjectId(null);
+                                setEditingName("");
+                              }}
+                            >
+                              {t("common.cancel")}
+                            </Button>
+                          </div>
+                        ) : null}
+
+                        <div className="flex flex-wrap gap-2">
+                          <Button variant="ghost" className="h-8 px-3 text-xs" onClick={() => beginRename(project.id, project.name)}>
+                            {t("dashboard.rename")}
+                          </Button>
+                          <Button variant="ghost" className="h-8 px-3 text-xs" onClick={() => duplicateProject(project.id)}>
+                            {t("dashboard.duplicate")}
+                          </Button>
+                          <Button variant="danger" className="h-8 px-3 text-xs" onClick={() => deleteProject(project.id)}>
+                            {t("dashboard.delete")}
+                          </Button>
+                        </div>
+                      </div>
+                    </Card>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          <aside className="min-h-0 overflow-y-auto">
+            <div className="space-y-5">
+              <Card padding="md" className="rounded-[24px]">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--text-faint)]">System</p>
+                <div className="mt-4 space-y-3">
+                  <div className="flex items-center justify-between border-b border-[var(--border)] pb-3">
+                    <span className="text-sm text-[var(--text-muted)]">Workflow</span>
+                    <span className="text-sm font-medium text-[var(--text)]">
+                      {backendStatus?.workflows.activeName ?? "Not loaded"}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between border-b border-[var(--border)] pb-3">
+                    <span className="text-sm text-[var(--text-muted)]">ComfyUI</span>
+                    <span className="text-sm font-medium text-[var(--text)]">{comfyStatus?.state ?? "Unknown"}</span>
+                  </div>
+                  <div className="flex items-center justify-between border-b border-[var(--border)] pb-3">
+                    <span className="text-sm text-[var(--text-muted)]">Processes</span>
+                    <span className="text-sm font-medium text-[var(--text)]">{backendStatus?.activeProcesses.length ?? 0}</span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm text-[var(--text-muted)]">Project focus</span>
+                    <span className="text-sm font-medium text-[var(--text)]">{activeProject?.name ?? "None selected"}</span>
+                  </div>
+                </div>
+              </Card>
+
+              {engineCrashed ? (
+                <Card padding="md" className="rounded-[24px] border-[var(--danger)] bg-[var(--danger-bg)]">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--danger)]">Engine issue</p>
+                  <p className="mt-3 text-sm text-[var(--text)]">
+                    The engine exited or reported an error. Use Restart Engine to recover without exposing raw logs by default.
+                  </p>
+                  <p className="mt-2 text-xs text-[var(--text-muted)]">{backendMessage}</p>
+                  <div className="mt-4">
+                    <Button variant="danger" className="h-9 px-4 text-xs" onClick={() => void restartComfy()}>
+                      Restart Engine
                     </Button>
-                    <div className="flex flex-wrap justify-end gap-1.5">
-                      <Button variant="ghost" className="h-8 px-3 text-xs" onClick={() => beginRename(project.id, project.name)}>
-                        {t("dashboard.rename")}
-                      </Button>
-                      <Button variant="ghost" className="h-8 px-3 text-xs" onClick={() => duplicateProject(project.id)}>
-                        {t("dashboard.duplicate")}
-                      </Button>
-                      <Button variant="danger" className="h-8 px-3 text-xs" onClick={() => deleteProject(project.id)}>
-                        {t("dashboard.delete")}
-                      </Button>
-                    </div>
+                  </div>
+                </Card>
+              ) : null}
+
+              {engineOpen ? (
+                <Card padding="md" className="rounded-[24px]">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--text-faint)]">Advanced / Engine</p>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <Button variant="secondary" className="h-8 px-3 text-xs" disabled={startingComfy} onClick={() => void startComfy()}>
+                      {startingComfy ? "Starting..." : "Start"}
+                    </Button>
+                    <Button variant="secondary" className="h-8 px-3 text-xs" disabled={stoppingComfy} onClick={() => void stopComfy()}>
+                      {stoppingComfy ? "Stopping..." : "Stop"}
+                    </Button>
+                    <Button variant="secondary" className="h-8 px-3 text-xs" onClick={() => void restartComfy()}>
+                      Restart Engine
+                    </Button>
+                    <Button variant="ghost" className="h-8 px-3 text-xs" onClick={() => void refreshStatus()}>
+                      Refresh Status
+                    </Button>
+                    <Button variant="ghost" className="h-8 px-3 text-xs" disabled={importingWorkflow} onClick={() => void importWorkflowJson()}>
+                      {importingWorkflow ? "Importing..." : "Import workflow JSON"}
+                    </Button>
                   </div>
 
-                  {isEditing ? (
-                    <div className="mt-4 flex items-center gap-2">
-                      <TextField
-                        value={editingName}
-                        onChange={(event) => setEditingName(event.target.value)}
-                        aria-label={t("dashboard.projectNameLabel")}
-                      />
-                      <Button variant="primary" className="min-w-20" onClick={submitRename}>
-                        {t("common.save")}
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        className="min-w-20"
-                        onClick={() => {
-                          setEditingProjectId(null);
-                          setEditingName("");
-                        }}
-                      >
-                        {t("common.cancel")}
-                      </Button>
-                    </div>
-                  ) : null}
+                  <div className="mt-4">
+                    <TextField
+                      value={workflowImagePath}
+                      onChange={(event) => setWorkflowImagePath(event.target.value)}
+                      placeholder="Optional image path for workflow test"
+                      aria-label="Workflow image path"
+                    />
+                  </div>
+
+                  <div className="mt-3">
+                    <Button variant="primary" className="h-9 px-4 text-xs" disabled={runningWorkflowTest} onClick={() => void runWorkflowTest()}>
+                      {runningWorkflowTest ? "Running..." : "Run workflow test"}
+                    </Button>
+                  </div>
                 </Card>
-              );
-            })}
-          </div>
-        )}
+              ) : null}
+
+              {logsOpen ? (
+                <Card padding="md" className="rounded-[24px]">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--text-faint)]">Engine logs</p>
+                  <div className="mt-4 max-h-72 space-y-2 overflow-y-auto rounded-2xl border border-[var(--border)] bg-[var(--surface-1)] p-3">
+                    {recentLogs.length > 0 ? (
+                      recentLogs.map((line, index) => (
+                        <p key={`${index}-${line}`} className="font-mono text-[11px] leading-relaxed text-[var(--text-muted)]">
+                          {line}
+                        </p>
+                      ))
+                    ) : (
+                      <p className="text-xs text-[var(--text-muted)]">No logs available.</p>
+                    )}
+                  </div>
+                </Card>
+              ) : null}
+            </div>
+          </aside>
+        </div>
       </div>
     </div>
   );

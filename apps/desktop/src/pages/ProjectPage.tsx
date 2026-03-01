@@ -8,6 +8,7 @@ import { buildMockAssistantReply, summarizeReply } from "@/projects/mockAssistan
 import { desktopApi, hasDesktopBridge } from "@/electron/desktopApi";
 import { Button, TextArea } from "@/ui/primitives";
 import { getSurfaceClass } from "@/ui/surfaceClass";
+import { TopBar } from "@/ui/shell";
 import { ProjectViewport } from "@/three/ProjectViewport";
 import { DEFAULT_COMFY_WORKFLOW_ID, useGenerationJobStore } from "@/services/comfyui";
 import { useT } from "@/volumia/i18n/useT";
@@ -494,6 +495,31 @@ export function ProjectPage() {
 
   // TODO(cleanup): remove legacy local generation IPC + python pipeline once Comfy-only flow is stable.
 
+  const workspaceStatus: WorkspaceStatus =
+    generationJob.projectId === currentProjectId && generationJob.status === "error"
+      ? "error"
+      : isGenerating
+        ? "generating"
+        : project?.model?.glbPath
+          ? "ready"
+          : "idle";
+
+  useEffect(() => {
+    if (workspaceStatusRef.current === workspaceStatus) {
+      return;
+    }
+
+    if (workspaceStatus === "generating") {
+      setActiveTab("ai");
+    } else if (workspaceStatus === "ready") {
+      setActiveTab("result");
+    } else if (workspaceStatus === "error") {
+      setActiveTab("ai");
+    }
+
+    workspaceStatusRef.current = workspaceStatus;
+  }, [workspaceStatus]);
+
   if (!hydrated) {
     return null;
   }
@@ -658,31 +684,6 @@ export function ProjectPage() {
     }, 0);
   };
 
-  const workspaceStatus: WorkspaceStatus =
-    generationJob.projectId === currentProjectId && generationJob.status === "error"
-      ? "error"
-      : isGenerating
-        ? "generating"
-        : project.model?.glbPath
-          ? "ready"
-          : "idle";
-
-  useEffect(() => {
-    if (workspaceStatusRef.current === workspaceStatus) {
-      return;
-    }
-
-    if (workspaceStatus === "generating") {
-      setActiveTab("ai");
-    } else if (workspaceStatus === "ready") {
-      setActiveTab("result");
-    } else if (workspaceStatus === "error") {
-      setActiveTab("ai");
-    }
-
-    workspaceStatusRef.current = workspaceStatus;
-  }, [workspaceStatus]);
-
   const floatingPanelClass = settings.glassStyle
     ? "text-[var(--text)]"
     : `${getSurfaceClass(false, "panel")} text-[var(--text)]`;
@@ -718,7 +719,22 @@ export function ProjectPage() {
           : "border-[rgba(138,148,163,0.2)] bg-[rgba(138,148,163,0.08)] text-[#c1c8d1]";
 
   return (
-    <div className="flex h-full min-h-0 w-full min-w-0 overflow-hidden bg-[var(--surface-1)]">
+    <div className="flex h-screen w-screen overflow-hidden bg-[var(--bg)]">
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        <TopBar
+          eyebrow="Workspace"
+          title={project.name}
+          breadcrumb={["Projects", project.name]}
+          statusSlot={<span className={`rounded-full border px-3 py-1 text-[10px] font-normal tracking-[0.04em] ${statusBadgeClass}`}>{workspaceStatus === "ready" ? "Ready" : workspaceStatus === "generating" ? "Generating" : workspaceStatus === "error" ? "Error" : "Idle"}</span>}
+          rightSlot={
+            <div className="flex items-center gap-2">
+              <span className={compactMetaClass}>Preset {preset}</span>
+              <span className={compactMetaClass}>{selectedImages.length} refs</span>
+            </div>
+          }
+        />
+        <div className="flex min-h-0 flex-1 overflow-hidden">
+          <div className="flex h-full min-h-0 w-full min-w-0 overflow-hidden bg-[var(--surface-1)]">
       <aside className={`flex h-full w-16 shrink-0 flex-col items-center gap-3 border-r border-[var(--border)] px-2 py-3 ${sectionClass}`} style={structuredPanelStyle}>
         <div className="flex h-11 w-11 items-center justify-center rounded-lg border border-[color:rgba(255,255,255,0.06)] bg-[color:rgba(255,255,255,0.03)] text-[11px] font-semibold tracking-[0.24em] text-[var(--accent)]">VD</div>
         <div className="flex flex-1 flex-col items-center gap-2">
@@ -922,6 +938,9 @@ export function ProjectPage() {
             </div>
           )}
         </footer>
+          </div>
+        </div>
+      </div>
       </div>
     </div>
   );

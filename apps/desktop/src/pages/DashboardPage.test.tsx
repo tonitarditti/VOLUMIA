@@ -23,7 +23,7 @@ describe("DashboardPage", () => {
 
     const beforeCount = screen.getAllByRole("heading", { level: 2 }).length;
 
-    await user.click(screen.getByRole("button", { name: /New Project|Nuevo Proyecto|Novo Projeto/i }));
+    await user.click(screen.getAllByRole("button", { name: /New Project|Nuevo Proyecto|Novo Projeto/i })[0]!);
 
     const afterCount = screen.getAllByRole("heading", { level: 2 }).length;
     expect(afterCount).toBe(beforeCount + 1);

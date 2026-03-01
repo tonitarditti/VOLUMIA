@@ -467,52 +467,32 @@ export function SettingsPage({
             <p className="text-xs tracking-[0.08em] text-[var(--text-muted)]">{t("settings.theme")}</p>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
               <Button
+                variant={settings.themeMode === "manual" && settings.theme === "light" ? "primary" : "secondary"}
+                onClick={() => setTheme("light")}
+              >
+                {t("settings.option.theme.light")}
+              </Button>
+              <Button
+                variant={settings.themeMode === "manual" && settings.theme === "dark" ? "primary" : "secondary"}
+                onClick={() => setTheme("dark")}
+              >
+                {t("settings.option.theme.dark")}
+              </Button>
+              <Button
                 variant={settings.themeMode === "system" ? "primary" : "secondary"}
                 onClick={() => setThemeMode("system")}
               >
                 {t("settings.theme.mode.system")}
               </Button>
-              <Button
-                variant={settings.themeMode === "time" ? "primary" : "secondary"}
-                onClick={() => setThemeMode("time")}
-              >
-                {t("settings.theme.mode.time")}
-              </Button>
-              <Button
-                variant={settings.themeMode === "manual" ? "primary" : "secondary"}
-                onClick={() => setThemeMode("manual")}
-              >
-                {t("settings.theme.mode.manual")}
-              </Button>
             </div>
 
-            {settings.themeMode === "time" ? (
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                <TextField
-                  type="time"
-                  value={settings.timeTheme.lightFrom}
-                  onChange={(event) => setTimeTheme({ lightFrom: event.target.value })}
-                  label={t("settings.time.lightFrom")}
-                />
-                <TextField
-                  type="time"
-                  value={settings.timeTheme.darkFrom}
-                  onChange={(event) => setTimeTheme({ darkFrom: event.target.value })}
-                  label={t("settings.time.darkFrom")}
-                />
-              </div>
-            ) : null}
-
-            {settings.themeMode === "manual" ? (
-              <Select
-                value={settings.theme}
-                onChange={(event) => setTheme(event.target.value as AppSettings["theme"])}
-                label={t("settings.theme")}
-              >
-                <option value="light">{t("settings.option.theme.light")}</option>
-                <option value="dark">{t("settings.option.theme.dark")}</option>
-              </Select>
-            ) : null}
+            <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-2)] px-3 py-3">
+              <p className="text-xs text-[var(--text-muted)]">
+                {settings.themeMode === "system"
+                  ? t("settings.status.systemTheme", { theme: themeLabels[systemTheme] })
+                  : t("settings.status.appliedTheme", { theme: themeLabels[resolvedTheme] })}
+              </p>
+            </div>
 
             <p className="text-xs text-[var(--text-muted)]">
               {t("settings.status.systemTheme", { theme: themeLabels[systemTheme] })}
