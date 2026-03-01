@@ -19,7 +19,7 @@ export function TopBar() {
   }, [location.pathname, t]);
 
   const compactNavClass = (isActive: boolean) =>
-    `no-drag rounded-md px-2 py-1 text-[11px] uppercase tracking-[0.14em] transition ${
+    `no-drag rounded-md px-2 py-1 text-[11px] tracking-[0.08em] transition ${
       isActive
         ? settings.glassStyle
           ? "bg-[var(--glass-bg-strong)] text-[var(--text)]"
@@ -30,15 +30,15 @@ export function TopBar() {
     }`;
   const headerClass = settings.glassStyle
     ? "drag-region relative z-[100] flex h-12 items-center justify-between border-x-0 border-t-0 px-4 glass glass-strong rounded-none"
-    : "drag-region relative z-[100] flex h-12 items-center justify-between border-b border-[var(--border)] bg-[var(--surface-1)] px-4";
+    : "drag-region relative z-[100] flex h-12 items-center justify-between border-b border-[var(--border)] bg-[color:rgba(24,23,21,0.94)] px-4";
   const dividerClass = settings.glassStyle ? "h-4 w-px bg-[var(--glass-border)]" : "h-4 w-px bg-[var(--border)]";
 
   return (
     <header className={headerClass}>
       <div className="flex min-w-0 items-center gap-3">
-        <div className="text-[11px] font-semibold uppercase tracking-[0.3em] text-[var(--accent)]">{t("topbar.brand")}</div>
+        <div className="text-[11px] font-medium tracking-[0.24em] text-[var(--accent)]">{t("topbar.brand")}</div>
         <div className={dividerClass} />
-        <h1 className="truncate text-sm font-medium tracking-[0.08em] text-[var(--text)]">{pageTitle}</h1>
+        <h1 className="truncate text-sm font-normal tracking-[0.04em] text-[var(--text)]">{pageTitle}</h1>
         <nav className="ml-1 flex items-center gap-1 md:hidden">
           <NavLink to="/dashboard" end className={({ isActive }) => compactNavClass(isActive)}>
             {t("nav.dashboard")}

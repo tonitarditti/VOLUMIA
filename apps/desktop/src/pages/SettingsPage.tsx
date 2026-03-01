@@ -419,15 +419,15 @@ export function SettingsPage({
 
   return (
     <div className="h-full w-full overflow-y-auto">
-      <div className="mx-auto grid max-w-5xl grid-cols-1 gap-6 px-8 py-10 lg:grid-cols-2">
+      <div className="mx-auto grid max-w-5xl grid-cols-1 gap-7 px-8 py-10 lg:grid-cols-2">
       <Card padding="md" className="h-full">
-        <p className="text-[11px] uppercase tracking-[0.2em] text-[var(--text-muted)]">{t("settings.workspace")}</p>
-        <h1 className="mt-1 text-xl font-semibold tracking-[0.03em] text-[var(--text)]">{t("settings.title")}</h1>
-        <h2 className="mt-4 text-sm font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">{t("settings.general")}</h2>
+        <p className="text-[10px] tracking-[0.12em] text-[var(--text-muted)]">{t("settings.workspace")}</p>
+        <h1 className="mt-1 text-xl font-medium tracking-[0.02em] text-[var(--text)]">{t("settings.title")}</h1>
+        <h2 className="mt-5 text-sm font-medium tracking-[0.08em] text-[var(--text-muted)]">{t("settings.general")}</h2>
 
         <div className="mt-3 space-y-4">
           <div className="space-y-2">
-            <p className="text-xs uppercase tracking-[0.14em] text-[var(--text-muted)]">{t("settings.language")}</p>
+            <p className="text-xs tracking-[0.08em] text-[var(--text-muted)]">{t("settings.language")}</p>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               <Button
                 variant={settings.languageMode === "system" ? "primary" : "secondary"}
@@ -464,7 +464,7 @@ export function SettingsPage({
           </div>
 
           <div className="space-y-2">
-            <p className="text-xs uppercase tracking-[0.14em] text-[var(--text-muted)]">{t("settings.theme")}</p>
+            <p className="text-xs tracking-[0.08em] text-[var(--text-muted)]">{t("settings.theme")}</p>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
               <Button
                 variant={settings.themeMode === "system" ? "primary" : "secondary"}
@@ -537,7 +537,7 @@ export function SettingsPage({
       </Card>
 
       <Card padding="md" className="h-full">
-        <h2 className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">{t("settings.window")}</h2>
+        <h2 className="text-sm font-medium tracking-[0.08em] text-[var(--text-muted)]">{t("settings.window")}</h2>
         <div className="mt-3 space-y-3">
           <Select
             label={t("settings.windowMode")}
@@ -562,7 +562,7 @@ export function SettingsPage({
       </Card>
 
       <Card padding="md" className="h-full">
-        <h2 className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">Sistema</h2>
+        <h2 className="text-sm font-medium tracking-[0.08em] text-[var(--text-muted)]">Sistema</h2>
         <div className="mt-3 space-y-3">
           <TextField label="Carpeta de datos" value={userDataPath} readOnly />
           <Button variant="secondary" className="w-full" onClick={() => void handleOpenUserDataFolder()}>
@@ -573,7 +573,7 @@ export function SettingsPage({
       </Card>
 
       <Card padding="md" className="h-full">
-        <h2 className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">Mantenimiento</h2>
+        <h2 className="text-sm font-medium tracking-[0.08em] text-[var(--text-muted)]">Mantenimiento</h2>
         <div className="mt-3 space-y-3">
           <p className="text-xs text-[var(--text-muted)]">
             No borra proyectos ni modelos; solo cache de Chromium.
@@ -601,7 +601,7 @@ export function SettingsPage({
       </Card>
 
       <Card padding="md" className="h-full">
-        <h2 className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">{t("settings.performance3d")}</h2>
+        <h2 className="text-sm font-medium tracking-[0.08em] text-[var(--text-muted)]">{t("settings.performance3d")}</h2>
         <div className="mt-3 space-y-3">
           <Select
             label={t("settings.preset")}
@@ -614,7 +614,7 @@ export function SettingsPage({
           </Select>
 
           <div className="space-y-1">
-            <span className="text-xs uppercase tracking-[0.14em] text-[var(--text-muted)]">{t("settings.fpsLimit")}</span>
+            <span className="text-xs tracking-[0.08em] text-[var(--text-muted)]">{t("settings.fpsLimit")}</span>
             <div className="grid grid-cols-3 gap-1 rounded-lg border border-[var(--border)] bg-[var(--surface-2)] p-1">
               {fpsOptions.map((fps) => (
                 <Button
@@ -634,7 +634,7 @@ export function SettingsPage({
       </Card>
 
       <Card padding="md" className="h-full">
-        <h2 className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">ComfyUI (Local)</h2>
+        <h2 className="text-sm font-medium tracking-[0.08em] text-[var(--text-muted)]">ComfyUI (Local)</h2>
         <div className="mt-3 space-y-3">
           <TextField
             label="ComfyUI folder"
@@ -680,7 +680,7 @@ export function SettingsPage({
 
       {SHOW_LEGACY_PYTHON_PANEL ? (
         <Card padding="md" className="h-full">
-          <h2 className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">Generador 3D local (Python)</h2>
+          <h2 className="text-sm font-medium tracking-[0.08em] text-[var(--text-muted)]">Generador 3D local (Python)</h2>
           <div className="mt-3 space-y-3">
             <Select
               label="Interprete de Python"
@@ -780,7 +780,7 @@ export function SettingsPage({
       ) : null}
 
       <Card padding="md" className="h-full">
-        <h2 className="text-sm font-semibold uppercase tracking-[0.16em] text-[var(--text-muted)]">{t("settings.data")}</h2>
+        <h2 className="text-sm font-medium tracking-[0.08em] text-[var(--text-muted)]">{t("settings.data")}</h2>
         <div className="mt-3 grid grid-cols-1 gap-2">
           <Button variant="secondary" onClick={() => void onExportProjects()}>
             {t("dashboard.exportJson")}

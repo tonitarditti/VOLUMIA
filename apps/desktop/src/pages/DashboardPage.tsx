@@ -103,18 +103,18 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
 
   const comfyBadge = useMemo(() => {
     if (!comfyStatus) {
-      return { label: "Idle", className: "border-[rgba(138,148,163,0.26)] bg-[rgba(138,148,163,0.12)] text-[#c6ceda]" };
+      return { label: "Idle", className: "border-[var(--border)] bg-[var(--surface-3)] text-[var(--text-muted)]" };
     }
     if (comfyStatus.lastError || comfyStatus.state === "ERROR") {
-      return { label: "Error", className: "border-[rgba(165,91,91,0.34)] bg-[rgba(165,91,91,0.16)] text-[#dfb3b3]" };
+      return { label: "Error", className: "border-[var(--danger)] bg-[var(--danger-bg)] text-[var(--danger)]" };
     }
     if (comfyStatus.state === "STARTING") {
-      return { label: "Busy", className: "border-[rgba(182,133,65,0.36)] bg-[rgba(182,133,65,0.16)] text-[#d6bf8b]" };
+      return { label: "Busy", className: "border-[var(--warning)] bg-[var(--warning-bg)] text-[var(--warning)]" };
     }
     if (comfyStatus.running) {
-      return { label: "Ready", className: "border-[rgba(90,151,108,0.34)] bg-[rgba(90,151,108,0.16)] text-[#b7d9bf]" };
+      return { label: "Ready", className: "border-[var(--success)] bg-[var(--success-bg)] text-[var(--success)]" };
     }
-    return { label: "Idle", className: "border-[rgba(138,148,163,0.26)] bg-[rgba(138,148,163,0.12)] text-[#c6ceda]" };
+    return { label: "Idle", className: "border-[var(--border)] bg-[var(--surface-3)] text-[var(--text-muted)]" };
   }, [comfyStatus]);
 
   const runWorkflowTest = async () => {
@@ -229,8 +229,8 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
       <Card padding="md">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
-            <p className="text-[11px] uppercase tracking-[0.2em] text-[var(--text-muted)]">{t("dashboard.workspace")}</p>
-            <h1 className="mt-1 text-2xl font-semibold tracking-[0.03em] text-[var(--text)]">{t("dashboard.title")}</h1>
+            <p className="text-[10px] tracking-[0.12em] text-[var(--text-muted)]">{t("dashboard.workspace")}</p>
+            <h1 className="mt-1 text-2xl font-medium tracking-[0.02em] text-[var(--text)]">{t("dashboard.title")}</h1>
             <p className="mt-2 max-w-2xl text-sm text-[var(--text-muted)]">
               {t("dashboard.subtitle")}
             </p>
@@ -265,12 +265,12 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
             </Button>
           </div>
         </div>
-        <div className="mt-4 rounded-xl border border-[var(--border)] bg-[var(--surface-2)] p-4">
+        <div className="mt-5 rounded-xl border border-[var(--border)] bg-[var(--surface-2)] p-4">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
-              <p className="text-[11px] uppercase tracking-[0.18em] text-[var(--text-muted)]">Engine status</p>
+              <p className="text-[10px] tracking-[0.12em] text-[var(--text-muted)]">Engine status</p>
               <div className="mt-2 flex flex-wrap items-center gap-2">
-                <span className={`rounded-full border px-3 py-1 text-[11px] font-medium tracking-[0.08em] ${comfyBadge.className}`}>
+                <span className={`rounded-full border px-3 py-1 text-[10px] font-normal tracking-[0.04em] ${comfyBadge.className}`}>
                   {comfyBadge.label}
                 </span>
                 <span className="text-xs text-[var(--text-muted)]">
@@ -371,7 +371,7 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
               const isEditing = editingProjectId === project.id;
 
               return (
-                <Card key={project.id} padding="md" hoverElevation className="hover:bg-[var(--surface-2)]">
+                <Card key={project.id} padding="md" hoverElevation>
                   <div className="flex items-start justify-between gap-3">
                     <Button
                       type="button"
@@ -383,7 +383,7 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
                     >
                       <div>
                         <h2 className="text-lg font-medium tracking-[0.02em] text-[var(--text)]">{project.name}</h2>
-                        <p className="mt-1 text-xs uppercase tracking-[0.12em] text-[var(--text-muted)]">
+                        <p className="mt-1 text-xs tracking-[0.06em] text-[var(--text-muted)]">
                           {t("dashboard.updated", { date: toHumanDate(project.updatedAt, language) })}
                         </p>
                       </div>

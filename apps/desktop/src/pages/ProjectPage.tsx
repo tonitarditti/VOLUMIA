@@ -700,9 +700,9 @@ export function ProjectPage() {
         : "border-transparent bg-transparent text-[var(--text-muted)] hover:border-[var(--border)] hover:bg-[var(--surface-2)] hover:text-[var(--text)]"
     }`;
   const railButtonClass = (isActive: boolean) =>
-    `flex h-11 w-11 items-center justify-center rounded-lg border text-[10px] font-semibold tracking-[0.18em] transition-colors ${
+    `relative flex h-11 w-11 items-center justify-center rounded-lg border text-[10px] font-medium tracking-[0.14em] transition-colors ${
       isActive
-        ? "border-[var(--accent)] bg-[var(--surface-3)] text-[var(--text)]"
+        ? "border-[var(--border)] bg-[var(--surface-3)] text-[var(--text)] before:absolute before:inset-y-2 before:left-0 before:w-px before:rounded-full before:bg-[var(--accent)]"
         : "border-[var(--border)] bg-[var(--surface-2)] text-[var(--text-muted)] hover:text-[var(--text)]"
     }`;
   const bottomZoneClass = "flex h-full min-w-0 items-center gap-2 px-4";
@@ -916,7 +916,7 @@ export function ProjectPage() {
               <Button variant="primary" onClick={() => void handleRunGeneration()} disabled={selectedImages.length === 0}>
                 {workspaceStatus === "idle" ? "Generar 3D" : "Regenerar 3D"}
               </Button>
-              <Button variant="primary" onClick={() => void handleRunGenerationSkp()} disabled={selectedImages.length < 1 || selectedImages.length > 4}>
+              <Button variant="secondary" onClick={() => void handleRunGenerationSkp()} disabled={selectedImages.length < 1 || selectedImages.length > 4}>
                 Generar SKP
               </Button>
             </div>

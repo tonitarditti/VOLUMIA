@@ -18,9 +18,9 @@ function filenameFromPath(value: string) {
 }
 
 function railLinkClass(isActive: boolean) {
-  return `flex h-10 w-10 items-center justify-center rounded-xl border text-[11px] font-semibold uppercase tracking-[0.18em] transition-colors ${
+  return `relative flex h-10 w-10 items-center justify-center rounded-xl border text-[11px] font-medium tracking-[0.12em] transition-colors ${
     isActive
-      ? "border-[var(--accent)] bg-[var(--accent)] text-white"
+      ? "border-[var(--border)] bg-[var(--surface-3)] text-[var(--text)] before:absolute before:inset-y-2 before:left-0 before:w-px before:rounded-full before:bg-[var(--accent)]"
       : "border-[var(--border)] bg-[var(--surface-2)] text-[var(--text-muted)] hover:border-[var(--accent)] hover:text-[var(--text)]"
   }`;
 }
@@ -63,7 +63,7 @@ export function WorkspacePage() {
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-[var(--surface-2)] text-[var(--text)]">
       <aside className={`flex w-16 shrink-0 flex-col items-center justify-between border-r py-3 ${panelClass()}`}>
-        <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--surface-2)] text-xs font-semibold tracking-[0.2em] text-[var(--accent)]">
+        <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--surface-2)] text-xs font-medium tracking-[0.14em] text-[var(--accent)]">
           V
         </div>
         <nav className="flex flex-col items-center gap-3">
@@ -74,7 +74,7 @@ export function WorkspacePage() {
             S
           </NavLink>
         </nav>
-        <div className="text-[10px] uppercase tracking-[0.2em] text-[var(--text-muted)]">AI</div>
+        <div className="text-[10px] tracking-[0.1em] text-[var(--text-muted)]">AI</div>
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">
@@ -94,14 +94,14 @@ export function WorkspacePage() {
 
           <aside className={`flex w-[360px] shrink-0 flex-col border-l ${panelClass()}`}>
             <div className="border-b border-[var(--border)] px-5 py-5">
-              <p className="text-[11px] uppercase tracking-[0.2em] text-[var(--text-muted)]">Workspace</p>
-              <h1 className="mt-2 text-xl font-semibold tracking-[0.02em]">{project.name}</h1>
+              <p className="text-[10px] tracking-[0.12em] text-[var(--text-muted)]">Workspace</p>
+              <h1 className="mt-2 text-xl font-medium tracking-[0.02em]">{project.name}</h1>
               <p className="mt-2 text-sm text-[var(--text-muted)]">Updated {formatTimestamp(project.updatedAt)}</p>
             </div>
 
             <div className="flex-1 space-y-6 overflow-y-auto px-5 py-5">
               <section>
-                <p className="text-[11px] uppercase tracking-[0.18em] text-[var(--text-muted)]">Model</p>
+                <p className="text-[10px] tracking-[0.1em] text-[var(--text-muted)]">Model</p>
                 <div className="mt-3 rounded-2xl border border-[var(--border)] bg-[var(--surface-2)] p-4 text-sm">
                   <p className="text-[var(--text)]">
                     {project.model?.glbPath ? filenameFromPath(project.model.glbPath) : "No generated model yet."}
@@ -113,7 +113,7 @@ export function WorkspacePage() {
               </section>
 
               <section>
-                <p className="text-[11px] uppercase tracking-[0.18em] text-[var(--text-muted)]">Source Images</p>
+                <p className="text-[10px] tracking-[0.1em] text-[var(--text-muted)]">Source Images</p>
                 <div className="mt-3 space-y-2">
                   {sourceImages.length > 0 ? (
                     sourceImages.map((imagePath) => (
@@ -133,7 +133,7 @@ export function WorkspacePage() {
               </section>
 
               <section>
-                <p className="text-[11px] uppercase tracking-[0.18em] text-[var(--text-muted)]">Notes</p>
+                <p className="text-[10px] tracking-[0.1em] text-[var(--text-muted)]">Notes</p>
                 <div className="mt-3 rounded-2xl border border-[var(--border)] bg-[var(--surface-2)] px-4 py-4 text-sm text-[var(--text-muted)]">
                   {project.notes.trim() || "No project notes yet."}
                 </div>
@@ -150,7 +150,7 @@ export function WorkspacePage() {
             </p>
           </div>
           <div className="shrink-0 text-right">
-            <p className="text-xs uppercase tracking-[0.18em] text-[var(--text-muted)]">
+            <p className="text-xs tracking-[0.08em] text-[var(--text-muted)]">
               Images {sourceImages.length} | Chat {project.chatHistory.length}
             </p>
             <p className="mt-1 text-[11px] text-[var(--text-muted)]">{generationLabel}</p>
