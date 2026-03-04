@@ -1,0 +1,67 @@
+{
+  "name": "@volumia/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "main": "electron-dist/main.js",
+  "scripts": {
+    "dev": "node scripts/dev.cjs",
+    "react": "vite --host 127.0.0.1",
+    "backend:status": "node scripts/backend-diag.cjs",
+    "comfy:status": "node scripts/backend-diag.cjs",
+    "backend:build": "tsc -p backend/tsconfig.json",
+    "electron:build": "npm run backend:build && tsc -p tsconfig.electron.json",
+    "electron:dev": "node scripts/run-electron-dev.cjs",
+    "build": "vite build && pnpm run electron:build",
+    "package": "pnpm run build && electron-builder",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.electron.json --noEmit",
+    "lint": "eslint src electron vite.config.ts tailwind.config.ts vitest.config.ts --ext .ts,.tsx",
+    "test": "vitest run"
+  },
+  "build": {
+    "appId": "com.volumia.desktop",
+    "productName": "Volumia",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron-dist/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "python/**/*"
+    ]
+  },
+  "dependencies": {
+    "@react-three/drei": "^9.120.4",
+    "@react-three/fiber": "^8.17.14",
+    "nanoid": "^5.1.6",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.30.1",
+    "three": "^0.172.0"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.7.0",
+    "@testing-library/react": "^16.3.0",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/node": "^22.10.2",
+    "@types/react": "^18.3.18",
+    "@types/react-dom": "^18.3.5",
+    "@typescript-eslint/eslint-plugin": "^8.19.0",
+    "@typescript-eslint/parser": "^8.19.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.21",
+    "electron": "^33.2.1",
+    "electron-builder": "^26.0.12",
+    "eslint": "^9.17.0",
+    "eslint-plugin-react-hooks": "^5.1.0",
+    "jsdom": "^26.1.0",
+    "postcss": "^8.5.3",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.7.3",
+    "vite": "^6.0.5",
+    "vitest": "^2.1.8",
+    "wait-on": "^8.0.1"
+  }
+}

@@ -1,0 +1,833 @@
+import fs from "fs";
+import path from "path";
+import { ComfyApi } from "./comfyApi";
+import { logger } from "./logger";
+import { checkModelsInstalled, ensureModels } from "./modelRegistry";
+import { getOutputsDir, getWorkflowsDir } from "./paths";
+import { killProcessTree, ProcessManager, waitForPort, type ManagedProcess } from "./processManager";
+import { loadBackendConfig, resolveComfyLaunchPlan, saveComfyUserConfig, type ComfyRuntimeConfig } from "./runtimeConfig";
+import {
+  applyImageInputToWorkflow,
+  getActiveWorkflowInfo,
+  getCheckpointUsages,
+  getWorkflowPath,
+  importWorkflowFromDisk,
+  loadWorkflowJson,
+  patchWorkflowCheckpoints,
+  syncWorkflows,
+  type WorkflowCheckpointUsage,
+} from "./workflowManager";
+
+export type BackendMode = "dev" | "prod";
+export type BackendServiceState = "stopped" | "starting" | "running" | "error";
+export type ComfySupervisorState = "STOPPED" | "STARTING" | "READY" | "ERROR";
+
+export type ComfyStatus = {
+  state: ComfySupervisorState;
+  running: boolean;
+  url: string;
+  pid: number | null;
+  startedByApp: boolean;
+  lastError: string | null;
+  lastLogs: string[];
+  message: string;
+  host: string;
+  port: number;
+  config: {
+    comfyDir: string;
+    condaHook: string;
+    condaEnvName: string;
+    pythonExeOverride: string;
+    startupTimeoutMs: number;
+  };
+};
+
+export type BackendStatus = {
+  mode: BackendMode;
+  startedAt: string | null;
+  workflows: {
+    sourceDir: string;
+    targetDir: string;
+    copied: number;
+    replaced: number;
+    backups: number;
+    lastSyncAt: string | null;
+    error: string | null;
+    activeName: string | null;
+    activePath: string | null;
+  };
+  models: {
+    ok: boolean;
+    totalFiles: number;
+    installedFiles: number;
+    message: string;
+    error: string | null;
+  };
+  comfy: {
+    running: boolean;
+    url: string;
+    pid: number | null;
+    lastError: string | null;
+    state: BackendServiceState;
+    host: string;
+    port: number;
+    python: string | null;
+    comfyRoot: string | null;
+    healthy: boolean;
+    external: boolean;
+    message: string;
+  };
+  activeProcesses: Array<{ name: string; pid: number }>;
+  notes: string[];
+};
+
+export type RunWorkflowResult = {
+  promptId: string;
+  workflowName: string;
+  workflowPath: string;
+  message: string;
+  outputGlbPath?: string;
+};
+
+export type ImportWorkflowResult = {
+  workflowName: string;
+  workflowPath: string;
+  message: string;
+};
+
+type RunWorkflowInput = {
+  imagePath?: string;
+  imageBase64?: string;
+};
+
+function errorMessage(error: unknown) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
+}
+
+function ensurePathExists(targetPath: string, label: string) {
+  if (!fs.existsSync(targetPath)) {
+    throw new Error(`${label} no existe: ${targetPath}`);
+  }
+}
+
+function toLegacyState(state: ComfySupervisorState): BackendServiceState {
+  if (state === "READY") {
+    return "running";
+  }
+  if (state === "STARTING") {
+    return "starting";
+  }
+  if (state === "ERROR") {
+    return "error";
+  }
+  return "stopped";
+}
+
+type FileSnapshot = {
+  name: string;
+  fullPath: string;
+  mtimeMs: number;
+  size: number;
+};
+
+function listFilesSafe(dirPath: string): FileSnapshot[] {
+  try {
+    if (!fs.existsSync(dirPath)) {
+      return [];
+    }
+    const entries = fs.readdirSync(dirPath, { withFileTypes: true });
+    return entries
+      .filter((entry) => entry.isFile())
+      .map((entry) => {
+        const fullPath = path.join(dirPath, entry.name);
+        try {
+          const stats = fs.statSync(fullPath);
+          return {
+            name: entry.name,
+            fullPath,
+            mtimeMs: stats.mtimeMs,
+            size: stats.size,
+          };
+        } catch {
+          return null;
+        }
+      })
+      .filter((item): item is FileSnapshot => Boolean(item));
+  } catch {
+    return [];
+  }
+}
+
+function newestGlb(files: FileSnapshot[]) {
+  const candidates = files.filter(
+    (file) => file.size > 0 && file.name.toLowerCase().endsWith(".glb")
+  );
+  if (candidates.length === 0) {
+    return null;
+  }
+  return candidates.sort((a, b) => b.mtimeMs - a.mtimeMs)[0] ?? null;
+}
+
+function waitForNewGlbFile(params: {
+  outputDir: string;
+  before: FileSnapshot[];
+  startedAtMs: number;
+  timeoutMs: number;
+  pollMs: number;
+}) {
+  const { outputDir, before, startedAtMs, timeoutMs, pollMs } = params;
+  const beforeByName = new Map(before.map((item) => [item.name, item]));
+  const startedThreshold = startedAtMs - 250;
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const nowFiles = listFilesSafe(outputDir);
+    const candidates = nowFiles.filter((file) => {
+      if (!file.name.toLowerCase().endsWith(".glb") || file.size <= 0) {
+        return false;
+      }
+      if (file.mtimeMs < startedThreshold) {
+        return false;
+      }
+      const previous = beforeByName.get(file.name);
+      if (!previous) {
+        return true;
+      }
+      return file.mtimeMs > previous.mtimeMs || file.size !== previous.size;
+    });
+
+    const newest = newestGlb(candidates);
+    if (newest) {
+      return newest;
+    }
+
+    const end = Date.now() + pollMs;
+    while (Date.now() < end) {
+      // busy wait (sync-only requirement)
+    }
+  }
+
+  return null;
+}
+
+export class BackendSupervisor {
+  private readonly processManager = new ProcessManager();
+  private readonly comfyLogs: string[] = [];
+  private readonly comfyLogLimit = 500;
+  private comfyState: ComfySupervisorState = "STOPPED";
+  private comfyLastError: string | null = null;
+  private config = loadBackendConfig();
+  private readonly comfyApi = new ComfyApi({
+    getBaseUrl: () => this.config.comfy.baseUrl,
+  });
+
+  private started = false;
+  private comfyProcess: ManagedProcess | null = null;
+  private stoppingComfy = false;
+
+  private status: BackendStatus = {
+    mode: "dev",
+    startedAt: null,
+    workflows: {
+      sourceDir: path.resolve(process.cwd(), "electron", "generation", "comfyui-workflows"),
+      targetDir: getWorkflowsDir(),
+      copied: 0,
+      replaced: 0,
+      backups: 0,
+      lastSyncAt: null,
+      error: null,
+      activeName: null,
+      activePath: null,
+    },
+    models: {
+      ok: false,
+      totalFiles: 0,
+      installedFiles: 0,
+      message: "Model check no ejecutado.",
+      error: null,
+    },
+    comfy: {
+      running: false,
+      url: this.config.comfy.baseUrl,
+      pid: null,
+      lastError: null,
+      state: "stopped",
+      host: this.config.comfy.host,
+      port: this.config.comfy.port,
+      python: null,
+      comfyRoot: this.config.comfy.comfyDir,
+      healthy: false,
+      external: false,
+      message: "ComfyUI no iniciado.",
+    },
+    activeProcesses: [],
+    notes: [],
+  };
+
+  private refreshConfig(reload = false) {
+    this.config = loadBackendConfig({ reload });
+  }
+
+  private appendComfyLog(line: string, level: "info" | "warn" = "info") {
+    const formatted = `${new Date().toISOString()} [${level.toUpperCase()}] ${line}`;
+    this.comfyLogs.push(formatted);
+    if (this.comfyLogs.length > this.comfyLogLimit) {
+      this.comfyLogs.splice(0, this.comfyLogs.length - this.comfyLogLimit);
+    }
+  }
+
+  private refreshProcessSnapshot() {
+    this.status.activeProcesses = this.processManager.getActiveProcesses();
+  }
+
+  private refreshActiveWorkflowStatus() {
+    try {
+      const active = getActiveWorkflowInfo();
+      this.status.workflows.activeName = active.name;
+      this.status.workflows.activePath = active.path;
+      return active;
+    } catch (error) {
+      const message = errorMessage(error);
+      this.status.workflows.activeName = null;
+      this.status.workflows.activePath = null;
+      this.status.workflows.error = message;
+      return null;
+    }
+  }
+
+  private pushNote(note: string) {
+    this.status.notes = [...this.status.notes, note].slice(-25);
+  }
+
+  private updateLegacyComfyFromSnapshot(snapshot: ComfyStatus) {
+    this.status.comfy.running = snapshot.running;
+    this.status.comfy.url = snapshot.url;
+    this.status.comfy.pid = snapshot.pid;
+    this.status.comfy.lastError = snapshot.lastError;
+    this.status.comfy.state = toLegacyState(snapshot.state);
+    this.status.comfy.host = snapshot.host;
+    this.status.comfy.port = snapshot.port;
+    this.status.comfy.python = snapshot.config.pythonExeOverride.trim() || null;
+    this.status.comfy.comfyRoot = snapshot.config.comfyDir;
+    this.status.comfy.healthy = snapshot.running;
+    this.status.comfy.external = snapshot.running && !snapshot.startedByApp;
+    this.status.comfy.message = snapshot.message;
+  }
+
+  private async refreshComfyHealth() {
+    const health = await this.comfyApi.health();
+    if (health.ok && this.comfyState !== "STARTING") {
+      this.comfyState = "READY";
+      this.comfyLastError = null;
+      this.status.comfy.message = health.message;
+    }
+    if (!health.ok && this.comfyState === "READY") {
+      this.comfyState = "ERROR";
+      this.comfyLastError = health.message;
+      this.status.comfy.message = health.message;
+    }
+    return health;
+  }
+
+  private decodeBase64Image(base64Input: string) {
+    const trimmed = base64Input.trim();
+    const withoutDataUrl = trimmed.startsWith("data:")
+      ? trimmed.slice(trimmed.indexOf(",") + 1)
+      : trimmed;
+    return Buffer.from(withoutDataUrl, "base64");
+  }
+
+  private async resolveWorkflowInputImagePath(input?: RunWorkflowInput) {
+    if (input?.imagePath) {
+      const imagePath = path.resolve(input.imagePath);
+      if (!fs.existsSync(imagePath)) {
+        throw new Error(`Imagen de entrada no encontrada: ${imagePath}`);
+      }
+      return imagePath;
+    }
+
+    if (input?.imageBase64 && input.imageBase64.trim().length > 0) {
+      const uploadsDir = path.join(getOutputsDir(), "uploads");
+      fs.mkdirSync(uploadsDir, { recursive: true });
+      const tempFilePath = path.join(uploadsDir, `backend-upload-${Date.now()}.png`);
+      const buffer = this.decodeBase64Image(input.imageBase64);
+      fs.writeFileSync(tempFilePath, buffer);
+      return tempFilePath;
+    }
+
+    return null;
+  }
+
+  private async validateCheckpointsAfterPatch(checkpointUsages: WorkflowCheckpointUsage[], availableCheckpoints: string[]) {
+    if (checkpointUsages.length === 0 || availableCheckpoints.length === 0) {
+      return;
+    }
+
+    const invalid = checkpointUsages.filter((usage) => !availableCheckpoints.includes(usage.ckptName));
+    if (invalid.length === 0) {
+      return;
+    }
+
+    const invalidSummary = invalid.map((usage) => `${usage.ckptName} (node ${usage.nodeId})`).join(", ");
+    const message = [
+      `Workflow usa checkpoints no disponibles en ComfyUI: ${invalidSummary}`,
+      `Disponibles: ${availableCheckpoints.join(", ")}`,
+      "Corrige el workflow JSON exportado o instala el checkpoint faltante.",
+    ].join("\n");
+    throw new Error(message);
+  }
+
+  private extractGlbPathFromHistory(history: unknown): string | null {
+    const candidates: string[] = [];
+
+    const visit = (node: unknown) => {
+      if (!node) {
+        return;
+      }
+      if (Array.isArray(node)) {
+        for (const item of node) {
+          visit(item);
+        }
+        return;
+      }
+      if (typeof node !== "object") {
+        return;
+      }
+
+      const recordNode = node as Record<string, unknown>;
+      const directPath = typeof recordNode.path === "string" ? recordNode.path.trim() : "";
+      if (directPath.toLowerCase().endsWith(".glb")) {
+        candidates.push(directPath);
+      }
+
+      const filename = typeof recordNode.filename === "string" ? recordNode.filename.trim() : "";
+      if (filename.toLowerCase().endsWith(".glb")) {
+        const subfolder = typeof recordNode.subfolder === "string" ? recordNode.subfolder.trim() : "";
+        const combined = subfolder ? `${subfolder.replace(/\\/g, "/")}/${filename}` : filename;
+        candidates.push(combined);
+      }
+
+      for (const value of Object.values(recordNode)) {
+        visit(value);
+      }
+    };
+
+    visit(history);
+    return candidates[0] ?? null;
+  }
+
+  async stopComfyUI(reason = "manual-stop", force = false) {
+    this.stoppingComfy = true;
+    try {
+      if (!this.comfyProcess?.pid) {
+        this.comfyState = "STOPPED";
+        this.comfyLastError = null;
+        this.updateLegacyComfyFromSnapshot(this.getComfyStatus());
+        return this.getComfyStatus();
+      }
+
+      if (!force && !this.getComfyStatus().startedByApp) {
+        return this.getComfyStatus();
+      }
+
+      try {
+        this.comfyProcess.child.kill("SIGTERM");
+      } catch {
+        // best effort
+      }
+      await killProcessTree(this.comfyProcess.pid);
+      await this.processManager.stopAll(`stop-comfyui:${reason}`);
+      this.comfyProcess = null;
+      this.refreshProcessSnapshot();
+      this.comfyState = "STOPPED";
+      this.comfyLastError = null;
+      this.status.comfy.message = "ComfyUI detenido.";
+      this.appendComfyLog(`ComfyUI detenido (${reason}).`);
+      this.updateLegacyComfyFromSnapshot(this.getComfyStatus());
+      return this.getComfyStatus();
+    } finally {
+      this.stoppingComfy = false;
+    }
+  }
+
+  async startComfyUI() {
+    this.refreshConfig(true);
+    const health = await this.comfyApi.health();
+    if (health.ok) {
+      this.comfyState = "READY";
+      this.comfyLastError = null;
+      this.status.comfy.message = health.message;
+      this.updateLegacyComfyFromSnapshot(this.getComfyStatus());
+      return this.getComfyStatus();
+    }
+
+    ensurePathExists(this.config.comfy.comfyDir, "Carpeta raiz de ComfyUI");
+    ensurePathExists(path.join(this.config.comfy.comfyDir, "main.py"), "Archivo main.py de ComfyUI");
+    this.comfyState = "STARTING";
+    this.comfyLastError = null;
+    this.status.comfy.message = `Iniciando ComfyUI en ${this.config.comfy.baseUrl}...`;
+    this.updateLegacyComfyFromSnapshot(this.getComfyStatus());
+
+    const launchPlan = resolveComfyLaunchPlan(this.config);
+
+    logger.info("Starting ComfyUI process.", {
+      command: launchPlan.command,
+      args: launchPlan.args,
+      cwd: launchPlan.cwd,
+      mode: launchPlan.mode,
+      details: launchPlan.details,
+      shell: false,
+    });
+    this.appendComfyLog(`Launching ComfyUI (${launchPlan.mode}) ${launchPlan.details}`);
+
+    const managed = this.processManager.spawn(launchPlan.command, launchPlan.args, {
+      name: "comfyui",
+      cwd: launchPlan.cwd,
+      env: process.env,
+      windowsHide: true,
+      shell: false,
+      onStdoutLine: (line) => {
+        this.appendComfyLog(`[ComfyUI][stdout] ${line}`);
+        logger.info(`[ComfyUI][stdout] ${line}`);
+      },
+      onStderrLine: (line) => {
+        this.appendComfyLog(`[ComfyUI][stderr] ${line}`, "warn");
+        logger.warn(`[ComfyUI][stderr] ${line}`);
+      },
+    });
+
+    this.comfyProcess = managed;
+    this.refreshProcessSnapshot();
+    this.updateLegacyComfyFromSnapshot(this.getComfyStatus());
+
+    void managed.exit.then(({ code, signal }) => {
+      this.refreshProcessSnapshot();
+      if (this.stoppingComfy) {
+        return;
+      }
+      const message = `ComfyUI process exited (code=${String(code)} signal=${String(signal)})`;
+      this.comfyState = "ERROR";
+      this.comfyLastError = message;
+      this.appendComfyLog(message, "warn");
+      this.updateLegacyComfyFromSnapshot(this.getComfyStatus());
+      logger.warn(message);
+    });
+
+    const opened = await waitForPort(this.config.comfy.host, this.config.comfy.port, this.config.comfy.startupTimeoutMs);
+    if (!opened) {
+      await this.stopComfyUI("startup-timeout", true);
+      const message =
+        `ComfyUI no abrio puerto ${this.config.comfy.host}:${this.config.comfy.port} dentro de ${this.config.comfy.startupTimeoutMs}ms.`
+      this.comfyState = "ERROR";
+      this.comfyLastError = message;
+      this.updateLegacyComfyFromSnapshot(this.getComfyStatus());
+      throw new Error(message);
+    }
+
+    const startedHealth = await this.comfyApi.health();
+    if (!startedHealth.ok) {
+      await this.stopComfyUI("healthcheck-failed-after-spawn", true);
+      this.comfyState = "ERROR";
+      this.comfyLastError = startedHealth.message;
+      this.updateLegacyComfyFromSnapshot(this.getComfyStatus());
+      throw new Error(startedHealth.message);
+    }
+    this.comfyState = "READY";
+    this.comfyLastError = null;
+    this.status.comfy.message = startedHealth.message;
+    this.updateLegacyComfyFromSnapshot(this.getComfyStatus());
+    return this.getComfyStatus();
+  }
+
+  private async ensureComfyRunning(mode: BackendMode) {
+    try {
+      await this.startComfyUI();
+      return;
+    } catch (error) {
+      const message = errorMessage(error);
+      this.comfyState = "ERROR";
+      this.comfyLastError = message;
+      this.appendComfyLog(message, "warn");
+      this.updateLegacyComfyFromSnapshot(this.getComfyStatus());
+      logger.warn("ComfyUI start failed.", message);
+      if (mode === "prod") {
+        throw error;
+      }
+    }
+  }
+
+  async startAll({ mode }: { mode: BackendMode }) {
+    this.status.mode = mode;
+    this.status.startedAt = this.status.startedAt ?? new Date().toISOString();
+    this.started = true;
+    this.pushNote(`startAll(mode=${mode})`);
+
+    try {
+      const syncResult = await syncWorkflows();
+      this.status.workflows.sourceDir = path.resolve(process.cwd(), "electron", "generation", "comfyui-workflows");
+      this.status.workflows.targetDir = getWorkflowsDir();
+      this.status.workflows.copied = syncResult.copied.length;
+      this.status.workflows.replaced = syncResult.replaced.length;
+      this.status.workflows.backups = syncResult.backups.length;
+      this.status.workflows.lastSyncAt = new Date().toISOString();
+      this.status.workflows.error = null;
+      this.refreshActiveWorkflowStatus();
+    } catch (error) {
+      const message = errorMessage(error);
+      this.status.workflows.error = message;
+      this.pushNote(`workflow-sync-error: ${message}`);
+      if (mode === "prod") {
+        throw error;
+      }
+      logger.warn("Workflow sync failed in dev.", message);
+    }
+
+    try {
+      await ensureModels({
+        onDownloadProgress: ({ targetPath, downloadedBytes, totalBytes }) => {
+          logger.info("Model download progress.", { targetPath, downloadedBytes, totalBytes });
+        },
+      });
+      const modelCheck = await checkModelsInstalled();
+      this.status.models.ok = modelCheck.ok;
+      this.status.models.totalFiles = modelCheck.totalFiles;
+      this.status.models.installedFiles = modelCheck.installedFiles;
+      this.status.models.error = null;
+      this.status.models.message = modelCheck.ok
+        ? "Modelos listos."
+        : `Modelos incompletos (${modelCheck.installedFiles}/${modelCheck.totalFiles}).`;
+    } catch (error) {
+      const message = errorMessage(error);
+      this.status.models.ok = false;
+      this.status.models.error = message;
+      this.status.models.message = message;
+      this.pushNote(`models-warning: ${message}`);
+      if (mode === "prod") {
+        throw error;
+      }
+      logger.warn("Model check warning in dev (continuing startup).", message);
+    }
+
+    await this.ensureComfyRunning(mode);
+    this.refreshProcessSnapshot();
+    return await this.getStatus();
+  }
+
+  async stopAll() {
+    if (this.getComfyStatus().startedByApp) {
+      await this.stopComfyUI("backend-stop", true);
+    }
+    this.refreshProcessSnapshot();
+    return await this.getStatus();
+  }
+
+  private resolveWorkflowByName(workflowName?: string) {
+    if (typeof workflowName === "string" && workflowName.trim().length > 0) {
+      const normalizedName = workflowName.trim();
+      const workflowPath = getWorkflowPath(normalizedName);
+      if (!fs.existsSync(workflowPath)) {
+        throw new Error(`Workflow no encontrado: ${workflowPath}`);
+      }
+      return {
+        name: normalizedName,
+        path: workflowPath,
+      };
+    }
+
+    let activeWorkflow = this.refreshActiveWorkflowStatus();
+    if (!activeWorkflow) {
+      throw new Error("No hay workflow activo para ejecutar.");
+    }
+    return activeWorkflow;
+  }
+
+  async runWorkflow(workflowName?: string, input?: RunWorkflowInput): Promise<RunWorkflowResult> {
+    if (!this.started) {
+      await this.startAll({ mode: "dev" });
+    }
+
+    await this.ensureComfyRunning("dev");
+    if (!this.getComfyStatus().running) {
+      throw new Error(
+        [
+          "ComfyUI no esta disponible para ejecutar workflow.",
+          `URL esperada: ${this.config.comfy.baseUrl}`,
+          this.comfyLastError ? `Detalle: ${this.comfyLastError}` : "",
+        ]
+          .filter(Boolean)
+          .join("\n")
+      );
+    }
+
+    const targetWorkflow = this.resolveWorkflowByName(workflowName);
+
+    let workflowJson = loadWorkflowJson(targetWorkflow.path);
+    const imageInputPath = await this.resolveWorkflowInputImagePath(input);
+    if (imageInputPath) {
+      const uploaded = await this.comfyApi.uploadImage(imageInputPath);
+      const injected = applyImageInputToWorkflow(workflowJson, uploaded.name, uploaded.subfolder);
+      workflowJson = injected.workflowJson;
+      if (injected.appliedNodeIds.length > 0) {
+        logger.info("Imagen de entrada aplicada en workflow.", {
+          workflow: targetWorkflow.name,
+          nodes: injected.appliedNodeIds,
+          image: injected.imageValue,
+        });
+      } else {
+        logger.warn("Se subio imagen pero el workflow no tiene nodos LoadImage para aplicar entrada dinamica.", {
+          workflow: targetWorkflow.name,
+          image: uploaded.name,
+        });
+      }
+    }
+
+    let availableCheckpoints: string[] = [];
+    try {
+      availableCheckpoints = await this.comfyApi.getAvailableCheckpoints();
+    } catch (error) {
+      this.appendComfyLog(`No se pudo leer checkpoints desde ComfyUI: ${errorMessage(error)}`, "warn");
+    }
+
+    const patchResult = patchWorkflowCheckpoints(workflowJson, availableCheckpoints);
+    workflowJson = patchResult.workflowJson;
+    for (const replacement of patchResult.replaced) {
+      const line = `Patched ckpt_name -> ${replacement.to} (node=${replacement.nodeId}, from=${replacement.from})`;
+      this.appendComfyLog(line, "warn");
+      logger.warn(line);
+    }
+
+    await this.validateCheckpointsAfterPatch(getCheckpointUsages(workflowJson), patchResult.availableCheckpoints);
+    const comfyOutputDir = path.join(this.config.comfy.comfyDir, "output");
+    const outputBefore = listFilesSafe(comfyOutputDir);
+    const startedAtMs = Date.now();
+    const queue = await this.comfyApi.queuePrompt(workflowJson);
+
+    let outputGlbPath: string | undefined;
+    if (!fs.existsSync(comfyOutputDir)) {
+      logger.warn(`ComfyUI output dir no encontrado: ${comfyOutputDir}`);
+    } else {
+      const detected = await waitForNewGlbFile({
+        outputDir: comfyOutputDir,
+        before: outputBefore,
+        startedAtMs,
+        timeoutMs: 6 * 60 * 1000,
+        pollMs: 1000,
+      });
+      if (detected) {
+        const runId = `${queue.promptId}-${startedAtMs}`;
+        const projectAssetsRoot = path.join(getOutputsDir(), "..", "project-assets");
+        const runDir = path.join(projectAssetsRoot, runId);
+        const runLatest = path.join(runDir, "latest.glb");
+        const globalLatest = path.join(projectAssetsRoot, "latest.glb");
+
+        try {
+          fs.mkdirSync(runDir, { recursive: true });
+          fs.mkdirSync(projectAssetsRoot, { recursive: true });
+          fs.copyFileSync(detected.fullPath, runLatest);
+          fs.copyFileSync(detected.fullPath, globalLatest);
+          outputGlbPath = runLatest;
+          logger.info("GLB detectado y copiado desde ComfyUI output.", {
+            promptId: queue.promptId,
+            detected: detected.fullPath,
+            runLatest,
+            globalLatest,
+          });
+        } catch (error) {
+          logger.warn("No se pudo copiar GLB detectado.", errorMessage(error));
+        }
+      } else {
+        logger.warn("No se detecto GLB nuevo dentro del timeout en output/.");
+      }
+    }
+
+    const message = outputGlbPath
+      ? `Workflow encolado/completado. promptId=${queue.promptId}. GLB=${outputGlbPath}`
+      : `Workflow encolado en ComfyUI con promptId=${queue.promptId}`;
+    logger.info(message, {
+      workflowName: targetWorkflow.name,
+      workflowPath: targetWorkflow.path,
+      outputGlbPath: outputGlbPath ?? null,
+    });
+    this.pushNote(message);
+    this.appendComfyLog(message);
+    return {
+      promptId: queue.promptId,
+      workflowName: targetWorkflow.name,
+      workflowPath: targetWorkflow.path,
+      message,
+      outputGlbPath,
+    };
+  }
+
+  async runDefaultWorkflow(input?: RunWorkflowInput): Promise<RunWorkflowResult> {
+    return await this.runWorkflow(undefined, input);
+  }
+
+  importWorkflowFromPath(sourcePath: string): ImportWorkflowResult {
+    const imported = importWorkflowFromDisk(sourcePath);
+    this.refreshActiveWorkflowStatus();
+    const message = `Workflow importado y activado: ${imported.workflowName}`;
+    this.pushNote(message);
+    logger.info(message, imported);
+    return {
+      workflowName: imported.workflowName,
+      workflowPath: imported.workflowPath,
+      message,
+    };
+  }
+
+  getComfyStatus(): ComfyStatus {
+    this.refreshConfig();
+    const startedByApp = Boolean(this.comfyProcess?.pid);
+    return {
+      state: this.comfyState,
+      running: this.comfyState === "READY",
+      url: this.config.comfy.baseUrl,
+      pid: this.comfyProcess?.pid ?? null,
+      startedByApp,
+      lastError: this.comfyLastError,
+      lastLogs: this.getComfyLogs(),
+      message: this.status.comfy.message,
+      host: this.config.comfy.host,
+      port: this.config.comfy.port,
+      config: {
+        comfyDir: this.config.comfy.comfyDir,
+        condaHook: this.config.comfy.condaHook,
+        condaEnvName: this.config.comfy.condaEnvName,
+        pythonExeOverride: this.config.comfy.pythonExeOverride,
+        startupTimeoutMs: this.config.comfy.startupTimeoutMs,
+      },
+    };
+  }
+
+  getComfyLogs(limit = 200) {
+    const parsedLimit = Number.isFinite(limit) ? Math.max(1, Math.min(this.comfyLogLimit, Math.floor(limit))) : 200;
+    return this.comfyLogs.slice(-parsedLimit);
+  }
+
+  getComfyConfig() {
+    this.refreshConfig(true);
+    return this.config.comfy;
+  }
+
+  saveComfyConfig(patch: Partial<ComfyRuntimeConfig>) {
+    const updated = saveComfyUserConfig(patch);
+    this.config = updated;
+    return updated.comfy;
+  }
+
+  async getStatus(): Promise<BackendStatus> {
+    this.refreshProcessSnapshot();
+    this.refreshActiveWorkflowStatus();
+    try {
+      await this.refreshComfyHealth();
+    } catch {
+      // keep last known status
+    }
+    this.updateLegacyComfyFromSnapshot(this.getComfyStatus());
+    return JSON.parse(JSON.stringify(this.status)) as BackendStatus;
+  }
+}

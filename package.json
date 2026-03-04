@@ -1,0 +1,27 @@
+{
+  "name": "volumia",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@9.0.0",
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "dev": "pnpm -C apps/desktop run dev",
+    "build": "pnpm -C apps/desktop run build",
+    "lint": "pnpm -C apps/desktop run lint",
+    "typecheck": "pnpm -C apps/desktop run typecheck",
+    "test": "pnpm -C apps/desktop run test",
+    "licenses:check": "node scripts/check-licenses.js",
+    "format": "prettier --write \"apps/**/*.{ts,tsx,css,json,md,py}\" \"packages/**/*.{ts,json,md}\"",
+    "clean": "node scripts/clean.js",
+    "clean:deep": "node scripts/clean.js --deep"
+  },
+  "overrides": {
+    "three": "0.172.0",
+    "@types/react": "18.3.28",
+    "@types/react-dom": "18.3.7"
+  },
+  "devDependencies": {
+    "prettier": "^3.4.2",
+    "typescript": "^5.7.3"
+  }
+}

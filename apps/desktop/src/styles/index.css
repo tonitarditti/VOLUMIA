@@ -1,0 +1,72 @@
+@import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+:root,
+:root.dark {
+  --volume-bg: var(--bg);
+  --volume-panel: var(--surface-1);
+  --volume-panel-alt: var(--surface-2);
+  --volume-stroke: var(--border);
+  --volume-text: var(--text);
+  --volume-muted: var(--text-muted);
+  --volume-accent: var(--accent);
+}
+
+:root:not(.dark) {
+  color-scheme: light;
+  --volume-bg: var(--bg);
+  --volume-panel: var(--surface-1);
+  --volume-panel-alt: var(--surface-2);
+  --volume-stroke: var(--border);
+  --volume-text: var(--text);
+  --volume-muted: var(--text-muted);
+  --volume-accent: var(--accent);
+}
+
+@layer base {
+  * {
+    @apply box-border;
+  }
+
+  html,
+  body,
+  #root {
+    @apply m-0 h-full w-full;
+  }
+
+  body {
+    @apply overflow-hidden bg-volume-bg text-volume-text antialiased;
+  }
+}
+
+@layer utilities {
+  .drag-region {
+    -webkit-app-region: drag;
+  }
+
+  .no-drag,
+  .no-drag * {
+    -webkit-app-region: no-drag;
+  }
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
