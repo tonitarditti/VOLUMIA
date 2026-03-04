@@ -1,0 +1,4 @@
+export const COMFYUI_READY_TIMEOUT_MS = 90_000;
+export const COMFYUI_READY_POLL_MS = 1_000;
+export const COMFYUI_JOB_POLL_MS = 1_200;
+export const COMFYUI_JOB_STALL_TIMEOUT_MS = 8 * 60 * 1000;

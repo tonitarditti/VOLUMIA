@@ -1,0 +1,88 @@
+# Node / JS
+node_modules/
+dist/
+build/
+out/
+coverage/
+*.log
+*.tsbuildinfo
+.pnpm-store/
+.cache/
+.turbo/
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Electron
+electron-dist/
+release/
+dist-electron/
+*.asar
+
+# Vite
+.vite/
+
+# Env
+.env
+.env.*
+!.env.example
+
+# Python / IA
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+
+# AI models / weights (NO versionar)
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+*.onnx
+*.bin
+*.gguf
+
+# ComfyUI typical outputs / caches (NO versionar)
+models/
+checkpoints/
+loras/
+embeddings/
+controlnet/
+output/
+outputs/
+temp/
+tmp/
+cache/
+logs/
+dev-run-*.log
+dev-run-*.err.log
+
+# Repo-generated files that should stay local
+apps/service/generated/*
+!apps/service/generated/.gitkeep
+
+# The problem folders (DO NOT TRACK)
+.tmp-edge-palette/
+**/component_crx_cache/
+**/ProvenanceData/
+*.ort
+
+# Generated 3D assets (si no son parte del producto)
+*.glb
+*.gltf
+*.obj
+*.fbx
+renders/
+exports/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/

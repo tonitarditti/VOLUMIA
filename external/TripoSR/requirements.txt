@@ -1,0 +1,15 @@
+# Windows-friendly TripoSR requirements (patched)
+# Removed: torchmcubes
+# Added: PyMCubes
+
+torch
+torchvision
+numpy
+Pillow
+einops
+omegaconf
+tqdm
+transformers
+safetensors
+huggingface_hub
+PyMCubes
