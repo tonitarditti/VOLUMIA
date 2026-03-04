@@ -11,13 +11,14 @@
   body,
   #root {
     @apply m-0 h-full w-full;
-    background-color: var(--bg);
+    background-color: var(--app-bg);
     color: var(--text);
   }
 
   body {
     @apply overflow-hidden antialiased;
-    background-color: var(--bg);
+    background-color: var(--app-bg);
+    background-image: var(--app-background-image, var(--body-background-image));
     color: var(--text);
   }
 
@@ -32,7 +33,7 @@
   textarea,
   select {
     font: inherit;
-    accent-color: #8c7e6d;
+    accent-color: var(--accent);
     -webkit-tap-highlight-color: transparent;
   }
 
@@ -47,10 +48,16 @@
     appearance: none;
     -webkit-appearance: none;
     -moz-appearance: none;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 20 20'%3E%3Cpath fill='%239A6E3A' d='M5.5 7.5L10 12l4.5-4.5'/%3E%3C/svg%3E");
+    background-image:
+      linear-gradient(45deg, transparent 50%, var(--accent) 50%),
+      linear-gradient(135deg, var(--accent) 50%, transparent 50%);
     background-repeat: no-repeat;
-    background-position: right 0.75rem center;
-    background-size: 0.875rem;
+    background-position:
+      calc(100% - 1rem) calc(50% - 1px),
+      calc(100% - 0.75rem) calc(50% - 1px);
+    background-size:
+      0.375rem 0.375rem,
+      0.375rem 0.375rem;
   }
 
   select option {
@@ -62,7 +69,7 @@
   select option:hover,
   select option:focus {
     background-color: var(--accent) !important;
-    color: #ffffff !important;
+    color: var(--text-inverse) !important;
   }
 
   select:focus {
@@ -77,7 +84,7 @@
 
   ::selection {
     background: var(--accent);
-    color: #ffffff;
+    color: var(--text-inverse);
   }
 
   .reduce-motion *,
@@ -100,10 +107,7 @@
   }
 
   .app-scene {
-    background:
-      radial-gradient(circle at top, rgba(255, 255, 255, 0.35), transparent 34%),
-      linear-gradient(180deg, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0)),
-      var(--bg);
+    background: var(--app-scene-background);
   }
 
   .app-scene header,
@@ -146,7 +150,7 @@
     position: absolute;
     inset: 0;
     border-radius: inherit;
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.26), rgba(255, 255, 255, 0.08));
+    background: var(--glass-highlight);
     pointer-events: none;
     opacity: 0.6;
     z-index: 1;
@@ -157,7 +161,7 @@
     position: absolute;
     inset: 0;
     border-radius: inherit;
-    background: rgba(255, 255, 255, 0.04);
+    background: var(--glass-inset);
     pointer-events: none;
     z-index: 0;
   }
@@ -175,7 +179,9 @@ body.is-orbiting * {
   cursor: grabbing !important;
 }
 
-@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+@supports not (
+  (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))
+) {
   .glass {
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
@@ -188,7 +194,7 @@ body.is-orbiting * {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--border);
+  background: var(--scrollbar-thumb);
   border-radius: 999px;
 }
 

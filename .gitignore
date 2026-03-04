@@ -1,56 +1,88 @@
+# Node / JS
 node_modules/
-**/node_modules/
-.pnpm-store/
-pnpm-lock.yaml
-package-lock.json
-yarn.lock
-npm-shrinkwrap.json
-**/package-lock.json
-**/yarn.lock
-**/npm-shrinkwrap.json
-
-.venv/
-venv*/
-env/
-__pycache__/
-*.pyc
-
-apps/desktop/dist/
-apps/desktop/electron-dist/
-apps/desktop/release/
-packages/shared/dist/
-apps/service/generated/*
-!apps/service/generated/.gitkeep
-
-.env
-.DS_Store
-Thumbs.db
-
-*.log
-*.err.log
 dist/
-**/dist/
-dist-electron/
-electron-dist/
-**/electron-dist/
 build/
 out/
-logs/
-**/logs/
-.vite/
-.cache/
 coverage/
+*.log
+*.tsbuildinfo
+.pnpm-store/
+.cache/
 .turbo/
-dev-run-*.log
-dev-run-*.err.log
 npm-debug.log*
 yarn-debug.log*
 pnpm-debug.log*
-**/__pycache__/
-**/*.pyc
-**/*.pyo
 
+# Electron
+electron-dist/
+release/
+dist-electron/
+*.asar
+
+# Vite
+.vite/
+
+# Env
+.env
+.env.*
+!.env.example
+
+# Python / IA
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+
+# AI models / weights (NO versionar)
+*.safetensors
+*.ckpt
+*.pt
+*.pth
+*.onnx
+*.bin
+*.gguf
+
+# ComfyUI typical outputs / caches (NO versionar)
+models/
+checkpoints/
+loras/
+embeddings/
+controlnet/
+output/
+outputs/
+temp/
+tmp/
+cache/
+logs/
+dev-run-*.log
+dev-run-*.err.log
+
+# Repo-generated files that should stay local
+apps/service/generated/*
+!apps/service/generated/.gitkeep
+
+# The problem folders (DO NOT TRACK)
 .tmp-edge-palette/
 **/component_crx_cache/
 **/ProvenanceData/
 *.ort
+
+# Generated 3D assets (si no son parte del producto)
+*.glb
+*.gltf
+*.obj
+*.fbx
+renders/
+exports/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/

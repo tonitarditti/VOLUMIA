@@ -4,9 +4,10 @@ import {
   useMemo,
   useRef,
   useState,
+  type DragEvent as ReactDragEvent,
   type WheelEvent as ReactWheelEvent,
 } from "react";
-import { Navigate, useParams } from "react-router-dom";
+import { Navigate, useNavigate, useParams } from "react-router-dom";
 import { createChatMessage } from "@/projects/factory";
 import { useProjects } from "@/projects/context";
 import { selectProjectById } from "@/projects/selectors";
@@ -16,8 +17,15 @@ import {
   summarizeReply,
 } from "@/projects/mockAssistant";
 import { desktopApi, hasDesktopBridge } from "@/electron/desktopApi";
-import { Badge, Button, TextArea, type BadgeTone } from "@/ui/primitives";
-import { BottomToolbar, RightPanel, TopBar } from "@/ui/shell";
+import { Badge, type BadgeTone } from "@/ui/primitives";
+import { TopBar } from "@/ui/shell";
+import {
+  ModeSelector,
+  ViewportTools,
+  WorkspaceInspector,
+  workspaceModeDefinitions,
+  type WorkspaceMode,
+} from "@/ui/workspace";
 import { ProjectViewport } from "@/three/ProjectViewport";
 import {
   DEFAULT_COMFY_WORKFLOW_ID,
@@ -42,16 +50,7 @@ type PendingGenerationRun = {
   sourceImages: string[];
   preset: GenerationPreset;
 };
-type InspectorTab = "model" | "material" | "light" | "ai" | "result";
 type WorkspaceStatus = "idle" | "generating" | "ready" | "error";
-
-const INSPECTOR_TABS: Array<{ id: InspectorTab; label: string }> = [
-  { id: "model", label: "MODEL" },
-  { id: "material", label: "MATERIAL" },
-  { id: "light", label: "LIGHT" },
-  { id: "ai", label: "AI" },
-  { id: "result", label: "RESULT" },
-];
 
 function formatMessageTime(value: string, locale: string) {
   return new Intl.DateTimeFormat(locale, {
@@ -64,6 +63,10 @@ function filenameFromPath(value: string) {
   const parts = value.split(/[/\\]/);
   return parts[parts.length - 1] ?? value;
 }
+
+type DroppedDesktopFile = File & { path?: string };
+
+const IMAGE_FILE_PATTERN = /\.(png|jpe?g|webp|bmp|gif|tiff?)$/i;
 
 function formatAutoEngineLabel(engine: AutoEngine) {
   if (engine === "instantmesh") {
@@ -209,6 +212,7 @@ export function ProjectPage() {
   const hasStoredMultiviewPreferenceRef = useRef(
     initialGenerationUiState.hasStoredMultiviewPreference,
   );
+  const navigate = useNavigate();
   const { t, language } = useT();
   const { settings, setAutoGenerationProfile } = useSettings();
   const {
@@ -260,11 +264,17 @@ export function ProjectPage() {
   const [imagePreviews, setImagePreviews] = useState<Record<string, string>>(
     {},
   );
-  const [isAssistantOpen, setIsAssistantOpen] = useState(false);
   const [isNotesOpen, setIsNotesOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<InspectorTab>("model");
-  const [isReferenceDrawerOpen, setIsReferenceDrawerOpen] = useState(true);
-  const [toolShortcut, setToolShortcut] = useState("tools");
+  const [inspectorTab, setInspectorTab] = useState<
+    "inspector" | "references" | "notes"
+  >("inspector");
+  const [workspaceMode, setWorkspaceMode] =
+    useState<WorkspaceMode>("references");
+  const [viewportResetSignal, setViewportResetSignal] = useState(0);
+  const [viewportFitSignal, setViewportFitSignal] = useState(0);
+  const [viewportGridEnabled, setViewportGridEnabled] = useState(true);
+  const [viewportShadowEnabled, setViewportShadowEnabled] = useState(true);
+  const [isReferenceDropActive, setIsReferenceDropActive] = useState(false);
   const [comfyStatus, setComfyStatus] = useState<Awaited<
     ReturnType<typeof desktopApi.getComfyStatus>
   > | null>(null);
@@ -332,9 +342,12 @@ export function ProjectPage() {
     setImagePreviews({});
     pendingGenerationRef.current = null;
     handledGenerationStateRef.current = "";
-    setActiveTab("model");
-    setIsReferenceDrawerOpen(true);
-    setToolShortcut("tools");
+    setInspectorTab("inspector");
+    setWorkspaceMode("references");
+    setViewportResetSignal(0);
+    setViewportFitSignal(0);
+    setViewportGridEnabled(true);
+    setViewportShadowEnabled(true);
   }, [project?.id]);
 
   useEffect(() => {
@@ -648,15 +661,56 @@ export function ProjectPage() {
     }
 
     if (workspaceStatus === "generating") {
-      setActiveTab("ai");
+      setWorkspaceMode("ai");
     } else if (workspaceStatus === "ready") {
-      setActiveTab("result");
+      setWorkspaceMode("result");
     } else if (workspaceStatus === "error") {
-      setActiveTab("ai");
+      setWorkspaceMode("ai");
     }
 
     workspaceStatusRef.current = workspaceStatus;
   }, [workspaceStatus]);
+
+  useEffect(() => {
+    const handleShortcut = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) {
+        return;
+      }
+      if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) {
+        return;
+      }
+
+      const key = event.key;
+      if (!["1", "2", "3", "4", "5", "6"].includes(key)) {
+        return;
+      }
+
+      const target = event.target;
+      if (target instanceof HTMLElement) {
+        const tag = target.tagName.toLowerCase();
+        if (
+          tag === "input" ||
+          tag === "textarea" ||
+          tag === "select" ||
+          target.isContentEditable
+        ) {
+          return;
+        }
+      }
+
+      const nextMode = workspaceModeDefinitions.find(
+        (mode) => mode.shortcut === key,
+      )?.id;
+      if (nextMode) {
+        setWorkspaceMode(nextMode);
+      }
+    };
+
+    window.addEventListener("keydown", handleShortcut);
+    return () => {
+      window.removeEventListener("keydown", handleShortcut);
+    };
+  }, [setWorkspaceMode, workspaceModeDefinitions]);
 
   const engineState =
     isRestartingEngine || comfyStatus?.state === "STARTING"
@@ -713,6 +767,28 @@ export function ProjectPage() {
     setChatInput("");
   };
 
+  const applySelectedImages = (nextImages: string[]) => {
+    const limited = nextImages
+      .filter((imagePath, index, array) => {
+        return (
+          IMAGE_FILE_PATTERN.test(imagePath) &&
+          array.indexOf(imagePath) === index
+        );
+      })
+      .slice(0, 4);
+
+    setSelectedImages(limited);
+    updateProjectModel(project.id, {
+      ...projectModel,
+      sourceImages: limited,
+    });
+    setGenerationMessage(
+      limited.length > 0
+        ? `${limited.length} image(s) attached.`
+        : "Select images to start.",
+    );
+  };
+
   const handleSelectImages = async () => {
     if (!hasDesktopBridge()) {
       return;
@@ -723,10 +799,41 @@ export function ProjectPage() {
       return;
     }
 
-    const limited = picked.slice(0, 4);
-    console.log("[gen][renderer] selected:", limited.length, limited[0] ?? "");
-    setSelectedImages(limited);
-    setGenerationMessage(`${limited.length} imagen(es) seleccionada(s).`);
+    console.log("[gen][renderer] selected:", picked.length, picked[0] ?? "");
+    applySelectedImages(picked);
+  };
+
+  const handleReferenceDragOver = (event: ReactDragEvent<HTMLElement>) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    if (!isReferenceDropActive) {
+      setIsReferenceDropActive(true);
+    }
+  };
+
+  const handleReferenceDragLeave = (event: ReactDragEvent<HTMLElement>) => {
+    if (
+      event.relatedTarget instanceof Node &&
+      event.currentTarget.contains(event.relatedTarget)
+    ) {
+      return;
+    }
+    setIsReferenceDropActive(false);
+  };
+
+  const handleReferenceDrop = (event: ReactDragEvent<HTMLElement>) => {
+    event.preventDefault();
+    setIsReferenceDropActive(false);
+
+    const dropped = Array.from(event.dataTransfer.files)
+      .map((file) => (file as DroppedDesktopFile).path)
+      .filter((value): value is string => Boolean(value));
+
+    if (dropped.length === 0) {
+      return;
+    }
+
+    applySelectedImages(dropped);
   };
 
   const restartEngine = async () => {
@@ -762,7 +869,7 @@ export function ProjectPage() {
     }
 
     if (!comfyStatus?.running || comfyStatus.state === "ERROR") {
-      setActiveTab("ai");
+      setWorkspaceMode("ai");
       setGenerationStage("error");
       setGenerationMessage(
         "Engine offline - Restart the AI engine to continue.",
@@ -816,7 +923,7 @@ export function ProjectPage() {
     }
 
     if (!comfyStatus?.running || comfyStatus.state === "ERROR") {
-      setActiveTab("ai");
+      setWorkspaceMode("ai");
       setGenerationStage("error");
       setGenerationMessage(
         "Engine offline - Restart the AI engine to continue.",
@@ -882,141 +989,172 @@ export function ProjectPage() {
     await desktopApi.openGenerationLogPath(generationLogPath);
   };
 
-  const handleToolShortcut = async (value: string) => {
-    setToolShortcut(value);
-
-    if (value === "references") {
-      setIsReferenceDrawerOpen((current) => !current);
-    } else if (value === "notes") {
-      setIsReferenceDrawerOpen(true);
-    } else if (value === "result") {
-      setActiveTab("result");
-    } else if (value === "output") {
-      await handleOpenOutputFolder();
+  const handleReconstructionTierChange = (nextValue: ReconstructionTier) => {
+    setReconstructionTier(nextValue);
+    if (!hasStoredMultiviewPreferenceRef.current) {
+      setMultiviewEnabled(nextValue === "final");
     }
+    try {
+      window.localStorage.setItem(RECONSTRUCTION_TIER_KEY, nextValue);
+    } catch {
+      // No-op by design.
+    }
+  };
 
-    window.setTimeout(() => {
-      setToolShortcut("tools");
-    }, 0);
+  const handleMultiviewEnabledChange = (nextValue: boolean) => {
+    setMultiviewEnabled(nextValue);
+    hasStoredMultiviewPreferenceRef.current = true;
+    try {
+      window.localStorage.setItem(MULTIVIEW_ENABLED_KEY, String(nextValue));
+    } catch {
+      // No-op by design.
+    }
+  };
+
+  const handleMultiviewHardSurfaceQualityChange = (
+    nextValue: MultiviewHardSurfaceQuality,
+  ) => {
+    setMultiviewHardSurfaceQuality(nextValue);
+    try {
+      window.localStorage.setItem(MULTIVIEW_HARD_SURFACE_QUALITY_KEY, nextValue);
+    } catch {
+      // No-op by design.
+    }
+  };
+
+  const handleViewportReset = () => {
+    setViewportResetSignal((current) => current + 1);
+  };
+
+  const handleViewportFit = () => {
+    setViewportFitSignal((current) => current + 1);
+  };
+
+  const handleViewportToggleGrid = () => {
+    setViewportGridEnabled((current) => !current);
+  };
+
+  const handleViewportToggleShadows = () => {
+    setViewportShadowEnabled((current) => !current);
   };
 
   const topMetaClass =
-    "rounded-full border border-[var(--border)] bg-[var(--surface-2)] px-3 py-1.5 text-[11px] text-[var(--text-muted)]";
-  const viewportMetaClass =
-    "rounded-full border border-[var(--border)] bg-[var(--glass-bg-strong)] px-3 py-1.5 text-[11px] text-[var(--text)] shadow-[var(--glass-shadow)] backdrop-blur";
-  const contrastMetaClass =
-    "rounded-full border border-[var(--shell-contrast-border)] bg-[var(--shell-contrast-tag)] px-3 py-1.5 text-[11px] text-[var(--shell-contrast-text-muted)]";
-  const contrastSectionClass =
-    "rounded-2xl border border-[var(--shell-contrast-border)] bg-[var(--shell-contrast-surface)] p-4";
-  const contrastLabelClass =
-    "text-[9px] font-semibold uppercase tracking-[0.14em] text-[var(--shell-contrast-text-muted)]";
-  const contrastBodyClass =
-    "text-[13px] leading-6 text-[var(--shell-contrast-text)]";
-  const contrastSubtleClass =
-    "text-[12px] leading-5 text-[var(--shell-contrast-text-muted)]";
-  const contrastButtonClass =
-    "border-[var(--shell-contrast-border)] bg-[var(--shell-contrast-tag)] text-[var(--shell-contrast-text-muted)] hover:border-[var(--accent)] hover:bg-[var(--shell-contrast-surface)] hover:text-[var(--shell-contrast-text)]";
-  const contrastGhostButtonClass =
-    "border-transparent bg-transparent text-[var(--shell-contrast-text-muted)] hover:border-[var(--shell-contrast-border)] hover:bg-[var(--shell-contrast-surface)] hover:text-[var(--shell-contrast-text)]";
-  const contrastSelectClass =
-    "pointer-events-auto h-10 w-full appearance-none rounded-lg border border-[var(--shell-contrast-border)] bg-[var(--shell-contrast-surface)] px-3 text-sm text-[var(--shell-contrast-text)] outline-none hover:border-[var(--accent)] focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--focus-ring)]";
-  const contrastToggleClass =
-    "inline-flex h-10 w-full items-center gap-2 rounded-lg border border-[var(--shell-contrast-border)] bg-[var(--shell-contrast-surface)] px-3 text-xs text-[var(--shell-contrast-text)]";
-  const inspectorSectionClass =
-    "space-y-3 border-b border-[var(--shell-contrast-border)] pb-5 last:border-b-0 last:pb-0";
-  const inspectorRowsClass =
-    "grid grid-cols-[minmax(0,1fr)_auto] gap-x-4 gap-y-3";
-  const inspectorRowLabelClass =
-    "text-[11px] text-[var(--shell-contrast-text-muted)]";
-  const inspectorRowValueClass =
-    "text-[11px] font-medium text-[var(--shell-contrast-text)]";
-  const toolbarSecondaryButtonClass =
-    "border-[var(--shell-contrast-border)] bg-[var(--shell-contrast-tag)] text-[var(--shell-contrast-text)] hover:border-[var(--accent)] hover:bg-[var(--shell-contrast-surface)]";
-  const toolbarPrimaryButtonClass = "shadow-[var(--shadow)]";
-  const railButtonClass = (isActive: boolean) =>
-    `relative flex h-11 w-11 items-center justify-center rounded-xl border text-[10px] font-semibold tracking-[0.14em] transition-colors ${
-      isActive
-        ? "border-[var(--accent)] bg-[var(--shell-contrast-surface)] text-[var(--shell-contrast-text)]"
-        : "border-[var(--shell-contrast-border)] bg-[var(--shell-contrast-tag)] text-[var(--shell-contrast-text-muted)] hover:text-[var(--shell-contrast-text)]"
-    }`;
-  const bottomZoneClass = "flex h-full min-w-0 items-center gap-2 px-4";
-  const workspaceBadgeTone: BadgeTone =
-    workspaceStatus === "generating"
-      ? "warning"
-      : workspaceStatus === "ready"
-        ? "success"
-        : workspaceStatus === "error"
-          ? "danger"
-          : "neutral";
+    "rounded-full border border-[var(--panel-border)] bg-[var(--panel-2)] px-3 py-1.5 text-[11px] tracking-[0.01em] text-[var(--muted-text)]";
+  const drawerLabelClass =
+    "text-[9px] font-semibold uppercase tracking-[0.14em] text-[var(--workspace-text-muted)]";
+  const drawerMetaClass =
+    "rounded-full border border-[var(--workspace-divider)] bg-[var(--workspace-surface)] px-3 py-1.5 text-[11px] text-[var(--workspace-text-muted)]";
+  const drawerCardClass =
+    "rounded-[var(--radius-lg)] border border-[var(--workspace-divider)] bg-[var(--workspace-surface)] p-4";
+  const drawerDropClass = isReferenceDropActive
+    ? "border-[var(--workspace-selected-border)] bg-[var(--workspace-selected-bg)]"
+    : "border-[var(--workspace-divider)] bg-[var(--workspace-surface)]";
+  const isReferenceDrawerOpen = workspaceMode === "references";
+  const hasModel = Boolean(project.model?.glbPath);
+  const autoProfileLabel = formatAutoProfileLabel(
+    settings.autoGenerationProfile,
+  );
+  const autoUsedEngineLabel = autoUsedEngine
+    ? formatAutoEngineLabel(autoUsedEngine)
+    : "pending";
+  const autoUsedPresetLabel = autoUsedPreset
+    ? formatAutoPresetLabel(autoUsedPreset)
+    : "n/a";
+  const generationDeviceLabel = generationDevice
+    ? `${generationDevice.device.toUpperCase()} ${generationDevice.name}`
+    : undefined;
   const stopPanelWheel = (event: ReactWheelEvent<HTMLElement>) => {
     event.stopPropagation();
   };
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-[var(--bg)]">
+    <div className="flex h-screen w-screen overflow-hidden bg-[var(--app-bg)]">
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <TopBar
-          eyebrow="Workspace"
-          title={project.name}
-          breadcrumb={["Projects", project.name]}
+          eyebrow="Studio"
+          title="Workspace"
+          centerSlot={
+            <div className="no-drag min-w-0 text-center">
+              <p className="text-[9px] font-semibold uppercase tracking-[0.14em] text-[var(--text-faint)]">
+                Project
+              </p>
+              <h1 className="truncate text-[17px] font-medium tracking-[0.01em] text-[var(--text)]">
+                {project.name}
+              </h1>
+            </div>
+          }
           statusSlot={
             <Badge tone={engineBadgeTone} dot>
-              Engine {engineBadgeLabel}
+              ENGINE {engineBadgeLabel.toUpperCase()}
             </Badge>
           }
           rightSlot={
             <div className="flex items-center gap-2">
               <span className={topMetaClass}>Preset {preset}</span>
-              <span className={topMetaClass}>{selectedImages.length} refs</span>
+              <button
+                type="button"
+                onClick={() => navigate("/settings")}
+                className="inline-flex h-8 items-center gap-2 rounded-full border border-[var(--panel-border)] bg-[var(--panel-2)] px-3 text-[11px] text-[var(--muted-text)] transition-colors hover:border-[var(--panel-border-strong)] hover:bg-[var(--panel-elevated)] hover:text-[var(--text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+              >
+                <svg
+                  aria-hidden="true"
+                  viewBox="0 0 20 20"
+                  fill="none"
+                  className="h-3.5 w-3.5"
+                  stroke="currentColor"
+                  strokeWidth="1.7"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <circle cx="10" cy="10" r="2.5" />
+                  <path d="M10 2.75v2.1" />
+                  <path d="M10 15.15v2.1" />
+                  <path d="m4.86 4.86 1.48 1.48" />
+                  <path d="m13.66 13.66 1.48 1.48" />
+                  <path d="M2.75 10h2.1" />
+                  <path d="M15.15 10h2.1" />
+                  <path d="m4.86 15.14 1.48-1.48" />
+                  <path d="m13.66 6.34 1.48-1.48" />
+                </svg>
+                <span>Settings</span>
+              </button>
             </div>
           }
         />
-        <div className="flex min-h-0 flex-1 overflow-hidden bg-[var(--surface-1)]">
-          <aside
-            className="flex h-full w-16 shrink-0 flex-col items-center gap-3 border-r border-[var(--shell-contrast-border)] bg-[var(--shell-contrast-panel)] px-2 py-3 text-[var(--shell-contrast-text)]"
+        <div className="flex min-h-0 flex-1 overflow-hidden bg-[var(--panel-bg)]">
+          <ModeSelector
+            activeMode={workspaceMode}
+            onModeChange={setWorkspaceMode}
             onWheelCapture={stopPanelWheel}
-          >
-            <div className="flex h-11 w-11 items-center justify-center rounded-xl border border-[var(--shell-contrast-border)] bg-[var(--shell-contrast-tag)] text-[11px] font-semibold tracking-[0.24em] text-[var(--accent)]">
-              VD
-            </div>
-            <div className="flex flex-1 flex-col items-center gap-2">
-              {INSPECTOR_TABS.map((tab) => (
-                <button
-                  key={tab.id}
-                  type="button"
-                  className={railButtonClass(activeTab === tab.id)}
-                  onClick={() => setActiveTab(tab.id)}
-                  title={tab.label}
-                >
-                  {tab.label.slice(0, 1)}
-                </button>
-              ))}
-            </div>
-            <button
-              type="button"
-              className={railButtonClass(isReferenceDrawerOpen)}
-              onClick={() => setIsReferenceDrawerOpen((value) => !value)}
-              title="Toggle references"
-            >
-              REF
-            </button>
-          </aside>
+          />
 
           {isReferenceDrawerOpen ? (
             <aside
-              className="flex min-h-0 w-[292px] shrink-0 flex-col gap-5 border-r border-[var(--shell-contrast-border)] bg-[var(--shell-contrast-panel)] px-5 py-5 text-[var(--shell-contrast-text)]"
+              className="flex min-h-0 w-[292px] shrink-0 flex-col gap-5 border-r border-[var(--workspace-divider)] bg-[var(--workspace-rail-bg)] px-5 py-5 text-[var(--workspace-text)]"
               onWheelCapture={stopPanelWheel}
+              onDragOver={handleReferenceDragOver}
+              onDragLeave={handleReferenceDragLeave}
+              onDrop={handleReferenceDrop}
             >
               <div className="flex items-center justify-between gap-3">
                 <div>
-                  <p className={contrastLabelClass}>Reference Drawer</p>
-                  <p className="mt-1 text-sm font-medium text-[var(--shell-contrast-text)]">
+                  <p className={drawerLabelClass}>Reference Drawer</p>
+                  <p className="mt-1 text-sm font-medium text-[var(--workspace-text)]">
                     Input imagery
                   </p>
                 </div>
-                <span className={contrastMetaClass}>
-                  {selectedImages.length} imgs
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className={drawerMetaClass}>
+                    {selectedImages.length} imgs
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => void handleSelectImages()}
+                    className="inline-flex h-8 items-center rounded-full border border-[var(--accent-primary)] bg-[var(--accent-primary)] px-3 text-[11px] text-[var(--accent-contrast)] transition-colors hover:border-[var(--accent-primary-hover)] hover:bg-[var(--accent-primary-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+                  >
+                    + Add images
+                  </button>
+                </div>
               </div>
 
               <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
@@ -1024,7 +1162,7 @@ export function ProjectPage() {
                   selectedImages.map((imagePath) => (
                     <figure
                       key={imagePath}
-                      className={`${contrastSectionClass} overflow-hidden`}
+                      className={`${drawerCardClass} overflow-hidden`}
                     >
                       {imagePreviews[imagePath] ? (
                         <img
@@ -1035,46 +1173,19 @@ export function ProjectPage() {
                       ) : (
                         <div className="h-36 w-full rounded-xl bg-[var(--shell-contrast-tag)]" />
                       )}
-                      <figcaption className="mt-3 truncate text-[11px] text-[var(--shell-contrast-text-muted)]">
+                      <figcaption className="mt-3 truncate text-[11px] text-[var(--workspace-text-muted)]">
                         {filenameFromPath(imagePath)}
                       </figcaption>
                     </figure>
                   ))
                 ) : (
                   <div
-                    className={`${contrastSectionClass} text-xs text-[var(--shell-contrast-text-muted)]`}
+                    className={`${drawerCardClass} ${drawerDropClass} text-xs text-[var(--workspace-text-muted)] transition-colors`}
                   >
-                    The reference drawer stays docked in its own column, so the
-                    viewport remains clear for orbit and zoom.
+                    Drag and drop images here or use + Add images. References
+                    stay docked in their own column so the viewport remains
+                    clear for orbit and zoom.
                   </div>
-                )}
-              </div>
-
-              <div className={contrastSectionClass}>
-                <div className="mb-3 flex items-center justify-between gap-2">
-                  <p className={contrastLabelClass}>Notes</p>
-                  <Button
-                    variant="ghost"
-                    className={`h-8 px-3 text-xs ${contrastGhostButtonClass}`}
-                    onClick={() => setIsNotesOpen((current) => !current)}
-                  >
-                    {isNotesOpen ? "Hide" : "Open"}
-                  </Button>
-                </div>
-                {isNotesOpen ? (
-                  <TextArea
-                    value={project.notes}
-                    onChange={(event) =>
-                      updateNotes(project.id, event.currentTarget.value)
-                    }
-                    rows={5}
-                    placeholder="Notas del proyecto"
-                  />
-                ) : (
-                  <p className={contrastSubtleClass}>
-                    Project notes stay alongside the references instead of
-                    floating above the model.
-                  </p>
                 )}
               </div>
             </aside>
@@ -1082,7 +1193,7 @@ export function ProjectPage() {
 
           <div className="flex min-w-0 flex-1 flex-col">
             <div className="flex min-h-0 flex-1">
-              <section className="relative min-w-0 flex-1 border-r border-[var(--border)] bg-[var(--shell-viewport)]">
+              <section className="relative min-w-0 flex-1 border-r border-[var(--workspace-divider)] bg-[var(--shell-viewport)]">
                 <ProjectViewport
                   glbPath={project.model?.glbPath}
                   glbVersion={project.model?.generatedAt}
@@ -1090,574 +1201,77 @@ export function ProjectPage() {
                   generationStage={generationStage}
                   showUtilityButtons={false}
                   showChrome={false}
+                  resetSignal={viewportResetSignal}
+                  fitSignal={viewportFitSignal}
+                  gridEnabled={viewportGridEnabled}
+                  shadowEnabled={viewportShadowEnabled}
                 />
-                <div className="pointer-events-none absolute inset-x-4 top-4 flex items-start justify-between gap-4">
-                  <div className="flex min-w-0 flex-col gap-2">
-                    <div>
-                      <h1 className="truncate text-[22px] font-medium tracking-[0.01em] text-[var(--text)]">
-                        {project.name}
-                      </h1>
-                      <p className="mt-1 text-[11px] text-[var(--text-muted)]">
-                        {project.model?.glbPath
-                          ? filenameFromPath(project.model.glbPath)
-                          : "No model generated yet"}
-                      </p>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      <span className={viewportMetaClass}>Preset {preset}</span>
-                      <span className={viewportMetaClass}>
-                        {selectedImages.length} references
-                      </span>
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap justify-end gap-2">
-                    <Badge
-                      tone={workspaceBadgeTone}
-                      dot
-                      className="shadow-[var(--shadow)]"
-                    >
-                      {workspaceStatus === "ready"
-                        ? "Ready"
-                        : workspaceStatus === "generating"
-                          ? "Generating"
-                          : workspaceStatus === "error"
-                            ? "Error"
-                            : "Idle"}
-                    </Badge>
-                    {generationDevice ? (
-                      <span className={viewportMetaClass}>
-                        {generationDevice.device.toUpperCase()}{" "}
-                        {generationDevice.name}
-                      </span>
-                    ) : null}
-                  </div>
-                </div>
-                {!isEngineReady ? (
-                  <div className="pointer-events-none absolute inset-x-4 bottom-4 flex justify-end">
-                    <div className="rounded-full border border-[var(--danger)] bg-[var(--danger-bg)] px-4 py-2 text-[11px] text-[var(--danger)] shadow-[var(--shadow)]">
-                      Engine offline - Restart in AI panel.
-                    </div>
-                  </div>
-                ) : null}
               </section>
 
-              <RightPanel
-                eyebrow="Inspector"
-                title="Workspace controls"
-                subtitle={comfyStatus?.url ?? "AI engine"}
-                tabs={INSPECTOR_TABS}
-                activeTab={activeTab}
-                onTabChange={(tabId) => setActiveTab(tabId as InspectorTab)}
-                tone="contrast"
-                onWheelCapture={stopPanelWheel}
-                headerSlot={
-                  <Badge tone={engineBadgeTone} dot>
-                    {engineBadgeLabel}
-                  </Badge>
+              <WorkspaceInspector
+                mode={workspaceMode}
+                tab={inspectorTab}
+                onTabChange={setInspectorTab}
+                project={project}
+                selectedImages={selectedImages}
+                reconstructionTier={reconstructionTier}
+                multiviewEnabled={multiviewEnabled}
+                studioProfile={settings.studioProfile}
+                preset={preset}
+                isNotesOpen={isNotesOpen}
+                isGenerating={isGenerating}
+                generationStage={generationStage}
+                generationPercent={generationPercent}
+                generationMessage={generationMessage}
+                engineMessage={engineMessage}
+                isEngineReady={isEngineReady}
+                isRestartingEngine={isRestartingEngine}
+                showEngineLogs={showEngineLogs}
+                engineLogs={engineLogs}
+                multiviewPreset={multiviewPreset}
+                multiviewHardSurfaceQuality={multiviewHardSurfaceQuality}
+                autoGenerationProfile={settings.autoGenerationProfile}
+                autoProfileLabel={autoProfileLabel}
+                autoUsedEngineLabel={autoUsedEngineLabel}
+                autoUsedPresetLabel={autoUsedPresetLabel}
+                generationLogPath={generationLogPath}
+                generationDeviceLabel={generationDeviceLabel}
+                onToggleNotes={() => setIsNotesOpen((current) => !current)}
+                onUpdateNotes={(value) => updateNotes(project.id, value)}
+                onOpenOutputFolder={handleOpenOutputFolder}
+                onRestartEngine={restartEngine}
+                onToggleEngineLogs={() =>
+                  setShowEngineLogs((current) => !current)
                 }
-              >
-                {activeTab === "model" ? (
-                  <div className="space-y-6">
-                    <section className={inspectorSectionClass}>
-                      <p className={contrastLabelClass}>Model summary</p>
-                      <div className={`mt-4 ${inspectorRowsClass}`}>
-                        <span className={inspectorRowLabelClass}>Images</span>
-                        <span className={inspectorRowValueClass}>
-                          {selectedImages.length}
-                        </span>
-                        <span className={inspectorRowLabelClass}>
-                          Reconstruction tier
-                        </span>
-                        <span className={inspectorRowValueClass}>
-                          {reconstructionTier}
-                        </span>
-                        <span className={inspectorRowLabelClass}>Mode</span>
-                        <span className={inspectorRowValueClass}>Auto</span>
-                        <span className={inspectorRowLabelClass}>
-                          Multiview
-                        </span>
-                        <span className={inspectorRowValueClass}>
-                          {multiviewEnabled ? "Enabled" : "Disabled"}
-                        </span>
-                      </div>
-                    </section>
-
-                    <section className={inspectorSectionClass}>
-                      <p className={contrastLabelClass}>Asset path</p>
-                      <p className="mt-3 break-all text-[12px] leading-5 text-[var(--shell-contrast-text-muted)]">
-                        {project.model?.glbPath ??
-                          "No generated model attached yet."}
-                      </p>
-                    </section>
-                  </div>
-                ) : null}
-
-                {activeTab === "material" ? (
-                  <div className="space-y-6">
-                    <section className={inspectorSectionClass}>
-                      <p className={contrastLabelClass}>Material pipeline</p>
-                      <p className="mt-3 text-[13px] leading-6 text-[var(--shell-contrast-text)]">
-                        Material slots stay intact here so the texture pass can
-                        continue without replacing the loaded GLB.
-                      </p>
-                    </section>
-                    <section className={inspectorSectionClass}>
-                      <p className={contrastLabelClass}>Current state</p>
-                      <p className="mt-3 text-[12px] leading-5 text-[var(--shell-contrast-text-muted)]">
-                        Use the model tab to verify geometry output, then
-                        continue with texture and mapping work in the existing
-                        pipeline.
-                      </p>
-                    </section>
-                  </div>
-                ) : null}
-
-                {activeTab === "light" ? (
-                  <div className="space-y-6">
-                    <section className={inspectorSectionClass}>
-                      <p className={contrastLabelClass}>Viewport lighting</p>
-                      <p className={contrastBodyClass}>
-                        The light-mode ground, grid and shadow balance were
-                        tuned to keep the model as the brightest element while
-                        preserving depth.
-                      </p>
-                    </section>
-                    <section className={inspectorSectionClass}>
-                      <p className={contrastLabelClass}>Navigation</p>
-                      <p className={contrastSubtleClass}>
-                        The drawer and inspector remain in dedicated columns, so
-                        wheel and scroll interactions stay away from the orbit
-                        surface.
-                      </p>
-                    </section>
-                  </div>
-                ) : null}
-
-                {activeTab === "ai" ? (
-                  <div className="space-y-6">
-                    {!isEngineReady ? (
-                      <div className="rounded-2xl border border-[var(--danger)] bg-[var(--danger-bg)] p-4">
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--danger)]">
-                              Engine status
-                            </p>
-                            <p className="mt-2 text-sm font-medium text-[var(--shell-contrast-text)]">
-                              AI engine stopped
-                            </p>
-                            <p className="mt-2 text-[12px] leading-5 text-[var(--shell-contrast-text-muted)]">
-                              {engineMessage}
-                            </p>
-                          </div>
-                          <Button
-                            variant="secondary"
-                            className={`h-9 px-4 text-xs ${contrastButtonClass}`}
-                            onClick={() => void restartEngine()}
-                            disabled={isRestartingEngine}
-                          >
-                            {isRestartingEngine
-                              ? "Restarting..."
-                              : "Restart Engine"}
-                          </Button>
-                        </div>
-                      </div>
-                    ) : null}
-
-                    <section className={inspectorSectionClass}>
-                      <p className={contrastLabelClass}>Generation controls</p>
-                      <div className="mt-4 grid gap-3">
-                        <Button
-                          variant="secondary"
-                          className={contrastButtonClass}
-                          onClick={() => void handleSelectImages()}
-                          disabled={isGenerating}
-                        >
-                          Agregar imagenes
-                        </Button>
-                        <Button
-                          variant="secondary"
-                          className={contrastButtonClass}
-                          onClick={() => void handleOpenOutputFolder()}
-                          disabled={!project.model?.glbPath}
-                        >
-                          Abrir salida
-                        </Button>
-                        <select
-                          value={preset}
-                          onChange={(event) =>
-                            setPreset(
-                              event.currentTarget.value as GenerationPreset,
-                            )
-                          }
-                          className={contrastSelectClass}
-                          disabled={isGenerating}
-                        >
-                          <option value="fast">Fast</option>
-                          <option value="balanced">Balanced</option>
-                          <option value="quality">Quality</option>
-                        </select>
-                        <select
-                          value={settings.autoGenerationProfile}
-                          onChange={(event) =>
-                            setAutoGenerationProfile(
-                              event.currentTarget.value as AutoProfile,
-                            )
-                          }
-                          className={contrastSelectClass}
-                          disabled={isGenerating}
-                        >
-                          <option value="auto">AUTO (recomendado)</option>
-                          <option value="hard_surface">HARD-SURFACE</option>
-                          <option value="organic">ORGANICO</option>
-                        </select>
-                        <select
-                          value={reconstructionTier}
-                          onChange={(event) => {
-                            const nextValue = event.currentTarget
-                              .value as ReconstructionTier;
-                            setReconstructionTier(nextValue);
-                            if (!hasStoredMultiviewPreferenceRef.current) {
-                              setMultiviewEnabled(nextValue === "final");
-                            }
-                            try {
-                              window.localStorage.setItem(
-                                RECONSTRUCTION_TIER_KEY,
-                                nextValue,
-                              );
-                            } catch {
-                              // No-op by design.
-                            }
-                          }}
-                          className={contrastSelectClass}
-                          disabled={isGenerating}
-                        >
-                          <option value="preview">Preview (rapido)</option>
-                          <option value="final">Final (HQ)</option>
-                        </select>
-                        <label className={contrastToggleClass}>
-                          <input
-                            type="checkbox"
-                            checked={multiviewEnabled}
-                            onChange={(event) => {
-                              const nextValue = event.currentTarget.checked;
-                              setMultiviewEnabled(nextValue);
-                              hasStoredMultiviewPreferenceRef.current = true;
-                              try {
-                                window.localStorage.setItem(
-                                  MULTIVIEW_ENABLED_KEY,
-                                  String(nextValue),
-                                );
-                              } catch {
-                                // No-op by design.
-                              }
-                            }}
-                            disabled={isGenerating}
-                          />
-                          Multiview (Local)
-                        </label>
-                        <select
-                          value={multiviewPreset}
-                          onChange={(event) =>
-                            setMultiviewPreset(
-                              event.currentTarget.value as MultiviewPreset,
-                            )
-                          }
-                          className={contrastSelectClass}
-                          disabled={isGenerating || !multiviewEnabled}
-                        >
-                          <option value="hard_surface">HardSurface</option>
-                          <option value="balanced">Balanced</option>
-                          <option value="organic">Organic</option>
-                        </select>
-                        {multiviewPreset === "hard_surface" ? (
-                          <select
-                            value={multiviewHardSurfaceQuality}
-                            onChange={(event) => {
-                              const nextValue = event.currentTarget
-                                .value as MultiviewHardSurfaceQuality;
-                              setMultiviewHardSurfaceQuality(nextValue);
-                              try {
-                                window.localStorage.setItem(
-                                  MULTIVIEW_HARD_SURFACE_QUALITY_KEY,
-                                  nextValue,
-                                );
-                              } catch {
-                                // No-op by design.
-                              }
-                            }}
-                            className={contrastSelectClass}
-                            disabled={isGenerating || !multiviewEnabled}
-                          >
-                            <option value="fast">Fast</option>
-                            <option value="balanced">Balanced</option>
-                            <option value="pro">Pro</option>
-                          </select>
-                        ) : null}
-                      </div>
-                    </section>
-
-                    <section className={inspectorSectionClass}>
-                      <div className="flex items-center justify-between gap-3">
-                        <div>
-                          <p className={contrastLabelClass}>Engine details</p>
-                          <p className="mt-2 text-[12px] leading-5 text-[var(--shell-contrast-text-muted)]">
-                            {engineMessage}
-                          </p>
-                        </div>
-                        <Button
-                          variant="ghost"
-                          className={`h-8 px-3 text-xs ${contrastGhostButtonClass}`}
-                          onClick={() =>
-                            setShowEngineLogs((current) => !current)
-                          }
-                        >
-                          {showEngineLogs ? "Hide logs" : "Show logs"}
-                        </Button>
-                      </div>
-                      {showEngineLogs ? (
-                        <div className="mt-4 max-h-44 space-y-2 overflow-y-auto rounded-xl border border-[var(--shell-contrast-border)] bg-[var(--shell-contrast-tag)] p-3">
-                          {engineLogs.length > 0 ? (
-                            engineLogs.map((line, index) => (
-                              <p
-                                key={`${index}-${line}`}
-                                className="font-mono text-[11px] leading-5 text-[var(--shell-contrast-text-muted)]"
-                              >
-                                {line}
-                              </p>
-                            ))
-                          ) : (
-                            <p className="text-xs text-[var(--shell-contrast-text-muted)]">
-                              No logs available.
-                            </p>
-                          )}
-                        </div>
-                      ) : null}
-                    </section>
-                  </div>
-                ) : null}
-
-                {activeTab === "result" ? (
-                  <div className="space-y-6">
-                    <section className={inspectorSectionClass}>
-                      <div className={`mb-4 ${inspectorRowsClass}`}>
-                        <span className={inspectorRowLabelClass}>Stage</span>
-                        <span className={inspectorRowValueClass}>
-                          {generationStage}
-                        </span>
-                        <span className={inspectorRowLabelClass}>Progress</span>
-                        <span className={inspectorRowValueClass}>
-                          {generationPercent}%
-                        </span>
-                        <span className={inspectorRowLabelClass}>Profile</span>
-                        <span className={inspectorRowValueClass}>
-                          {formatAutoProfileLabel(
-                            settings.autoGenerationProfile,
-                          )}
-                        </span>
-                      </div>
-                      <div className="h-2 w-full overflow-hidden rounded-full bg-[var(--shell-contrast-tag)]">
-                        <div
-                          className="h-full bg-[linear-gradient(90deg,var(--accent),var(--accent-2))] transition-all duration-150 ease-out"
-                          style={{ width: `${generationPercent}%` }}
-                        />
-                      </div>
-                      <p className="mt-4 text-[13px] leading-6 text-[var(--shell-contrast-text)]">
-                        {generationMessage}
-                      </p>
-                    </section>
-
-                    <section className={inspectorSectionClass}>
-                      <p className={contrastLabelClass}>Run metadata</p>
-                      <div className={`mt-4 ${inspectorRowsClass}`}>
-                        <span className={inspectorRowLabelClass}>Preset</span>
-                        <span className={inspectorRowValueClass}>{preset}</span>
-                        <span className={inspectorRowLabelClass}>Engine</span>
-                        <span className={inspectorRowValueClass}>
-                          {autoUsedEngine
-                            ? formatAutoEngineLabel(autoUsedEngine)
-                            : "pending"}
-                        </span>
-                        <span className={inspectorRowLabelClass}>
-                          Auto mode
-                        </span>
-                        <span className={inspectorRowValueClass}>
-                          {autoUsedPreset
-                            ? formatAutoPresetLabel(autoUsedPreset)
-                            : "n/a"}
-                        </span>
-                        <span className={inspectorRowLabelClass}>Output</span>
-                        <span className={inspectorRowValueClass}>
-                          {project.model?.glbPath
-                            ? "GLB ready"
-                            : "Awaiting GLB"}
-                        </span>
-                      </div>
-                      <div className="mt-4 flex flex-wrap gap-2">
-                        <Button
-                          variant="secondary"
-                          className={contrastButtonClass}
-                          onClick={() => void handleOpenOutputFolder()}
-                          disabled={!project.model?.glbPath}
-                        >
-                          Abrir salida
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          className={contrastGhostButtonClass}
-                          onClick={() => void handleOpenGenerationLog()}
-                          disabled={!generationLogPath}
-                        >
-                          Abrir log
-                        </Button>
-                      </div>
-                    </section>
-                  </div>
-                ) : null}
-              </RightPanel>
+                onOpenGenerationLog={handleOpenGenerationLog}
+                onGenerateSkp={handleRunGenerationSkp}
+                onPresetChange={setPreset}
+                onAutoGenerationProfileChange={setAutoGenerationProfile}
+                onReconstructionTierChange={handleReconstructionTierChange}
+                onMultiviewEnabledChange={handleMultiviewEnabledChange}
+                onMultiviewPresetChange={setMultiviewPreset}
+                onMultiviewHardSurfaceQualityChange={
+                  handleMultiviewHardSurfaceQualityChange
+                }
+                onWheelCapture={stopPanelWheel}
+              />
             </div>
 
-            <BottomToolbar
-              tone="contrast"
-              progress={isGenerating ? generationPercent : null}
-              left={
-                <div
-                  className={`${bottomZoneClass} ${isGenerating ? "opacity-45" : ""}`}
-                >
-                  <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--shell-contrast-text-muted)]">
-                    Transform
-                  </span>
-                  <Button
-                    variant="ghost"
-                    className={`h-9 px-3 text-xs ${toolbarSecondaryButtonClass}`}
-                    disabled={isGenerating}
-                    onClick={() => setActiveTab("model")}
-                  >
-                    Model
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    className={`h-9 px-3 text-xs ${toolbarSecondaryButtonClass}`}
-                    disabled={isGenerating}
-                    onClick={() => setActiveTab("light")}
-                  >
-                    Light
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    className={`h-9 px-3 text-xs ${toolbarSecondaryButtonClass}`}
-                    disabled={isGenerating}
-                    onClick={() => setActiveTab("material")}
-                  >
-                    Material
-                  </Button>
-                </div>
-              }
-              center={
-                <div className={bottomZoneClass}>
-                  <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--shell-contrast-text-muted)]">
-                    Tools
-                  </span>
-                  <select
-                    value={toolShortcut}
-                    onChange={(event) =>
-                      void handleToolShortcut(event.currentTarget.value)
-                    }
-                    className={`min-w-40 ${contrastSelectClass}`}
-                  >
-                    <option value="tools">Workspace tools</option>
-                    <option value="references">
-                      {isReferenceDrawerOpen
-                        ? "Hide references"
-                        : "Show references"}
-                    </option>
-                    <option value="notes">Open notes</option>
-                    <option value="result">Open result tab</option>
-                    <option value="output">Open output folder</option>
-                  </select>
-                </div>
-              }
-              right={
-                isGenerating ? (
-                  <div className={`${bottomZoneClass} justify-end`}>
-                    <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--warning)]">
-                      Generating
-                    </span>
-                    <div className="w-52">
-                      <div className="h-2 w-full overflow-hidden rounded-full bg-[var(--shell-contrast-tag)]">
-                        <div
-                          className="h-full bg-[linear-gradient(90deg,var(--accent),var(--accent-2))] transition-all duration-150 ease-out"
-                          style={{ width: `${generationPercent}%` }}
-                        />
-                      </div>
-                      <p className="mt-1 truncate text-[11px] text-[var(--shell-contrast-text-muted)]">
-                        {generationMessage}
-                      </p>
-                    </div>
-                    <Button
-                      variant="ghost"
-                      className={`h-9 px-3 text-xs ${toolbarSecondaryButtonClass}`}
-                      onClick={() => void handleCancelGeneration()}
-                    >
-                      Cancelar
-                    </Button>
-                  </div>
-                ) : (
-                  <div className={`${bottomZoneClass} justify-end`}>
-                    {!isEngineReady ? (
-                      <span className="text-[11px] text-[var(--shell-contrast-text-muted)]">
-                        Engine offline - Restart
-                      </span>
-                    ) : null}
-                    <Button
-                      variant="secondary"
-                      className={toolbarSecondaryButtonClass}
-                      onClick={() => void handleSelectImages()}
-                    >
-                      Agregar imagenes
-                    </Button>
-                    <Button
-                      variant="primary"
-                      className={toolbarPrimaryButtonClass}
-                      onClick={() => void handleRunGeneration()}
-                      disabled={selectedImages.length === 0 || !isEngineReady}
-                      title={
-                        !isEngineReady ? "Engine offline - Restart" : undefined
-                      }
-                    >
-                      {workspaceStatus === "idle"
-                        ? "Generar 3D"
-                        : "Regenerar 3D"}
-                    </Button>
-                    <Button
-                      variant="secondary"
-                      className={toolbarSecondaryButtonClass}
-                      onClick={() => void handleRunGenerationSkp()}
-                      disabled={
-                        selectedImages.length < 1 ||
-                        selectedImages.length > 4 ||
-                        !isEngineReady
-                      }
-                      title={
-                        !isEngineReady ? "Engine offline - Restart" : undefined
-                      }
-                    >
-                      Generar SKP
-                    </Button>
-                    {!isEngineReady ? (
-                      <Button
-                        variant="secondary"
-                        className={toolbarSecondaryButtonClass}
-                        onClick={() => void restartEngine()}
-                        disabled={isRestartingEngine}
-                      >
-                        {isRestartingEngine
-                          ? "Restarting..."
-                          : "Restart Engine"}
-                      </Button>
-                    ) : null}
-                  </div>
-                )
-              }
+            <ViewportTools
+              isGenerating={isGenerating}
+              generationPercent={generationPercent}
+              generationMessage={generationMessage}
+              selectedImages={selectedImages}
+              hasModel={hasModel}
+              isEngineReady={isEngineReady}
+              gridEnabled={viewportGridEnabled}
+              shadowEnabled={viewportShadowEnabled}
+              onGenerate={handleRunGeneration}
+              onCancelGeneration={handleCancelGeneration}
+              onResetView={handleViewportReset}
+              onFrameModel={handleViewportFit}
+              onToggleGrid={handleViewportToggleGrid}
+              onToggleShadows={handleViewportToggleShadows}
             />
           </div>
         </div>

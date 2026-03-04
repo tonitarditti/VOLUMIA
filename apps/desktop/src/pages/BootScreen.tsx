@@ -9,7 +9,11 @@ function bootSteps(detail: string, bootError: string | null) {
     { text: "Initializing AI engine", done: true },
     { text: "Loading workspace shell", done: !bootError },
     { text: detail, done: !bootError, active: !bootError },
-    { text: bootError ?? "Awaiting ready signal", done: false, error: Boolean(bootError) },
+    {
+      text: bootError ?? "Awaiting ready signal",
+      done: false,
+      error: Boolean(bootError),
+    },
   ];
 }
 
@@ -18,7 +22,10 @@ export function BootScreen() {
   const [detail, setDetail] = useState("Waiting for ComfyUI readiness...");
   const [bootError, setBootError] = useState<string | null>(null);
   const [progress, setProgress] = useState(18);
-  const steps = useMemo(() => bootSteps(detail, bootError), [bootError, detail]);
+  const steps = useMemo(
+    () => bootSteps(detail, bootError),
+    [bootError, detail],
+  );
 
   useEffect(() => {
     let active = true;
@@ -60,7 +67,8 @@ export function BootScreen() {
         if (!active) {
           return;
         }
-        const message = error instanceof Error ? error.message : "Unable to start ComfyUI.";
+        const message =
+          error instanceof Error ? error.message : "Unable to start ComfyUI.";
         setDetail(message);
         setProgress(72);
         setBootError(message);
@@ -74,12 +82,17 @@ export function BootScreen() {
 
   return (
     <div className="relative flex h-screen w-screen items-center justify-center overflow-hidden bg-[var(--bg)] px-6 text-[var(--text)]">
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_38%,rgba(154,110,58,0.12),transparent_30%)]" />
+      <div
+        className="absolute inset-0"
+        style={{ backgroundImage: "var(--boot-glow)" }}
+      />
       <div className="relative flex w-full max-w-xl flex-col items-center gap-10 rounded-[32px] border border-[var(--border)] bg-[var(--surface-2)] px-10 py-14 shadow-[var(--shadow-panel)]">
         <div className="flex flex-col items-center gap-5 text-center">
           <BrandMark size={72} />
           <div>
-            <h1 className="text-[26px] font-light tracking-[0.28em] text-[var(--text)]">VOLUMIA</h1>
+            <h1 className="text-[26px] font-light tracking-[0.28em] text-[var(--text)]">
+              VOLUMIA
+            </h1>
             <p className="mt-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--text-faint)]">
               3D Architectural Intelligence
             </p>
@@ -88,17 +101,24 @@ export function BootScreen() {
 
         <div className="w-full max-w-[340px] space-y-4">
           {steps.map((step, index) => (
-            <div key={`${step.text}-${index}`} className="flex items-center gap-3">
+            <div
+              key={`${step.text}-${index}`}
+              className="flex items-center gap-3"
+            >
               <div className="grid h-4 w-4 place-items-center">
                 {step.error ? (
                   <div className="h-2.5 w-2.5 rounded-full bg-[var(--danger)]" />
                 ) : step.done ? (
                   <div className="h-2.5 w-2.5 rounded-full bg-[var(--success)]" />
                 ) : (
-                  <div className={`h-2.5 w-2.5 rounded-full ${step.active ? "bg-[var(--accent)]" : "bg-[var(--border)]"}`} />
+                  <div
+                    className={`h-2.5 w-2.5 rounded-full ${step.active ? "bg-[var(--accent)]" : "bg-[var(--border)]"}`}
+                  />
                 )}
               </div>
-              <p className={`text-sm ${step.error ? "text-[var(--danger)]" : step.active ? "text-[var(--text)]" : "text-[var(--text-muted)]"}`}>
+              <p
+                className={`text-sm ${step.error ? "text-[var(--danger)]" : step.active ? "text-[var(--text)]" : "text-[var(--text-muted)]"}`}
+              >
                 {step.text}
               </p>
             </div>
@@ -113,10 +133,16 @@ export function BootScreen() {
             />
           </div>
           <div className="mt-2 flex items-center justify-between text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--text-faint)]">
-            <span>{bootError ? "Attention" : progress >= 100 ? "Ready" : "Loading"}</span>
+            <span>
+              {bootError ? "Attention" : progress >= 100 ? "Ready" : "Loading"}
+            </span>
             <span>{Math.floor(progress)}%</span>
           </div>
-          {bootError ? <p className="mt-4 text-sm text-[var(--text-muted)]">Retry from Dashboard via Advanced / Engine after the app loads.</p> : null}
+          {bootError ? (
+            <p className="mt-4 text-sm text-[var(--text-muted)]">
+              Retry from Dashboard via Advanced / Engine after the app loads.
+            </p>
+          ) : null}
         </div>
       </div>
     </div>

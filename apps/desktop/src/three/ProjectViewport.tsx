@@ -13,6 +13,8 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import { useT } from "@/volumia/i18n/useT";
 import { useSettings } from "@/volumia/settings/context";
+import type { StudioProfile } from "@/volumia/settings/types";
+import { themeTokens } from "@/ui/theme/tokens";
 import { SceneMassing } from "./SceneMassing";
 
 type ViewportSize = {
@@ -44,6 +46,9 @@ type ProjectViewportProps = {
   showUtilityButtons?: boolean;
   showChrome?: boolean;
   resetSignal?: number;
+  fitSignal?: number;
+  shadowEnabled?: boolean;
+  gridEnabled?: boolean;
   wireframe?: boolean;
   onToggleWireframe?: () => void;
 };
@@ -79,6 +84,7 @@ type LoadedModelProps = {
   fittedForUrlRef: { current: string | null };
   controlsRef: { current: OrbitControlsImpl | null };
   envMapIntensity: number;
+  fallbackMaterialColor: string;
   wireframe: boolean;
   onLoadError: (message: string | null) => void;
   onCameraFit: (snapshot: CameraSnapshot) => void;
@@ -106,6 +112,15 @@ type ModelNormalizationDebug = {
   minYAfter: number;
   centeredX: number;
   centeredZ: number;
+};
+
+type ModelViewportStats = {
+  triangleCount: number;
+  bounds: {
+    x: number;
+    y: number;
+    z: number;
+  };
 };
 
 type CoplanarHeuristicStats = {
@@ -143,6 +158,7 @@ type ModelStabilizationResult = {
 type NormalizeAndStabilizeOptions = {
   floorY: number;
   envMapIntensity: number;
+  fallbackMaterialColor: string;
   wireframe: boolean;
   debugRender: boolean;
   forcePolygonOffsetAllMeshes: boolean;
@@ -160,20 +176,45 @@ type TextureMaterialMap = Record<string, TextureAssignment>;
 
 type ViewportThemeConfig = {
   isDark: boolean;
+  environmentPreset: "studio" | "warehouse";
   background: string;
   ground: string;
+  groundBronzeTint: string;
+  groundBronzeStrength: number;
+  groundMetalness: number;
+  groundRoughness: number;
   gridMain: string;
   gridSub: string;
   gridOpacity: number;
   ambientIntensity: number;
+  ambientColor: string;
   hemisphereIntensity: number;
+  hemisphereSkyColor: string;
+  hemisphereGroundColor: string;
   keyIntensity: number;
+  keyColor: string;
   fillIntensity: number;
+  fillColor: string;
   rimIntensity: number;
+  rimColor: string;
+  topDownKeyIntensity: number;
+  topDownKeyColor: string;
   envMapIntensity: number;
   toneMappingExposure: number;
   contactShadowOpacity: number;
+  contactShadowBlur: number;
+  contactShadowScale: number;
+  contactShadowFar: number;
+  ambientOcclusionOpacity: number;
+  ambientOcclusionBlur: number;
+  ambientOcclusionScale: number;
+  ambientOcclusionFar: number;
   overlayGradient: string;
+  vignetteGradient: string | null;
+  fallbackMaterialColor: string;
+  errorBorder: string;
+  errorBg: string;
+  errorText: string;
 };
 
 const VIEW_TARGET = new THREE.Vector3(0, 0, 0);
@@ -225,6 +266,49 @@ function computeVisibleBoundingBox(root: THREE.Object3D): THREE.Box3 | null {
   });
 
   return box.isEmpty() ? null : box;
+}
+
+function countVisibleTriangles(root: THREE.Object3D) {
+  let total = 0;
+  root.traverse((child) => {
+    if (!(child instanceof THREE.Mesh) || !child.visible) {
+      return;
+    }
+    const geometry = child.geometry;
+    if (!geometry) {
+      return;
+    }
+    if (geometry.index) {
+      total += geometry.index.count / 3;
+      return;
+    }
+    const positionAttribute = geometry.getAttribute("position");
+    if (positionAttribute) {
+      total += positionAttribute.count / 3;
+    }
+  });
+  return Math.round(total);
+}
+
+function collectModelViewportStats(
+  root: THREE.Object3D | null,
+): ModelViewportStats | null {
+  if (!root) {
+    return null;
+  }
+  const bounds = computeVisibleBoundingBox(root);
+  if (!bounds) {
+    return null;
+  }
+  const size = bounds.getSize(new THREE.Vector3());
+  return {
+    triangleCount: countVisibleTriangles(root),
+    bounds: {
+      x: size.x,
+      y: size.y,
+      z: size.z,
+    },
+  };
 }
 
 function hideLikelyEmbeddedBaseMeshes(root: THREE.Object3D) {
@@ -355,14 +439,50 @@ function normalizeTextureColorSpace(texture: THREE.Texture) {
   if ("colorSpace" in texture) {
     texture.colorSpace = THREE.SRGBColorSpace;
   } else {
-    const legacyEncoding = (THREE as unknown as { sRGBEncoding?: number })
-      .sRGBEncoding;
+    const legacyEncoding = Reflect.get(
+      THREE as Record<string, unknown>,
+      "sRGBEncoding",
+    );
     if (legacyEncoding !== undefined) {
       (texture as THREE.Texture & { encoding?: number }).encoding =
-        legacyEncoding;
+        legacyEncoding as number;
     }
   }
   texture.needsUpdate = true;
+}
+
+function neutralizeViewportGround(color: string) {
+  const source = new THREE.Color(color);
+  const hsl = { h: 0, s: 0, l: 0 };
+  source.getHSL(hsl);
+  return new THREE.Color()
+    .setHSL(hsl.h, hsl.s * 0.85, hsl.l * 0.985)
+    .getStyle();
+}
+
+function reduceWarmGroundBounce(color: string) {
+  const source = new THREE.Color(color);
+  const hsl = { h: 0, s: 0, l: 0 };
+  source.getHSL(hsl);
+  return new THREE.Color().setHSL(hsl.h, hsl.s * 0.95, hsl.l * 0.99).getStyle();
+}
+
+function coolNeutralLight(color: string) {
+  const source = new THREE.Color(color);
+  return new THREE.Color(
+    THREE.MathUtils.clamp(source.r * 0.965, 0, 1),
+    THREE.MathUtils.clamp(source.g * 0.985, 0, 1),
+    THREE.MathUtils.clamp(source.b * 1.035, 0, 1),
+  ).getStyle();
+}
+
+function softenWarmAmbient(color: string) {
+  const source = new THREE.Color(color);
+  return new THREE.Color(
+    THREE.MathUtils.clamp(source.r * 1.01, 0, 1),
+    THREE.MathUtils.clamp(source.g * 1.0, 0, 1),
+    THREE.MathUtils.clamp(source.b * 0.985, 0, 1),
+  ).getStyle();
 }
 
 function analyzeCoplanarRisk(root: THREE.Object3D): CoplanarHeuristicStats {
@@ -432,12 +552,17 @@ function analyzeCoplanarRisk(root: THREE.Object3D): CoplanarHeuristicStats {
 }
 
 function applyModelVisualSettings(
-  object: THREE.Object3D,
-  options: {
+{ object, options }: {
+  object: THREE.Object3D; options: {
     envMapIntensity: number;
     wireframe: boolean;
     polygonOffset: boolean;
-  },
+
+    fallbackMaterialColor: string;
+
+
+  };
+},
 ): MaterialStabilityStats {
   const stats: MaterialStabilityStats = {
     totalMaterials: 0,
@@ -457,7 +582,7 @@ function applyModelVisualSettings(
 
     if (!child.material) {
       child.material = new THREE.MeshStandardMaterial({
-        color: "#c8c8c8",
+        color: options.fallbackMaterialColor,
         roughness: 0.62,
         metalness: 0.08,
       });
@@ -469,7 +594,7 @@ function applyModelVisualSettings(
     const normalizedMaterials = sourceMaterials.map((material) => {
       if (!material) {
         return new THREE.MeshStandardMaterial({
-          color: "#c8c8c8",
+          color: options.fallbackMaterialColor,
           roughness: 0.62,
           metalness: 0.08,
         });
@@ -494,7 +619,7 @@ function applyModelVisualSettings(
           material.aoMap,
         );
         if (!hasTextureMaps) {
-          material.color.set("#c8c8c8");
+          material.color.set(options.fallbackMaterialColor);
           material.roughness = 0.62;
           material.metalness = 0.08;
         }
@@ -502,7 +627,7 @@ function applyModelVisualSettings(
       }
 
       const fallback = new THREE.MeshStandardMaterial({
-        color: "#c8c8c8",
+        color: options.fallbackMaterialColor,
         roughness: 0.62,
         metalness: 0.08,
       });
@@ -743,11 +868,14 @@ function normalizeAndStabilizeModel(
   const coplanar = analyzeCoplanarRisk(root);
   const polygonOffsetEngaged =
     options.forcePolygonOffsetAllMeshes || coplanar.suspicious;
-  const material = applyModelVisualSettings(root, {
-    envMapIntensity: options.envMapIntensity,
-    wireframe: options.wireframe,
-    polygonOffset: polygonOffsetEngaged,
-  });
+  const material = applyModelVisualSettings({
+      object: root, options: {
+        envMapIntensity: options.envMapIntensity,
+        wireframe: options.wireframe,
+        polygonOffset: polygonOffsetEngaged,
+        fallbackMaterialColor: options.fallbackMaterialColor,
+      }
+    });
 
   const finalSize = finalBox.getSize(new THREE.Vector3());
   const minYAfter = finalBox.min.y;
@@ -796,6 +924,7 @@ function LoadedModel({
   fittedForUrlRef,
   controlsRef,
   envMapIntensity,
+  fallbackMaterialColor,
   wireframe,
   onLoadError,
   onCameraFit,
@@ -812,6 +941,7 @@ function LoadedModel({
   const loadSeqRef = useRef(0);
   const invalidateRef = useRef(invalidate);
   const envMapIntensityRef = useRef(envMapIntensity);
+  const fallbackMaterialColorRef = useRef(fallbackMaterialColor);
   const wireframeRef = useRef(wireframe);
   const debugRenderEnabledRef = useRef(debugRenderEnabled);
   const onLoadErrorRef = useRef(onLoadError);
@@ -825,6 +955,10 @@ function LoadedModel({
   useEffect(() => {
     envMapIntensityRef.current = envMapIntensity;
   }, [envMapIntensity]);
+
+  useEffect(() => {
+    fallbackMaterialColorRef.current = fallbackMaterialColor;
+  }, [fallbackMaterialColor]);
 
   useEffect(() => {
     wireframeRef.current = wireframe;
@@ -958,6 +1092,7 @@ function LoadedModel({
         const stabilized = normalizeAndStabilizeModel(nextModel, {
           floorY: FLOOR_Y,
           envMapIntensity: envMapIntensityRef.current,
+          fallbackMaterialColor: fallbackMaterialColorRef.current,
           wireframe: wireframeRef.current,
           debugRender: debugRenderEnabledRef.current,
           forcePolygonOffsetAllMeshes: DEV_POLY_OFFSET_ALL_MESHES,
@@ -1182,14 +1317,24 @@ function LoadedModel({
       return;
     }
 
-    applyModelVisualSettings(loadedModel, {
-      envMapIntensity,
-      wireframe,
-      polygonOffset:
-        stabilization?.polygonOffsetEngaged ?? DEV_POLY_OFFSET_ALL_MESHES,
-    });
+    applyModelVisualSettings({
+        object: loadedModel, options: {
+          envMapIntensity,
+          wireframe,
+          polygonOffset: stabilization?.polygonOffsetEngaged ?? DEV_POLY_OFFSET_ALL_MESHES,
+
+          fallbackMaterialColor,
+        }
+      });
     invalidate();
-  }, [envMapIntensity, invalidate, loadedModel, stabilization, wireframe]);
+  }, [
+    envMapIntensity,
+    fallbackMaterialColor,
+    invalidate,
+    loadedModel,
+    stabilization,
+    wireframe,
+  ]);
 
   return <group ref={modelRef} />;
 }
@@ -1306,45 +1451,106 @@ function resolveViewportTheme(theme: string | undefined): ViewportTheme {
   return "dark";
 }
 
-function getViewportThemeConfig(theme: ViewportTheme): ViewportThemeConfig {
-  if (theme === "light") {
-    return {
-      isDark: false,
-      background: "#e7e4de",
-      ground: "#998d80",
-      gridMain: "#807669",
-      gridSub: "#918678",
-      gridOpacity: 0.24,
-      ambientIntensity: 0.24,
-      hemisphereIntensity: 0.7,
-      keyIntensity: 1.74,
-      fillIntensity: 0.92,
-      rimIntensity: 0.52,
-      envMapIntensity: 0.96,
-      toneMappingExposure: 0.94,
-      contactShadowOpacity: 0.52,
-      overlayGradient:
-        "linear-gradient(180deg, rgba(124, 109, 90, 0.07) 0%, rgba(92, 82, 70, 0.028) 34%, rgba(10, 10, 10, 0) 100%)",
-    };
-  }
-
+function getViewportThemeConfig(
+  theme: ViewportTheme,
+  studioProfile: StudioProfile,
+): ViewportThemeConfig {
+  const tokens = themeTokens[theme];
+  const isDark = theme === "dark";
+  const isAtelier = studioProfile === "atelier";
   return {
-    isDark: true,
-    background: "#0d0b0a",
-    ground: "#3d3832",
-    gridMain: "#3a352f",
-    gridSub: "#36322d",
-    gridOpacity: 0.3,
-    ambientIntensity: 0.18,
-    hemisphereIntensity: 0.78,
-    keyIntensity: 2.35,
-    fillIntensity: 0.95,
-    rimIntensity: 0.5,
-    envMapIntensity: 1.05,
-    toneMappingExposure: 1.15,
-    contactShadowOpacity: 0.5,
-    overlayGradient:
-      "linear-gradient(180deg, rgba(86, 75, 62, 0.08) 0%, rgba(24, 21, 19, 0.03) 36%, rgba(8, 8, 8, 0) 100%)",
+    isDark,
+    environmentPreset: isAtelier ? (isDark ? "warehouse" : "studio") : "studio",
+    background: tokens.viewportBackground,
+    ground: isDark
+      ? reduceWarmGroundBounce(neutralizeViewportGround(tokens.viewportGround))
+      : tokens.viewportGround,
+    groundBronzeTint: tokens.accentPrimary,
+    groundBronzeStrength: isAtelier ? (isDark ? 0.0275 : 0.01) : 0,
+    groundMetalness: isAtelier ? (isDark ? 0.028 : 0.012) : 0,
+    groundRoughness: isAtelier ? (isDark ? 0.94 : 0.94) : 0.955,
+    gridMain: tokens.viewportGridMain,
+    gridSub: tokens.viewportGridSub,
+    gridOpacity: isDark ? 0.23 : 0.18,
+    ambientIntensity: isDark
+      ? isAtelier
+        ? 0.18
+        : 0.165
+      : isAtelier
+        ? 0.255
+        : 0.235,
+    ambientColor: isAtelier
+      ? softenWarmAmbient(tokens.viewportAmbientLight)
+      : coolNeutralLight(tokens.viewportAmbientLight),
+    hemisphereIntensity: isDark
+      ? isAtelier
+        ? 0.76
+        : 0.7
+      : isAtelier
+        ? 0.74
+        : 0.7,
+    hemisphereSkyColor: isAtelier
+      ? tokens.viewportHemisphereSky
+      : coolNeutralLight(tokens.viewportHemisphereSky),
+    hemisphereGroundColor: isAtelier
+      ? reduceWarmGroundBounce(tokens.viewportHemisphereGround)
+      : coolNeutralLight(
+          reduceWarmGroundBounce(tokens.viewportHemisphereGround),
+        ),
+    keyIntensity: isDark ? (isAtelier ? 2.05 : 1.92) : isAtelier ? 1.62 : 1.54,
+    keyColor: isAtelier
+      ? tokens.viewportKeyLight
+      : coolNeutralLight(tokens.viewportKeyLight),
+    fillIntensity: isDark ? (isAtelier ? 0.94 : 0.88) : isAtelier ? 0.98 : 0.94,
+    fillColor: isAtelier
+      ? tokens.viewportFillLight
+      : coolNeutralLight(tokens.viewportFillLight),
+    rimIntensity: isDark ? (isAtelier ? 0.38 : 0.3) : isAtelier ? 0.42 : 0.34,
+    rimColor: isAtelier
+      ? tokens.viewportRimLight
+      : coolNeutralLight(tokens.viewportRimLight),
+    topDownKeyIntensity: isDark
+      ? isAtelier
+        ? 0.42
+        : 0.22
+      : isAtelier
+        ? 0.14
+        : 0.07,
+    topDownKeyColor: coolNeutralLight(
+      isDark ? tokens.viewportKeyLight : tokens.viewportAmbientLight,
+    ),
+    envMapIntensity: isDark
+      ? isAtelier
+        ? 1
+        : 0.92
+      : isAtelier
+        ? 0.94
+        : 0.88,
+    toneMappingExposure: isDark ? 1.12 : 0.93,
+    contactShadowOpacity: isDark ? 0.38 : isAtelier ? 0.46 : 0.43,
+    contactShadowBlur: isDark ? 2.8 : isAtelier ? 2 : 2.1,
+    contactShadowScale: isDark ? 13.6 : isAtelier ? 14.2 : 13.8,
+    contactShadowFar: isDark ? 7.2 : isAtelier ? 7.5 : 7,
+    ambientOcclusionOpacity: isDark ? 0 : isAtelier ? 0.12 : 0.095,
+    ambientOcclusionBlur: isDark ? 0 : isAtelier ? 4.1 : 3.5,
+    ambientOcclusionScale: isDark ? 0 : isAtelier ? 12.6 : 11.8,
+    ambientOcclusionFar: isDark ? 0 : isAtelier ? 9.4 : 8.6,
+    overlayGradient: isDark
+      ? isAtelier
+        ? "linear-gradient(180deg, rgba(255, 255, 255, 0.02) 0%, rgba(16, 15, 14, 0.012) 46%, rgba(0, 0, 0, 0.06) 100%)"
+        : "linear-gradient(180deg, rgba(255, 255, 255, 0.014) 0%, rgba(16, 15, 14, 0.008) 42%, rgba(0, 0, 0, 0.038) 100%)"
+      : isAtelier
+        ? "linear-gradient(180deg, rgba(255, 255, 255, 0.12) 0%, rgba(240, 236, 230, 0.045) 42%, rgba(32, 28, 24, 0.018) 100%)"
+        : "linear-gradient(180deg, rgba(255, 255, 255, 0.1) 0%, rgba(242, 239, 234, 0.035) 44%, rgba(32, 28, 24, 0.012) 100%)",
+    vignetteGradient: isAtelier
+      ? isDark
+        ? "radial-gradient(circle at 50% 42%, rgba(0, 0, 0, 0) 58%, rgba(0, 0, 0, 0.1) 100%)"
+        : "radial-gradient(circle at 50% 42%, rgba(255, 255, 255, 0) 60%, rgba(28, 24, 20, 0.032) 100%)"
+      : null,
+    fallbackMaterialColor: tokens.viewportFallbackMaterial,
+    errorBorder: tokens.viewportErrorBorder,
+    errorBg: tokens.viewportErrorBg,
+    errorText: tokens.viewportErrorText,
   };
 }
 
@@ -1356,6 +1562,9 @@ export function ProjectViewport({
   showUtilityButtons = true,
   showChrome = true,
   resetSignal,
+  fitSignal,
+  shadowEnabled = true,
+  gridEnabled = true,
   wireframe: wireframeProp,
   onToggleWireframe,
 }: ProjectViewportProps) {
@@ -1382,6 +1591,7 @@ export function ProjectViewport({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [modelNormalizationDebug, setModelNormalizationDebug] =
     useState<ModelNormalizationDebug | null>(null);
+  const [modelStats, setModelStats] = useState<ModelViewportStats | null>(null);
   const wireframe = wireframeProp ?? wireframeInternal;
   const isOrbitingRef = useRef(false);
   const url = useMemo(
@@ -1450,8 +1660,11 @@ export function ProjectViewport({
 
   const canRenderCanvas = size.width >= 10 && size.height >= 10;
   const viewportTheme = resolveViewportTheme(resolvedTheme);
-  const themeConfig = getViewportThemeConfig(viewportTheme);
-  const bgClass = themeConfig.isDark ? "bg-[#0c0a09]" : "bg-[#f4f1ee]";
+  const studioProfile = settings.studioProfile;
+  const themeConfig = useMemo(
+    () => getViewportThemeConfig(viewportTheme, studioProfile),
+    [studioProfile, viewportTheme],
+  );
   const shadowMapSize = settings.fpsLimit >= 120 ? 1024 : 2048;
   const headerClass =
     "shrink-0 border-b border-[var(--border)] bg-[var(--surface-1)] px-3 py-2";
@@ -1473,6 +1686,65 @@ export function ProjectViewport({
   }`;
 
   useEffect(() => {
+    if (rendererRef.current) {
+      rendererRef.current.toneMappingExposure = themeConfig.toneMappingExposure;
+    }
+    invalidateRef.current?.();
+  }, [studioProfile, themeConfig.toneMappingExposure, viewportTheme]);
+
+  useEffect(() => {
+    console.debug("[ProjectViewport] studioProfile changed", {
+      studioProfile,
+      viewportTheme,
+      background: themeConfig.background,
+      groundBronzeStrength: themeConfig.groundBronzeStrength,
+      ambientIntensity: themeConfig.ambientIntensity,
+      keyIntensity: themeConfig.keyIntensity,
+      topDownKeyIntensity: themeConfig.topDownKeyIntensity,
+      vignette: Boolean(themeConfig.vignetteGradient),
+    });
+
+    if (sceneRef.current) {
+      sceneRef.current.background = new THREE.Color(themeConfig.background);
+    }
+
+    if (rendererRef.current) {
+      rendererRef.current.toneMappingExposure = themeConfig.toneMappingExposure;
+    }
+
+    let frame = 0;
+    let raf = 0;
+    const scheduleRefresh = () => {
+      invalidateRef.current?.();
+      frame += 1;
+      if (frame < 4) {
+        raf = window.requestAnimationFrame(scheduleRefresh);
+      }
+    };
+
+    raf = window.requestAnimationFrame(scheduleRefresh);
+
+    return () => {
+      window.cancelAnimationFrame(raf);
+    };
+  }, [
+    studioProfile,
+    viewportTheme,
+    themeConfig.background,
+    themeConfig.ground,
+    themeConfig.groundBronzeStrength,
+    themeConfig.ambientIntensity,
+    themeConfig.hemisphereIntensity,
+    themeConfig.keyIntensity,
+    themeConfig.fillIntensity,
+    themeConfig.rimIntensity,
+    themeConfig.topDownKeyIntensity,
+    themeConfig.contactShadowOpacity,
+    themeConfig.ambientOcclusionOpacity,
+    themeConfig.vignetteGradient,
+  ]);
+
+  useEffect(() => {
     if (glbPath) {
       return;
     }
@@ -1487,6 +1759,7 @@ export function ProjectViewport({
     };
     setLoadError(null);
     setModelNormalizationDebug(null);
+    setModelStats(null);
   }, [glbPath]);
 
   const handleResetView = useCallback(() => {
@@ -1688,6 +1961,56 @@ export function ProjectViewport({
   }, [handleResetView, resetSignal]);
 
   useEffect(() => {
+    if (typeof fitSignal !== "number" || fitSignal <= 0) {
+      return;
+    }
+    const camera = cameraRef.current;
+    const model = loadedModelRef.current;
+    if (!camera || !model) {
+      return;
+    }
+
+    model.updateMatrixWorld(true);
+    const box =
+      computeVisibleBoundingBox(model) ?? new THREE.Box3().setFromObject(model);
+    if (box.isEmpty()) {
+      return;
+    }
+
+    const size = box.getSize(new THREE.Vector3());
+    const radius = Math.max(size.length() * 0.5, 0.01);
+    const maxDim = Math.max(size.x, size.y, size.z);
+    if (!Number.isFinite(maxDim) || maxDim <= 0) {
+      return;
+    }
+
+    const target = box.getCenter(new THREE.Vector3());
+    const distance = Math.max(radius * 2.2, maxDim * 1.4);
+    const elevation = target.y + Math.max(size.y * 0.4, radius * 0.6);
+    const position = new THREE.Vector3(
+      target.x + distance * 0.55,
+      elevation,
+      target.z + distance * 0.55,
+    );
+    const { near, far } = deriveCameraPlanes(radius);
+    const snapshot: CameraSnapshot = {
+      position,
+      target,
+      near,
+      far,
+    };
+
+    cameraSnapshotRef.current = {
+      position: snapshot.position.clone(),
+      target: snapshot.target.clone(),
+      near: snapshot.near,
+      far: snapshot.far,
+    };
+    applyCameraSnapshot(camera, controlsRef, cameraSnapshotRef.current);
+    invalidateRef.current?.();
+  }, [fitSignal]);
+
+  useEffect(() => {
     const generation = (
       window as { volumia?: { generation?: ViewportGenerationBridge } }
     ).volumia?.generation;
@@ -1762,7 +2085,7 @@ export function ProjectViewport({
     >
       <div
         ref={hostRef}
-        className={`relative flex h-full w-full min-h-0 min-w-0 select-none flex-col overflow-hidden ${bgClass}`}
+        className="relative flex h-full w-full min-h-0 min-w-0 select-none flex-col overflow-hidden bg-[var(--shell-viewport)]"
       >
         {showChrome ? (
           <div className={headerClass}>
@@ -1821,9 +2144,32 @@ export function ProjectViewport({
             className="pointer-events-none absolute inset-0 z-10"
             style={{ backgroundImage: themeConfig.overlayGradient }}
           />
+          {themeConfig.vignetteGradient ? (
+            <div
+              className="pointer-events-none absolute inset-0 z-10"
+              style={{ backgroundImage: themeConfig.vignetteGradient }}
+            />
+          ) : null}
           {loadError ? (
-            <div className="pointer-events-none absolute inset-x-3 top-3 z-20 rounded-md border border-[#7e2d2d] bg-[#3c1515]/90 px-3 py-2 text-[11px] leading-snug text-[#ffd7d7]">
+            <div
+              className="pointer-events-none absolute inset-x-3 top-3 z-20 rounded-[var(--radius-sm)] border px-3 py-2 text-[11px] leading-snug"
+              style={{
+                borderColor: themeConfig.errorBorder,
+                backgroundColor: themeConfig.errorBg,
+                color: themeConfig.errorText,
+              }}
+            >
               {loadError}
+            </div>
+          ) : null}
+          {modelStats ? (
+            <div className="pointer-events-none absolute right-3 top-3 z-20 rounded-[var(--radius-md)] border border-[var(--glass-border)] bg-[var(--glass-bg-strong)] px-3 py-2 text-right text-[10px] uppercase tracking-[0.12em] text-[var(--muted-text)] shadow-[var(--glass-shadow)] backdrop-blur-[12px]">
+              <div>Mesh {modelStats.triangleCount.toLocaleString()} tris</div>
+              <div className="mt-1 text-[9px] tracking-[0.1em] text-[var(--text-faint)]">
+                Bounds {modelStats.bounds.x.toFixed(2)} x{" "}
+                {modelStats.bounds.y.toFixed(2)} x{" "}
+                {modelStats.bounds.z.toFixed(2)}
+              </div>
             </div>
           ) : null}
           {VIEWER_DEBUG && modelNormalizationDebug ? (
@@ -1863,13 +2209,14 @@ export function ProjectViewport({
                   if ("outputColorSpace" in gl) {
                     gl.outputColorSpace = THREE.SRGBColorSpace;
                   } else {
-                    const legacyEncoding = (
-                      THREE as unknown as { sRGBEncoding?: number }
-                    ).sRGBEncoding;
+                    const legacyEncoding = Reflect.get(
+                      THREE as Record<string, unknown>,
+                      "sRGBEncoding",
+                    );
                     if (legacyEncoding !== undefined) {
                       (
                         gl as THREE.WebGLRenderer & { outputEncoding: number }
-                      ).outputEncoding = legacyEncoding;
+                      ).outputEncoding = legacyEncoding as number;
                     }
                   }
                   gl.toneMapping = THREE.ACESFilmicToneMapping;
@@ -1909,21 +2256,25 @@ export function ProjectViewport({
                 <FrameLimiter fpsLimit={settings.fpsLimit} />
                 <color attach="background" args={[themeConfig.background]} />
                 <Environment
-                  preset={themeConfig.isDark ? "warehouse" : "studio"}
+                  preset={themeConfig.environmentPreset}
                   background={false}
                 />
                 <ambientLight
                   intensity={themeConfig.ambientIntensity}
-                  color="#efe5d5"
+                  color={themeConfig.ambientColor}
                 />
                 <hemisphereLight
-                  args={["#f2e8d8", "#7f7468", themeConfig.hemisphereIntensity]}
+                  args={[
+                    themeConfig.hemisphereSkyColor,
+                    themeConfig.hemisphereGroundColor,
+                    themeConfig.hemisphereIntensity,
+                  ]}
                 />
                 <directionalLight
-                  intensity={themeConfig.keyIntensity}
-                  color="#f8f0e3"
+                  intensity={shadowEnabled ? themeConfig.keyIntensity : themeConfig.keyIntensity * 0.92}
+                  color={themeConfig.keyColor}
                   position={[6, 10, 4]}
-                  castShadow
+                  castShadow={shadowEnabled}
                   shadow-mapSize-width={shadowMapSize}
                   shadow-mapSize-height={shadowMapSize}
                   shadow-camera-near={SHADOW_CAMERA_NEAR}
@@ -1938,29 +2289,49 @@ export function ProjectViewport({
                 />
                 <directionalLight
                   intensity={themeConfig.fillIntensity}
-                  color="#ece2d1"
+                  color={themeConfig.fillColor}
                   position={[-8, 5, 6]}
                 />
                 <directionalLight
                   intensity={themeConfig.rimIntensity}
-                  color="#fff6e8"
+                  color={themeConfig.rimColor}
                   position={[-5, 7, -8]}
+                />
+                <directionalLight
+                  intensity={themeConfig.topDownKeyIntensity}
+                  color={themeConfig.topDownKeyColor}
+                  position={[0, 13, 0.5]}
                 />
                 <SceneMassing
                   showMassing={!glbPath}
+                  showGrid={gridEnabled}
                   groundColor={themeConfig.ground}
+                  bronzeTintColor={themeConfig.groundBronzeTint}
+                  bronzeTintStrength={themeConfig.groundBronzeStrength}
+                  groundMetalness={themeConfig.groundMetalness}
+                  groundRoughness={themeConfig.groundRoughness}
                   gridMain={themeConfig.gridMain}
                   gridSub={themeConfig.gridSub}
                   gridOpacity={themeConfig.gridOpacity}
                 />
                 <ContactShadows
                   position={[0, 0.002, 0]}
-                  opacity={themeConfig.contactShadowOpacity}
-                  scale={14}
-                  blur={themeConfig.isDark ? 2.2 : 1.7}
-                  far={8}
+                  opacity={shadowEnabled ? themeConfig.contactShadowOpacity : 0}
+                  scale={themeConfig.contactShadowScale}
+                  blur={themeConfig.contactShadowBlur}
+                  far={themeConfig.contactShadowFar}
                   resolution={1024}
                 />
+                {shadowEnabled && themeConfig.ambientOcclusionOpacity > 0 ? (
+                  <ContactShadows
+                    position={[0, 0.001, 0]}
+                    opacity={themeConfig.ambientOcclusionOpacity}
+                    scale={themeConfig.ambientOcclusionScale}
+                    blur={themeConfig.ambientOcclusionBlur}
+                    far={themeConfig.ambientOcclusionFar}
+                    resolution={512}
+                  />
+                ) : null}
                 <LoadedModel
                   glbPath={glbPath}
                   glbVersion={glbVersion}
@@ -1970,10 +2341,12 @@ export function ProjectViewport({
                   fittedForUrlRef={fittedForUrlRef}
                   controlsRef={controlsRef}
                   envMapIntensity={themeConfig.envMapIntensity}
+                  fallbackMaterialColor={themeConfig.fallbackMaterialColor}
                   wireframe={wireframe}
                   onLoadError={setLoadError}
                   onModelReady={(model) => {
                     loadedModelRef.current = model;
+                    setModelStats(collectModelViewportStats(model));
                   }}
                   onCameraFit={(snapshot) => {
                     cameraSnapshotRef.current = snapshot;

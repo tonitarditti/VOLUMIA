@@ -17,13 +17,18 @@ const paddingClasses: Record<CardPadding, string> = {
   lg: "p-6",
 };
 
-export function Card({ className = "", children, padding = "none", hoverElevation = false }: CardProps) {
+export function Card({
+  className = "",
+  children,
+  padding = "none",
+  hoverElevation = false,
+}: CardProps) {
   const { settings } = useSettings();
   const surfaceClass = getSurfaceClass(settings.glassStyle, "panel");
 
   return (
     <section
-      className={`rounded-xl transition-[border-color,background-color] duration-150 ease-out ${surfaceClass} ${hoverElevation ? "hover:border-[color:rgba(155,122,89,0.26)] hover:bg-[var(--surface-2)]" : ""} ${paddingClasses[padding]} ${className}`}
+      className={`rounded-[var(--radius-lg)] transition-[border-color,background-color] duration-150 ease-out ${surfaceClass} ${hoverElevation ? "hover:border-[var(--border-strong)] hover:bg-[var(--surface-2)]" : ""} ${paddingClasses[padding]} ${className}`}
     >
       {children}
     </section>

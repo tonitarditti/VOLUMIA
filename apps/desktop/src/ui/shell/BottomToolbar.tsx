@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { useSettings } from "@/volumia/settings/context";
 
 type BottomToolbarProps = {
   left: ReactNode;
@@ -17,21 +18,27 @@ export function BottomToolbar({
   className = "",
   tone = "default",
 }: BottomToolbarProps) {
+  const { settings } = useSettings();
   const isContrast = tone === "contrast";
+  const isGlass = settings.glassStyle;
   const rootClass = isContrast
-    ? "border-[var(--shell-contrast-border)] bg-[var(--shell-contrast-panel)]"
-    : "border-[var(--border)] bg-[var(--shell-toolbar)]";
+    ? "border-[var(--workspace-divider)] bg-[var(--workspace-toolbar-bg)]"
+    : "border-[var(--panel-border)] bg-[var(--shell-toolbar)]";
   const dividerClass = isContrast
-    ? "border-[var(--shell-contrast-border)]"
-    : "border-[var(--border)]";
+    ? "border-[var(--workspace-divider)]"
+    : "border-[var(--panel-border)]";
+  const glassClass = isGlass ? "backdrop-blur-[var(--glass-blur)]" : "";
 
   return (
     <footer
-      className={`relative grid h-16 shrink-0 grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1.2fr)] border-t ${rootClass} ${className}`}
+      className={`relative grid h-[62px] shrink-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center border-t ${rootClass} ${glassClass} ${className}`}
     >
+      <div
+        className={`absolute inset-x-0 top-0 h-px ${isContrast ? "bg-[var(--workspace-divider)]" : "bg-[var(--panel-border)]"}`}
+      />
       {typeof progress === "number" ? (
         <div
-          className={`absolute inset-x-0 top-0 h-0.5 ${isContrast ? "bg-[var(--shell-contrast-border)]" : "bg-[var(--border)]"}`}
+          className={`absolute inset-x-0 top-0 h-0.5 ${isContrast ? "bg-[var(--workspace-divider)]" : "bg-[var(--panel-border)]"}`}
         >
           <div
             className="h-full bg-[linear-gradient(90deg,var(--accent),var(--accent-2))]"
@@ -39,13 +46,11 @@ export function BottomToolbar({
           />
         </div>
       ) : null}
-      <div
-        className={`flex min-w-0 items-center gap-2 border-r px-4 ${dividerClass}`}
-      >
+      <div className="flex min-w-0 items-center gap-2 px-4">
         {left}
       </div>
       <div
-        className={`flex min-w-0 items-center gap-2 border-r px-4 ${dividerClass}`}
+        className={`flex min-w-0 items-center justify-center gap-2 border-x px-5 ${dividerClass}`}
       >
         {center}
       </div>

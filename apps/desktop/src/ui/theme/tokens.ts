@@ -1,6 +1,12 @@
 import type { Theme } from "@/volumia/settings/types";
 
+/* VOLUMIA Design System v1.0 (Frozen Baseline) */
+
 export type ThemeTokens = {
+  bgApp: string;
+  bgSurface1: string;
+  bgSurface2: string;
+  bgPanelDark: string;
   bg: string;
   surface1: string;
   surface2: string;
@@ -13,9 +19,18 @@ export type ThemeTokens = {
   text: string;
   textMuted: string;
   textFaint: string;
+  textInverse: string;
+  accentPrimary: string;
+  accentPrimaryHover: string;
+  accentPrimarySoft: string;
+  accentContrast: string;
   accent: string;
+  accentHover: string;
   accent2: string;
   accentSoft: string;
+  statusReady: string;
+  statusBusy: string;
+  statusError: string;
   success: string;
   warning: string;
   danger: string;
@@ -40,7 +55,10 @@ export type ThemeTokens = {
   glassBg: string;
   glassBgStrong: string;
   glassBorder: string;
+  glassHighlight: string;
+  glassInset: string;
   glassShadow: string;
+  glassBlur: string;
   shellTopbar: string;
   shellToolbar: string;
   shellPanel: string;
@@ -53,118 +71,282 @@ export type ThemeTokens = {
   shellContrastText: string;
   shellContrastTextMuted: string;
   shellContrastTag: string;
+  radiusSm: string;
+  radiusMd: string;
+  radiusLg: string;
+  space4: string;
+  space8: string;
+  space12: string;
+  space16: string;
+  space24: string;
+  space32: string;
+  bodyBackgroundImage: string;
+  appSceneBackground: string;
+  bootGlow: string;
+  projectPreviewGradient: string;
+  projectPreviewOverlay: string;
+  projectPreviewChipBg: string;
+  projectPreviewChipBorder: string;
+  projectPreviewChipText: string;
+  viewportBackground: string;
+  viewportGround: string;
+  viewportGridMain: string;
+  viewportGridSub: string;
+  viewportOverlayGradient: string;
+  viewportAmbientLight: string;
+  viewportHemisphereSky: string;
+  viewportHemisphereGround: string;
+  viewportKeyLight: string;
+  viewportFillLight: string;
+  viewportRimLight: string;
+  viewportFallbackMaterial: string;
+  viewportErrorBorder: string;
+  viewportErrorBg: string;
+  viewportErrorText: string;
+  scrollbarThumb: string;
 };
+
+const sharedTokens = {
+  accentPrimary: "#B7925F",
+  accentPrimaryHover: "#C9A16E",
+  accentPrimarySoft: "rgba(183, 146, 95, 0.14)",
+  accentContrast: "#1A1714",
+  statusReady: "#5C7C63",
+  statusBusy: "#A9864A",
+  statusError: "#A35A4F",
+  textInverse: "#FFFFFF",
+  radiusSm: "6px",
+  radiusMd: "10px",
+  radiusLg: "14px",
+  space4: "4px",
+  space8: "8px",
+  space12: "12px",
+  space16: "16px",
+  space24: "24px",
+  space32: "32px",
+  glassBlur: "18px",
+} as const;
 
 export const themeTokens: Record<Theme, ThemeTokens> = {
   light: {
-    bg: "#e4e2de",
-    surface1: "rgba(241, 239, 235, 0.94)",
-    surface2: "rgba(245, 243, 239, 0.97)",
-    surface3: "#faf9f6",
-    surfaceRaised: "#f1efeb",
-    inputBg: "rgba(255, 255, 255, 0.72)",
-    inputBorder: "rgba(137, 130, 119, 0.24)",
-    border: "rgba(137, 130, 119, 0.18)",
-    borderStrong: "rgba(137, 130, 119, 0.28)",
-    text: "#272624",
-    textMuted: "rgba(102, 99, 95, 0.78)",
-    textFaint: "rgba(138, 133, 127, 0.72)",
-    accent: "#906c43",
-    accent2: "#a27f57",
-    accentSoft: "rgba(144, 108, 67, 0.08)",
-    success: "#5a7868",
-    warning: "#987654",
-    danger: "#9c6469",
-    successBg: "rgba(90, 120, 104, 0.12)",
-    warningBg: "rgba(152, 118, 84, 0.12)",
-    dangerBg: "rgba(156, 100, 105, 0.11)",
-    badgeNeutralBorder: "rgba(137, 130, 119, 0.2)",
-    badgeNeutralBg: "rgba(137, 130, 119, 0.08)",
-    badgeNeutralText: "rgba(92, 88, 83, 0.82)",
-    badgeSuccessBorder: "rgba(90, 120, 104, 0.22)",
-    badgeSuccessBg: "rgba(90, 120, 104, 0.1)",
-    badgeSuccessText: "#587564",
-    badgeWarningBorder: "rgba(152, 118, 84, 0.22)",
-    badgeWarningBg: "rgba(152, 118, 84, 0.1)",
-    badgeWarningText: "#8f6f50",
-    badgeDangerBorder: "rgba(156, 100, 105, 0.22)",
-    badgeDangerBg: "rgba(156, 100, 105, 0.1)",
-    badgeDangerText: "#956268",
+    bgApp: "#E8E3DC",
+    bgSurface1: "#F0ECE6",
+    bgSurface2: "#F5F1EC",
+    bgPanelDark: "#26221E",
+    bg: "#E8E3DC",
+    surface1: "#F0ECE6",
+    surface2: "#F5F1EC",
+    surface3: "#FBF7F2",
+    surfaceRaised: "#FFFDFC",
+    inputBg: "rgba(255, 252, 248, 0.84)",
+    inputBorder: "rgba(90, 81, 72, 0.15)",
+    border: "rgba(90, 81, 72, 0.14)",
+    borderStrong: "rgba(90, 81, 72, 0.24)",
+    text: "#241F1A",
+    textMuted: "rgba(86, 78, 70, 0.72)",
+    textFaint: "rgba(104, 95, 86, 0.66)",
+    textInverse: sharedTokens.textInverse,
+    accentPrimary: sharedTokens.accentPrimary,
+    accentPrimaryHover: sharedTokens.accentPrimaryHover,
+    accentPrimarySoft: sharedTokens.accentPrimarySoft,
+    accentContrast: sharedTokens.accentContrast,
+    accent: sharedTokens.accentPrimary,
+    accentHover: sharedTokens.accentPrimaryHover,
+    accent2: sharedTokens.accentPrimaryHover,
+    accentSoft: sharedTokens.accentPrimarySoft,
+    statusReady: sharedTokens.statusReady,
+    statusBusy: sharedTokens.statusBusy,
+    statusError: sharedTokens.statusError,
+    success: sharedTokens.statusReady,
+    warning: sharedTokens.statusBusy,
+    danger: sharedTokens.statusError,
+    successBg: "rgba(92, 124, 99, 0.14)",
+    warningBg: "rgba(169, 134, 74, 0.14)",
+    dangerBg: "rgba(163, 90, 79, 0.13)",
+    badgeNeutralBorder: "rgba(90, 81, 72, 0.16)",
+    badgeNeutralBg: "rgba(90, 81, 72, 0.08)",
+    badgeNeutralText: "rgba(86, 78, 70, 0.78)",
+    badgeSuccessBorder: "rgba(92, 124, 99, 0.22)",
+    badgeSuccessBg: "rgba(92, 124, 99, 0.12)",
+    badgeSuccessText: sharedTokens.statusReady,
+    badgeWarningBorder: "rgba(169, 134, 74, 0.22)",
+    badgeWarningBg: "rgba(169, 134, 74, 0.12)",
+    badgeWarningText: sharedTokens.statusBusy,
+    badgeDangerBorder: "rgba(163, 90, 79, 0.22)",
+    badgeDangerBg: "rgba(163, 90, 79, 0.12)",
+    badgeDangerText: sharedTokens.statusError,
     shadow:
-      "0 2px 10px rgba(21, 19, 17, 0.06), 0 1px 2px rgba(21, 19, 17, 0.04)",
+      "0 2px 10px rgba(24, 20, 16, 0.06), 0 1px 2px rgba(24, 20, 16, 0.04)",
     shadowPanel:
-      "0 16px 42px rgba(49, 43, 35, 0.07), 0 2px 10px rgba(21, 19, 17, 0.05)",
-    focusRing: "rgba(144, 108, 67, 0.18)",
-    glassBg: "rgba(255, 255, 255, 0.58)",
-    glassBgStrong: "rgba(255, 255, 255, 0.74)",
-    glassBorder: "rgba(137, 130, 119, 0.22)",
-    glassShadow: "0 10px 24px rgba(49, 43, 35, 0.08)",
-    shellTopbar: "rgba(245, 243, 239, 0.97)",
-    shellToolbar: "rgba(242, 240, 236, 0.96)",
-    shellPanel: "rgba(240, 238, 234, 0.94)",
-    shellViewport: "#e7e4de",
-    shellTag: "rgba(137, 130, 119, 0.14)",
-    shellOverlay: "rgba(39, 38, 36, 0.06)",
-    shellContrastPanel: "rgba(84, 80, 74, 0.95)",
-    shellContrastSurface: "rgba(255, 250, 244, 0.035)",
-    shellContrastBorder: "rgba(250, 244, 236, 0.08)",
-    shellContrastText: "rgba(244, 239, 233, 0.94)",
-    shellContrastTextMuted: "rgba(205, 198, 190, 0.72)",
-    shellContrastTag: "rgba(255, 250, 244, 0.05)",
+      "0 18px 42px rgba(30, 25, 20, 0.08), 0 2px 10px rgba(24, 20, 16, 0.05)",
+    focusRing: "rgba(176, 137, 90, 0.28)",
+    glassBg: "rgba(255, 252, 248, 0.56)",
+    glassBgStrong: "rgba(255, 252, 248, 0.74)",
+    glassBorder: "rgba(90, 81, 72, 0.16)",
+    glassHighlight:
+      "linear-gradient(180deg, rgba(255, 255, 255, 0.24), rgba(255, 255, 255, 0.08))",
+    glassInset: "rgba(255, 255, 255, 0.05)",
+    glassShadow: "0 10px 24px rgba(30, 25, 20, 0.08)",
+    glassBlur: sharedTokens.glassBlur,
+    shellTopbar: "rgba(244, 239, 232, 0.94)",
+    shellToolbar: "rgba(238, 233, 226, 0.94)",
+    shellPanel: "rgba(240, 235, 228, 0.95)",
+    shellViewport: "#E6E1DA",
+    shellTag: "rgba(90, 81, 72, 0.11)",
+    shellOverlay: "rgba(38, 34, 30, 0.04)",
+    shellContrastPanel: "#26221E",
+    shellContrastSurface: "rgba(255, 255, 255, 0.035)",
+    shellContrastBorder: "rgba(255, 247, 238, 0.085)",
+    shellContrastText: "rgba(245, 240, 234, 0.95)",
+    shellContrastTextMuted: "rgba(208, 201, 192, 0.7)",
+    shellContrastTag: "rgba(255, 255, 255, 0.045)",
+    radiusSm: sharedTokens.radiusSm,
+    radiusMd: sharedTokens.radiusMd,
+    radiusLg: sharedTokens.radiusLg,
+    space4: sharedTokens.space4,
+    space8: sharedTokens.space8,
+    space12: sharedTokens.space12,
+    space16: sharedTokens.space16,
+    space24: sharedTokens.space24,
+    space32: sharedTokens.space32,
+    bodyBackgroundImage:
+      "radial-gradient(circle at top, rgba(255, 255, 255, 0.2), transparent 34%), linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0)), linear-gradient(180deg, rgba(176, 137, 90, 0.02), rgba(176, 137, 90, 0)), var(--bg)",
+    appSceneBackground:
+      "radial-gradient(circle at top, rgba(255, 255, 255, 0.28), transparent 34%), linear-gradient(180deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0)), var(--bg)",
+    bootGlow:
+      "radial-gradient(circle at 50% 38%, rgba(176, 137, 90, 0.14), transparent 30%)",
+    projectPreviewGradient: "linear-gradient(135deg, #26221E 0%, #5F4A31 100%)",
+    projectPreviewOverlay:
+      "linear-gradient(180deg, transparent 40%, rgba(20, 18, 16, 0.34) 100%)",
+    projectPreviewChipBg: "rgba(20, 18, 16, 0.24)",
+    projectPreviewChipBorder: "rgba(255, 255, 255, 0.18)",
+    projectPreviewChipText: "rgba(255, 255, 255, 0.9)",
+    viewportBackground: "#E6E1DA",
+    viewportGround: "#9A9085",
+    viewportGridMain: "#7D756C",
+    viewportGridSub: "#90877D",
+    viewportOverlayGradient:
+      "linear-gradient(180deg, rgba(255, 255, 255, 0.17) 0%, rgba(238, 233, 226, 0.05) 40%, rgba(38, 34, 30, 0.02) 100%)",
+    viewportAmbientLight: "#EFE6DA",
+    viewportHemisphereSky: "#F4ECE0",
+    viewportHemisphereGround: "#82786E",
+    viewportKeyLight: "#F9F0E4",
+    viewportFillLight: "#E7DECF",
+    viewportRimLight: "#FFF7EE",
+    viewportFallbackMaterial: "#C7BCB0",
+    viewportErrorBorder: sharedTokens.statusError,
+    viewportErrorBg: "rgba(74, 29, 25, 0.9)",
+    viewportErrorText: "#FFE2DE",
+    scrollbarThumb: "rgba(108, 95, 82, 0.32)",
   },
   dark: {
-    bg: "#1e1e20",
-    surface1: "rgba(40, 40, 43, 0.97)",
-    surface2: "rgba(28, 28, 30, 0.98)",
-    surface3: "#2b2b2f",
-    surfaceRaised: "#242428",
-    inputBg: "rgba(255, 255, 255, 0.04)",
-    inputBorder: "rgba(58, 58, 61, 0.52)",
-    border: "rgba(58, 58, 61, 0.62)",
-    borderStrong: "rgba(86, 86, 92, 0.76)",
-    text: "#e8e4de",
-    textMuted: "rgba(138, 134, 128, 0.84)",
-    textFaint: "rgba(92, 89, 87, 0.86)",
-    accent: "#a47c45",
-    accent2: "#b88e55",
-    accentSoft: "rgba(164, 124, 69, 0.14)",
-    success: "#6d957e",
-    warning: "#b48b60",
-    danger: "#bd7b81",
-    successBg: "rgba(109, 149, 126, 0.12)",
-    warningBg: "rgba(180, 139, 96, 0.13)",
-    dangerBg: "rgba(189, 123, 129, 0.14)",
-    badgeNeutralBorder: "rgba(255, 255, 255, 0.1)",
-    badgeNeutralBg: "rgba(255, 255, 255, 0.045)",
-    badgeNeutralText: "rgba(196, 190, 182, 0.78)",
-    badgeSuccessBorder: "rgba(109, 149, 126, 0.24)",
-    badgeSuccessBg: "rgba(109, 149, 126, 0.12)",
-    badgeSuccessText: "#87a794",
-    badgeWarningBorder: "rgba(180, 139, 96, 0.24)",
-    badgeWarningBg: "rgba(180, 139, 96, 0.12)",
-    badgeWarningText: "#bc976c",
-    badgeDangerBorder: "rgba(189, 123, 129, 0.24)",
-    badgeDangerBg: "rgba(189, 123, 129, 0.12)",
-    badgeDangerText: "#c58f96",
-    shadow: "0 2px 12px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.36)",
+    bgApp: "#151311",
+    bgSurface1: "#1C1916",
+    bgSurface2: "#231F1B",
+    bgPanelDark: "#12110F",
+    bg: "#151311",
+    surface1: "#1C1916",
+    surface2: "#231F1B",
+    surface3: "#292621",
+    surfaceRaised: "#302C27",
+    inputBg: "rgba(255, 255, 255, 0.035)",
+    inputBorder: "#2E2A24",
+    border: "rgba(255, 255, 255, 0.10)",
+    borderStrong: "rgba(255, 255, 255, 0.16)",
+    text: "#F3EFEA",
+    textMuted: "rgba(243, 239, 234, 0.68)",
+    textFaint: "rgba(243, 239, 234, 0.5)",
+    textInverse: sharedTokens.textInverse,
+    accentPrimary: sharedTokens.accentPrimary,
+    accentPrimaryHover: sharedTokens.accentPrimaryHover,
+    accentPrimarySoft: sharedTokens.accentPrimarySoft,
+    accentContrast: sharedTokens.accentContrast,
+    accent: sharedTokens.accentPrimary,
+    accentHover: sharedTokens.accentPrimaryHover,
+    accent2: sharedTokens.accentPrimaryHover,
+    accentSoft: sharedTokens.accentPrimarySoft,
+    statusReady: sharedTokens.statusReady,
+    statusBusy: sharedTokens.statusBusy,
+    statusError: sharedTokens.statusError,
+    success: sharedTokens.statusReady,
+    warning: sharedTokens.statusBusy,
+    danger: sharedTokens.statusError,
+    successBg: "rgba(92, 124, 99, 0.16)",
+    warningBg: "rgba(169, 134, 74, 0.16)",
+    dangerBg: "rgba(163, 90, 79, 0.16)",
+    badgeNeutralBorder: "rgba(242, 238, 232, 0.1)",
+    badgeNeutralBg: "rgba(242, 238, 232, 0.05)",
+    badgeNeutralText: "rgba(224, 217, 208, 0.76)",
+    badgeSuccessBorder: "rgba(92, 124, 99, 0.24)",
+    badgeSuccessBg: "rgba(92, 124, 99, 0.14)",
+    badgeSuccessText: "#87A08A",
+    badgeWarningBorder: "rgba(169, 134, 74, 0.24)",
+    badgeWarningBg: "rgba(169, 134, 74, 0.14)",
+    badgeWarningText: "#C2A06B",
+    badgeDangerBorder: "rgba(163, 90, 79, 0.24)",
+    badgeDangerBg: "rgba(163, 90, 79, 0.14)",
+    badgeDangerText: "#C88F86",
+    shadow: "0 10px 28px rgba(0, 0, 0, 0.35)",
     shadowPanel:
-      "0 18px 52px rgba(0, 0, 0, 0.5), 0 2px 10px rgba(0, 0, 0, 0.3)",
-    focusRing: "rgba(164, 124, 69, 0.28)",
-    glassBg: "rgba(40, 40, 43, 0.72)",
-    glassBgStrong: "rgba(28, 28, 30, 0.84)",
-    glassBorder: "rgba(58, 58, 61, 0.58)",
-    glassShadow: "0 10px 28px rgba(0, 0, 0, 0.3)",
-    shellTopbar: "rgba(24, 24, 26, 0.99)",
-    shellToolbar: "rgba(22, 22, 24, 0.99)",
-    shellPanel: "rgba(40, 40, 43, 0.97)",
-    shellViewport: "#141416",
-    shellTag: "rgba(58, 58, 61, 0.5)",
-    shellOverlay: "rgba(255, 255, 255, 0.06)",
-    shellContrastPanel: "rgba(32, 32, 35, 0.98)",
+      "0 20px 56px rgba(0, 0, 0, 0.35), 0 2px 10px rgba(0, 0, 0, 0.2)",
+    focusRing: "#D7B27A",
+    glassBg: "rgba(255, 255, 255, 0.06)",
+    glassBgStrong: "rgba(255, 255, 255, 0.08)",
+    glassBorder: "rgba(255, 255, 255, 0.10)",
+    glassHighlight:
+      "linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.02))",
+    glassInset: "rgba(255, 255, 255, 0.03)",
+    glassShadow: "0 10px 28px rgba(0, 0, 0, 0.28)",
+    glassBlur: sharedTokens.glassBlur,
+    shellTopbar: "#1C1916",
+    shellToolbar: "#1C1916",
+    shellPanel: "#1C1916",
+    shellViewport: "#151311",
+    shellTag: "rgba(255, 255, 255, 0.04)",
+    shellOverlay: "rgba(255, 255, 255, 0.02)",
+    shellContrastPanel: "#12110F",
     shellContrastSurface: "rgba(255, 255, 255, 0.04)",
-    shellContrastBorder: "rgba(255, 255, 255, 0.07)",
-    shellContrastText: "rgba(232, 228, 222, 0.96)",
-    shellContrastTextMuted: "rgba(169, 163, 155, 0.7)",
-    shellContrastTag: "rgba(255, 255, 255, 0.06)",
+    shellContrastBorder: "rgba(242, 238, 232, 0.08)",
+    shellContrastText: "#F3EFEA",
+    shellContrastTextMuted: "rgba(243, 239, 234, 0.68)",
+    shellContrastTag: "rgba(255, 255, 255, 0.04)",
+    radiusSm: sharedTokens.radiusSm,
+    radiusMd: sharedTokens.radiusMd,
+    radiusLg: sharedTokens.radiusLg,
+    space4: sharedTokens.space4,
+    space8: sharedTokens.space8,
+    space12: sharedTokens.space12,
+    space16: sharedTokens.space16,
+    space24: sharedTokens.space24,
+    space32: sharedTokens.space32,
+    bodyBackgroundImage:
+      "radial-gradient(circle at top, rgba(255, 255, 255, 0.025), transparent 36%), linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0)), linear-gradient(180deg, rgba(183, 146, 95, 0.025), rgba(183, 146, 95, 0)), var(--bg)",
+    appSceneBackground:
+      "radial-gradient(circle at top, rgba(255, 255, 255, 0.05), transparent 34%), linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0)), var(--bg)",
+    bootGlow:
+      "radial-gradient(circle at 50% 38%, rgba(176, 137, 90, 0.12), transparent 30%)",
+    projectPreviewGradient: "linear-gradient(135deg, #12110F 0%, #4A3929 100%)",
+    projectPreviewOverlay:
+      "linear-gradient(180deg, transparent 40%, rgba(0, 0, 0, 0.36) 100%)",
+    projectPreviewChipBg: "rgba(0, 0, 0, 0.24)",
+    projectPreviewChipBorder: "rgba(255, 255, 255, 0.14)",
+    projectPreviewChipText: "rgba(255, 255, 255, 0.88)",
+    viewportBackground: "#151311",
+    viewportGround: "#403D39",
+    viewportGridMain: "#34312E",
+    viewportGridSub: "#2A2825",
+    viewportOverlayGradient:
+      "linear-gradient(180deg, rgba(255, 255, 255, 0.02) 0%, rgba(21, 20, 17, 0.008) 42%, rgba(0, 0, 0, 0.05) 100%)",
+    viewportAmbientLight: "#EEE3D4",
+    viewportHemisphereSky: "#F1E7D9",
+    viewportHemisphereGround: "#6A645B",
+    viewportKeyLight: "#F7EDD9",
+    viewportFillLight: "#D6CCBE",
+    viewportRimLight: "#FFF2E3",
+    viewportFallbackMaterial: "#BCAE9E",
+    viewportErrorBorder: sharedTokens.statusError,
+    viewportErrorBg: "rgba(62, 24, 21, 0.9)",
+    viewportErrorText: "#FFD8D3",
+    scrollbarThumb: "rgba(255, 255, 255, 0.18)",
   },
 };

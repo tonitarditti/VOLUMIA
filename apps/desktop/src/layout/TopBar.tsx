@@ -8,10 +8,14 @@ import { useSettings } from "@/volumia/settings/context";
 export function TopBar() {
   const { t } = useT();
   const { settings } = useSettings();
-  const canUseDesktopBridge = typeof window !== "undefined" && Boolean(window.volumia);
+  const canUseDesktopBridge =
+    typeof window !== "undefined" && Boolean(window.volumia);
   const location = useLocation();
   const pageTitle = useMemo(() => {
-    if (location.pathname.startsWith("/project/") || location.pathname.startsWith("/workspace/")) {
+    if (
+      location.pathname.startsWith("/project/") ||
+      location.pathname.startsWith("/workspace/")
+    ) {
       return t("topbar.projectWorkspace");
     }
     if (location.pathname === "/settings") return t("topbar.settings");
@@ -30,20 +34,33 @@ export function TopBar() {
     }`;
   const headerClass = settings.glassStyle
     ? "drag-region relative z-[100] flex h-12 items-center justify-between border-x-0 border-t-0 px-4 glass glass-strong rounded-none"
-    : "drag-region relative z-[100] flex h-12 items-center justify-between border-b border-[var(--border)] bg-[color:rgba(24,23,21,0.94)] px-4";
-  const dividerClass = settings.glassStyle ? "h-4 w-px bg-[var(--glass-border)]" : "h-4 w-px bg-[var(--border)]";
+    : "drag-region relative z-[100] flex h-12 items-center justify-between border-b border-[var(--border)] bg-[var(--shell-topbar)] px-4";
+  const dividerClass = settings.glassStyle
+    ? "h-4 w-px bg-[var(--glass-border)]"
+    : "h-4 w-px bg-[var(--border)]";
 
   return (
     <header className={headerClass}>
       <div className="flex min-w-0 items-center gap-3">
-        <div className="text-[11px] font-medium tracking-[0.24em] text-[var(--accent)]">{t("topbar.brand")}</div>
+        <div className="text-[11px] font-medium tracking-[0.24em] text-[var(--accent)]">
+          {t("topbar.brand")}
+        </div>
         <div className={dividerClass} />
-        <h1 className="truncate text-sm font-normal tracking-[0.04em] text-[var(--text)]">{pageTitle}</h1>
+        <h1 className="truncate text-sm font-normal tracking-[0.04em] text-[var(--text)]">
+          {pageTitle}
+        </h1>
         <nav className="ml-1 flex items-center gap-1 md:hidden">
-          <NavLink to="/dashboard" end className={({ isActive }) => compactNavClass(isActive)}>
+          <NavLink
+            to="/dashboard"
+            end
+            className={({ isActive }) => compactNavClass(isActive)}
+          >
             {t("nav.dashboard")}
           </NavLink>
-          <NavLink to="/settings" className={({ isActive }) => compactNavClass(isActive)}>
+          <NavLink
+            to="/settings"
+            className={({ isActive }) => compactNavClass(isActive)}
+          >
             {t("nav.settings")}
           </NavLink>
         </nav>
@@ -76,7 +93,7 @@ export function TopBar() {
         </IconButton>
         <IconButton
           type="button"
-          className="hover:border-[var(--danger)] hover:bg-[var(--danger)] hover:text-[var(--surface-1)]"
+          className="hover:border-[var(--danger)] hover:bg-[var(--danger)] hover:text-[var(--text-inverse)]"
           onClick={() => {
             if (canUseDesktopBridge) {
               void desktopApi.closeWindow();

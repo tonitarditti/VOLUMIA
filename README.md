@@ -65,6 +65,18 @@ npm run typecheck
 npm run test
 ```
 
+## Repository Hygiene
+
+Large models, browser caches, ComfyUI outputs, and temporary artifacts do not belong in the repo. Keep them in an external folder outside `E:\VOLUMIA` and point local tooling there when needed.
+
+This repo ships a versioned pre-commit hook that blocks large staged files and common model/cache paths. Activate it locally with:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+If a workflow needs models or caches, store them outside the repository and reference that external location from local config.
+
 ## Feature Overview
 
 - Local-first projects persisted in localStorage with schema versioning.

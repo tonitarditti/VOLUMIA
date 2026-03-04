@@ -20,7 +20,12 @@ function LegacyProjectRedirect() {
 
 function AppContent() {
   const { state, mergeImportedProjects, resetProjects } = useProjects();
-  const { settings, applyImportedSettings, resetSettings } = useSettings();
+  const {
+    settings,
+    resolvedTheme,
+    applyImportedSettings,
+    resetSettings,
+  } = useSettings();
   const { t } = useT();
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -140,36 +145,38 @@ function AppContent() {
   }, [notice]);
 
   return (
-    <Routes>
-      <Route path="/" element={<BootScreen />} />
-      <Route
-        path="/dashboard"
-        element={
-          <AppFrame notice={notice} onDismissNotice={() => setNotice(null)}>
-            <DashboardPage onImport={importProjects} onExport={exportProjects} />
-          </AppFrame>
-        }
-      />
-      <Route path="/workspace/:projectId" element={<WorkspacePage />} />
-      <Route path="/project/:projectId" element={<LegacyProjectRedirect />} />
-      <Route
-        path="/settings"
-        element={
-          <AppFrame notice={notice} onDismissNotice={() => setNotice(null)}>
-            <SettingsPage
-              onImportProjects={importProjects}
-              onExportProjects={exportProjects}
-              onExportSettings={exportSettings}
-              onImportSettings={importSettings}
-              onResetSettings={handleResetSettings}
-              onResetAllData={handleResetAllData}
-              onResetWindowLayout={handleResetWindowLayout}
-            />
-          </AppFrame>
-        }
-      />
-      <Route path="*" element={<Navigate to="/dashboard" replace />} />
-    </Routes>
+    <>
+      <Routes>
+        <Route path="/" element={<BootScreen />} />
+        <Route
+          path="/dashboard"
+          element={
+            <AppFrame notice={notice} onDismissNotice={() => setNotice(null)}>
+              <DashboardPage onImport={importProjects} onExport={exportProjects} />
+            </AppFrame>
+          }
+        />
+        <Route path="/workspace/:projectId" element={<WorkspacePage />} />
+        <Route path="/project/:projectId" element={<LegacyProjectRedirect />} />
+        <Route
+          path="/settings"
+          element={
+            <AppFrame notice={notice} onDismissNotice={() => setNotice(null)}>
+              <SettingsPage
+                onImportProjects={importProjects}
+                onExportProjects={exportProjects}
+                onExportSettings={exportSettings}
+                onImportSettings={importSettings}
+                onResetSettings={handleResetSettings}
+                onResetAllData={handleResetAllData}
+                onResetWindowLayout={handleResetWindowLayout}
+              />
+            </AppFrame>
+          }
+        />
+        <Route path="*" element={<Navigate to="/dashboard" replace />} />
+      </Routes>
+    </>
   );
 }
 

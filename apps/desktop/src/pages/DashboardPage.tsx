@@ -36,16 +36,6 @@ function formatProjectType(index: number) {
   return labels[index % labels.length] ?? "Project";
 }
 
-function projectGradient(index: number) {
-  const gradients = [
-    "from-[#1c1610] to-[#28200e]",
-    "from-[#0e1420] to-[#121c2e]",
-    "from-[#141418] to-[#1c1c22]",
-    "from-[#0c1618] to-[#10202a]",
-  ];
-  return gradients[index % gradients.length] ?? gradients[0];
-}
-
 function statusTone(comfyStatus: ComfyStatusResponse | null) {
   if (!comfyStatus) {
     return {
@@ -516,10 +506,18 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
                       className="overflow-hidden rounded-[24px]"
                     >
                       <div
-                        className={`relative h-36 bg-gradient-to-br ${projectGradient(index)}`}
+                        className="relative h-36"
+                        style={{
+                          backgroundImage: "var(--project-preview-gradient)",
+                        }}
                       >
-                        <div className="absolute inset-0 bg-[linear-gradient(180deg,transparent_40%,rgba(0,0,0,0.35)_100%)]" />
-                        <div className="absolute right-4 top-4 rounded-full border border-white/20 bg-black/25 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-white/88">
+                        <div
+                          className="absolute inset-0"
+                          style={{
+                            backgroundImage: "var(--project-preview-overlay)",
+                          }}
+                        />
+                        <div className="absolute right-4 top-4 rounded-full border border-[var(--project-preview-chip-border)] bg-[var(--project-preview-chip-bg)] px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--project-preview-chip-text)]">
                           {formatProjectType(index)}
                         </div>
                         <button

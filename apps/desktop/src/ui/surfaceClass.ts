@@ -1,9 +1,20 @@
 export type SurfaceClassVariant = "panel" | "soft";
 
-export function getSurfaceClass(_glassStyle: boolean, variant: SurfaceClassVariant = "panel"): string {
-  if (variant === "soft") {
-    return "border border-[var(--border)] bg-[var(--surface-2)] shadow-none";
+export function getSurfaceClass(
+  glassStyle: boolean,
+  variant: SurfaceClassVariant = "panel",
+): string {
+  if (glassStyle) {
+    if (variant === "soft") {
+      return "glass glass-soft border-[var(--glass-border)] bg-[var(--glass-bg)]";
+    }
+
+    return "glass glass-strong border-[var(--glass-border)] bg-[var(--glass-bg-strong)]";
   }
 
-  return "border border-[var(--border)] bg-[var(--surface-1)] shadow-[0_1px_2px_rgba(0,0,0,0.04)]";
+  if (variant === "soft") {
+    return "border border-[var(--panel-border)] bg-[var(--panel-bg-soft)] shadow-none";
+  }
+
+  return "border border-[var(--panel-border)] bg-[var(--panel-bg)] shadow-[var(--shadow)]";
 }

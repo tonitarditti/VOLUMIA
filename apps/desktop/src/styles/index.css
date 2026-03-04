@@ -10,24 +10,24 @@
 
 :root,
 :root.dark {
-  --volume-bg: #0f1113;
-  --volume-panel: #171a1f;
-  --volume-panel-alt: #1d2127;
-  --volume-stroke: #2a303a;
-  --volume-text: #dde4ee;
-  --volume-muted: #8c99aa;
-  --volume-accent: #8fa7bf;
+  --volume-bg: var(--bg);
+  --volume-panel: var(--surface-1);
+  --volume-panel-alt: var(--surface-2);
+  --volume-stroke: var(--border);
+  --volume-text: var(--text);
+  --volume-muted: var(--text-muted);
+  --volume-accent: var(--accent);
 }
 
 :root:not(.dark) {
   color-scheme: light;
-  --volume-bg: #eceff3;
-  --volume-panel: #ffffff;
-  --volume-panel-alt: #f4f7fa;
-  --volume-stroke: #d7dee8;
-  --volume-text: #162030;
-  --volume-muted: #4f5f75;
-  --volume-accent: #4b6b8e;
+  --volume-bg: var(--bg);
+  --volume-panel: var(--surface-1);
+  --volume-panel-alt: var(--surface-2);
+  --volume-stroke: var(--border);
+  --volume-text: var(--text);
+  --volume-muted: var(--text-muted);
+  --volume-accent: var(--accent);
 }
 
 @layer base {
@@ -63,7 +63,7 @@
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #374151;
+  background: var(--scrollbar-thumb);
   border-radius: 999px;
 }
 

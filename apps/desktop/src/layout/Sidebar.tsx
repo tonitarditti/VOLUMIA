@@ -17,28 +17,40 @@ function navItemClass(isActive: boolean) {
   }`;
 }
 
-export function Sidebar({ className = "", drawer = false, pinned = false, onTogglePinned }: SidebarProps = {}) {
+export function Sidebar({
+  className = "",
+  drawer = false,
+  pinned = false,
+  onTogglePinned,
+}: SidebarProps = {}) {
   const { t } = useT();
   const { settings } = useSettings();
   const panelClass = drawer
-    ? "border-r border-[var(--border)] bg-[var(--surface-1)] shadow-[0_8px_18px_rgba(0,0,0,0.12)]"
+    ? "border-r border-[var(--border)] bg-[var(--surface-1)] shadow-[var(--shadow-panel)]"
     : settings.glassStyle
       ? "glass"
-      : "border border-[var(--border)] bg-[var(--surface-1)] shadow-[0_1px_2px_rgba(0,0,0,0.04)]";
-  const iconClass = "inline-flex h-5 w-5 items-center justify-center rounded-md border border-[var(--border)] bg-[var(--surface-3)] text-[10px] text-[var(--text-muted)]";
+      : "border border-[var(--border)] bg-[var(--surface-1)] shadow-[var(--shadow)]";
+  const iconClass =
+    "inline-flex h-5 w-5 items-center justify-center rounded-md border border-[var(--border)] bg-[var(--surface-3)] text-[10px] text-[var(--text-muted)]";
   const visibilityClass = drawer ? "flex" : "hidden md:flex";
 
   return (
-    <aside className={`relative z-[100] w-56 flex-col p-3 ${visibilityClass} ${panelClass} ${className}`}>
+    <aside
+      className={`relative z-[100] w-56 flex-col p-3 ${visibilityClass} ${panelClass} ${className}`}
+    >
       <div className="flex items-center justify-between px-3 pb-2">
-        <p className="text-[10px] tracking-[0.12em] text-[var(--text-muted)]">{t("nav.navigation")}</p>
+        <p className="text-[10px] tracking-[0.12em] text-[var(--text-muted)]">
+          {t("nav.navigation")}
+        </p>
         {drawer ? (
           <button
             type="button"
             className="rounded-md border border-[var(--border)] bg-[var(--surface-2)] px-2 py-1 text-[10px] tracking-[0.08em] text-[var(--text-muted)] transition-colors hover:text-[var(--text)]"
             onClick={onTogglePinned}
             aria-pressed={pinned}
-            aria-label={pinned ? "Unpin navigation drawer" : "Pin navigation drawer"}
+            aria-label={
+              pinned ? "Unpin navigation drawer" : "Pin navigation drawer"
+            }
             title={pinned ? "Unpin drawer" : "Pin drawer"}
           >
             {pinned ? "Unpin" : "Pin"}
@@ -46,16 +58,19 @@ export function Sidebar({ className = "", drawer = false, pinned = false, onTogg
         ) : null}
       </div>
       <nav className="space-y-1.5">
-        <NavLink to="/dashboard" end className={({ isActive }) => navItemClass(isActive)}>
-          <span className={iconClass}>
-            D
-          </span>
+        <NavLink
+          to="/dashboard"
+          end
+          className={({ isActive }) => navItemClass(isActive)}
+        >
+          <span className={iconClass}>D</span>
           {t("nav.dashboard")}
         </NavLink>
-        <NavLink to="/settings" className={({ isActive }) => navItemClass(isActive)}>
-          <span className={iconClass}>
-            S
-          </span>
+        <NavLink
+          to="/settings"
+          className={({ isActive }) => navItemClass(isActive)}
+        >
+          <span className={iconClass}>S</span>
           {t("nav.settings")}
         </NavLink>
       </nav>

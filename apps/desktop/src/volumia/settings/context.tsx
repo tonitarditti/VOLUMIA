@@ -20,12 +20,14 @@ import {
 } from "./storage";
 import type {
   AppSettings,
+  Colorway,
   Language,
   LanguageMode,
   PerformancePreset,
   AutoGenerationProfile,
   Theme,
   ThemeMode,
+  StudioProfile,
   TimeTheme,
   WindowMode,
 } from "./types";
@@ -40,6 +42,8 @@ type SettingsContextValue = {
   setLanguage: (language: Language) => void;
   setThemeMode: (themeMode: ThemeMode) => void;
   setTheme: (theme: Theme) => void;
+  setColorway: (colorway: Colorway) => void;
+  setStudioProfile: (studioProfile: StudioProfile) => void;
   setTimeTheme: (timeTheme: Partial<TimeTheme>) => void;
   setGlassStyle: (glassStyle: boolean) => void;
   setWindowMode: (windowMode: WindowMode) => void;
@@ -49,7 +53,9 @@ type SettingsContextValue = {
   setAntialias: (antialias: boolean) => void;
   setReduceMotion: (reduceMotion: boolean) => void;
   setPythonPath: (pythonPath: string | undefined) => void;
-  setAutoGenerationProfile: (autoGenerationProfile: AutoGenerationProfile) => void;
+  setAutoGenerationProfile: (
+    autoGenerationProfile: AutoGenerationProfile,
+  ) => void;
   resetToRecommended: () => void;
   applyImportedSettings: (settings: AppSettings) => void;
   resetSettings: () => void;
@@ -58,15 +64,23 @@ type SettingsContextValue = {
 const SettingsContext = createContext<SettingsContextValue | null>(null);
 
 function detectBrowserTheme(): Theme {
-  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+  if (
+    typeof window === "undefined" ||
+    typeof window.matchMedia !== "function"
+  ) {
     return "light";
   }
 
-  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  return window.matchMedia("(prefers-color-scheme: dark)").matches
+    ? "dark"
+    : "light";
 }
 
 function detectBrowserLocale() {
-  if (typeof navigator === "undefined" || typeof navigator.language !== "string") {
+  if (
+    typeof navigator === "undefined" ||
+    typeof navigator.language !== "string"
+  ) {
     return "en-US";
   }
 
@@ -74,16 +88,27 @@ function detectBrowserLocale() {
 }
 
 export function SettingsProvider({ children }: PropsWithChildren) {
-  const [settings, setSettings] = useState<AppSettings>(() => loadAppSettings());
-  const [systemLocale, setSystemLocale] = useState<string>(() => detectBrowserLocale());
-  const [systemTheme, setSystemTheme] = useState<Theme>(() => detectBrowserTheme());
+  const [settings, setSettings] = useState<AppSettings>(() =>
+    loadAppSettings(),
+  );
+  const [systemLocale, setSystemLocale] = useState<string>(() =>
+    detectBrowserLocale(),
+  );
+  const [systemTheme, setSystemTheme] = useState<Theme>(() =>
+    detectBrowserTheme(),
+  );
   const [clock, setClock] = useState<number>(() => Date.now());
 
   const updateSettings = useCallback((patch: Partial<AppSettings>) => {
-    setSettings((previous) => sanitizeAppSettings({ ...previous, ...patch }, DEFAULT_SETTINGS));
+    setSettings((previous) =>
+      sanitizeAppSettings({ ...previous, ...patch }, DEFAULT_SETTINGS),
+    );
   }, []);
 
-  const resolvedLanguage = useMemo(() => resolveLanguage(settings, systemLocale), [settings, systemLocale]);
+  const resolvedLanguage = useMemo(
+    () => resolveLanguage(settings, systemLocale),
+    [settings, systemLocale],
+  );
 
   const resolvedTheme = useMemo(() => {
     return resolveTheme(settings, systemTheme, new Date(clock));
@@ -95,10 +120,16 @@ export function SettingsProvider({ children }: PropsWithChildren) {
 
   useEffect(() => {
     applyResolvedThemeToDocument(resolvedTheme, {
+      colorway: settings.colorway,
       glassStyle: settings.glassStyle,
       reduceMotion: settings.reduceMotion,
     });
-  }, [resolvedTheme, settings.glassStyle, settings.reduceMotion]);
+  }, [
+    resolvedTheme,
+    settings.colorway,
+    settings.glassStyle,
+    settings.reduceMotion,
+  ]);
 
   useEffect(() => {
     if (!hasDesktopBridge()) {
@@ -150,7 +181,11 @@ export function SettingsProvider({ children }: PropsWithChildren) {
     setClock(Date.now());
     const interval = window.setInterval(() => setClock(Date.now()), 60_000);
     return () => window.clearInterval(interval);
-  }, [settings.themeMode, settings.timeTheme.darkFrom, settings.timeTheme.lightFrom]);
+  }, [
+    settings.themeMode,
+    settings.timeTheme.darkFrom,
+    settings.timeTheme.lightFrom,
+  ]);
 
   useEffect(() => {
     if (!hasDesktopBridge()) {
@@ -171,8 +206,8 @@ export function SettingsProvider({ children }: PropsWithChildren) {
               windowMode: windowState.mode,
               rememberWindowBounds: windowState.rememberWindowBounds,
             },
-            DEFAULT_SETTINGS
-          )
+            DEFAULT_SETTINGS,
+          ),
         );
       })
       .catch(() => undefined);
@@ -195,7 +230,9 @@ export function SettingsProvider({ children }: PropsWithChildren) {
       return;
     }
 
-    void desktopApi.setWindowBoundsRemember(settings.rememberWindowBounds).catch(() => undefined);
+    void desktopApi
+      .setWindowBoundsRemember(settings.rememberWindowBounds)
+      .catch(() => undefined);
   }, [settings.rememberWindowBounds]);
 
   const value = useMemo<SettingsContextValue>(() => {
@@ -206,23 +243,30 @@ export function SettingsProvider({ children }: PropsWithChildren) {
       systemLocale,
       systemTheme,
       setLanguageMode: (languageMode) => updateSettings({ languageMode }),
-      setLanguage: (language) => updateSettings({ languageMode: "manual", language }),
+      setLanguage: (language) =>
+        updateSettings({ languageMode: "manual", language }),
       setThemeMode: (themeMode) => updateSettings({ themeMode }),
       setTheme: (theme) => updateSettings({ themeMode: "manual", theme }),
+      setColorway: (colorway) => updateSettings({ colorway }),
+      setStudioProfile: (studioProfile) => updateSettings({ studioProfile }),
       setTimeTheme: (timeTheme) => {
         setSettings((previous) =>
           sanitizeAppSettings(
             {
               ...previous,
-              timeTheme: sanitizeTimeTheme({ ...previous.timeTheme, ...timeTheme }, previous.timeTheme),
+              timeTheme: sanitizeTimeTheme(
+                { ...previous.timeTheme, ...timeTheme },
+                previous.timeTheme,
+              ),
             },
-            DEFAULT_SETTINGS
-          )
+            DEFAULT_SETTINGS,
+          ),
         );
       },
       setGlassStyle: (glassStyle) => updateSettings({ glassStyle }),
       setWindowMode: (windowMode) => updateSettings({ windowMode }),
-      setRememberWindowBounds: (rememberWindowBounds) => updateSettings({ rememberWindowBounds }),
+      setRememberWindowBounds: (rememberWindowBounds) =>
+        updateSettings({ rememberWindowBounds }),
       setPerformancePreset: (performancePreset) => {
         const defaults = defaultsForPreset(performancePreset);
         updateSettings(defaults);
@@ -233,10 +277,13 @@ export function SettingsProvider({ children }: PropsWithChildren) {
             {
               ...previous,
               fpsLimit,
-              performancePreset: derivePresetFromPerformance(previous.antialias, fpsLimit),
+              performancePreset: derivePresetFromPerformance(
+                previous.antialias,
+                fpsLimit,
+              ),
             },
-            DEFAULT_SETTINGS
-          )
+            DEFAULT_SETTINGS,
+          ),
         );
       },
       setAntialias: (antialias) => {
@@ -245,15 +292,19 @@ export function SettingsProvider({ children }: PropsWithChildren) {
             {
               ...previous,
               antialias,
-              performancePreset: derivePresetFromPerformance(antialias, previous.fpsLimit),
+              performancePreset: derivePresetFromPerformance(
+                antialias,
+                previous.fpsLimit,
+              ),
             },
-            DEFAULT_SETTINGS
-          )
+            DEFAULT_SETTINGS,
+          ),
         );
       },
       setReduceMotion: (reduceMotion) => updateSettings({ reduceMotion }),
       setPythonPath: (pythonPath) => updateSettings({ pythonPath }),
-      setAutoGenerationProfile: (autoGenerationProfile) => updateSettings({ autoGenerationProfile }),
+      setAutoGenerationProfile: (autoGenerationProfile) =>
+        updateSettings({ autoGenerationProfile }),
       resetToRecommended: () => {
         updateSettings({ languageMode: "system", themeMode: "system" });
       },
@@ -261,12 +312,26 @@ export function SettingsProvider({ children }: PropsWithChildren) {
         setSettings(sanitizeAppSettings(incomingSettings, DEFAULT_SETTINGS));
       },
       resetSettings: () => {
-        setSettings({ ...DEFAULT_SETTINGS, timeTheme: { ...DEFAULT_SETTINGS.timeTheme } });
+        setSettings({
+          ...DEFAULT_SETTINGS,
+          timeTheme: { ...DEFAULT_SETTINGS.timeTheme },
+        });
       },
     };
-  }, [resolvedLanguage, resolvedTheme, settings, systemLocale, systemTheme, updateSettings]);
+  }, [
+    resolvedLanguage,
+    resolvedTheme,
+    settings,
+    systemLocale,
+    systemTheme,
+    updateSettings,
+  ]);
 
-  return <SettingsContext.Provider value={value}>{children}</SettingsContext.Provider>;
+  return (
+    <SettingsContext.Provider value={value}>
+      {children}
+    </SettingsContext.Provider>
+  );
 }
 
 export function useSettings() {
