@@ -49,3 +49,8 @@ pnpm-debug.log*
 **/__pycache__/
 **/*.pyc
 **/*.pyo
+
+.tmp-edge-palette/
+**/component_crx_cache/
+**/ProvenanceData/
+*.ort
