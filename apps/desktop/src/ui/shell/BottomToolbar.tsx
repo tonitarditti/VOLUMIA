@@ -31,7 +31,7 @@ export function BottomToolbar({
 
   return (
     <footer
-      className={`relative isolate grid min-h-[68px] shrink-0 grid-cols-[minmax(0,0.72fr)_minmax(0,0.96fr)_minmax(0,1.32fr)] items-center gap-2 border-t px-3 py-2 ${rootClass} ${glassClass} ${className}`}
+      className={`relative isolate min-h-[64px] shrink-0 border-t ${rootClass} ${glassClass} ${className}`}
     >
       <div
         className="pointer-events-none absolute inset-x-0 top-0 h-3"
@@ -50,14 +50,16 @@ export function BottomToolbar({
           />
         </div>
       ) : null}
-      <div className="flex min-w-0 items-center">
-        {left}
-      </div>
-      <div className={`flex min-w-0 items-center justify-center border-x px-2 ${dividerClass}`}>
-        {center}
-      </div>
-      <div className="flex min-w-0 items-center justify-end">
-        {right}
+      <div className="flex h-full min-w-0 items-center gap-2 px-3 py-2">
+        <div className="flex shrink-0 items-center">{left}</div>
+        <div className={`hidden h-8 w-px border-r ${dividerClass} min-[1180px]:block`} />
+        <div className="min-w-0 flex-1 overflow-x-auto">
+          <div className="flex min-w-max items-center justify-center px-1">
+            {center}
+          </div>
+        </div>
+        <div className={`hidden h-8 w-px border-r ${dividerClass} min-[1320px]:block`} />
+        <div className="flex shrink-0 items-center justify-end">{right}</div>
       </div>
     </footer>
   );

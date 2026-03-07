@@ -33,7 +33,7 @@ export function ModeSelector({
 }: ModeSelectorProps) {
   return (
     <aside
-      className={`flex h-full w-[68px] shrink-0 flex-col items-center border-r border-[var(--workspace-divider)] bg-[var(--workspace-rail-bg)] px-1.5 py-2 text-[var(--workspace-text)] ${className}`}
+      className={`flex h-full w-16 shrink-0 flex-col items-center border-r border-[var(--workspace-divider)] bg-[var(--workspace-rail-bg)] px-1.5 py-2 text-[var(--workspace-text)] ${className}`}
       onWheelCapture={onWheelCapture}
     >
       <div className="flex h-10 w-10 items-center justify-center rounded-[12px] border border-[var(--workspace-divider)] bg-[var(--workspace-surface)] text-[var(--workspace-text)]">

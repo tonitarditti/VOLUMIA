@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Badge, Button } from "@/ui/primitives";
 import { BottomToolbar } from "@/ui/shell";
 import type { WorkspaceMode } from "./modes";
@@ -35,9 +35,11 @@ function Hint({ children }: { children: ReactNode }) {
 function ToolbarBlock({
   children,
   emphasis = false,
+  className = "",
 }: {
   children: ReactNode;
   emphasis?: boolean;
+  className?: string;
 }) {
   return (
     <div
@@ -45,7 +47,7 @@ function ToolbarBlock({
         emphasis
           ? "border-[var(--workspace-selected-border)] bg-[color:color-mix(in_srgb,var(--workspace-selected-bg)_88%,var(--workspace-surface)_12%)]"
           : "border-[var(--workspace-divider)] bg-[var(--workspace-surface)]"
-      }`}
+      } ${className}`}
     >
       {children}
     </div>
@@ -58,7 +60,7 @@ function ToolButton({
   disabled,
   onClick,
 }: {
-  label: string;
+  label: ReactNode;
   active?: boolean;
   disabled?: boolean;
   onClick: () => void;
@@ -101,11 +103,18 @@ export function ViewportTools({
   onToggleWireframe,
   onCaptureViewport,
 }: ViewportToolsProps) {
+  const [showUtilityMenu, setShowUtilityMenu] = useState(false);
   const hasImages = selectedImages.length > 0;
   const primaryLabel = hasModel ? "Regenerate 3D" : "Generate 3D";
   const controlsDisabled = isGenerating;
   const actionDisabled = isGenerating || !hasImages || !isEngineReady;
   const compactDetails = activeMode === "result" || activeMode === "ai";
+
+  useEffect(() => {
+    if (isGenerating && showUtilityMenu) {
+      setShowUtilityMenu(false);
+    }
+  }, [isGenerating, showUtilityMenu]);
 
   const readinessTone = isGenerating
     ? ("warning" as const)
@@ -127,51 +136,73 @@ export function ViewportTools({
       tone="contrast"
       progress={isGenerating ? generationPercent : null}
       left={
-        <ToolbarBlock>
+        <ToolbarBlock className="px-2 py-1.5">
           <Hint>Orbit</Hint>
           <Hint>Pan</Hint>
           <Hint>Zoom</Hint>
         </ToolbarBlock>
       }
       center={
-        <ToolbarBlock>
-          <ToolButton
-            label="Reset"
-            disabled={controlsDisabled}
-            onClick={onResetView}
-          />
-          <ToolButton
-            label="Frame"
-            disabled={controlsDisabled || !hasModel}
-            onClick={onFrameModel}
-          />
-          <ToolButton
-            label="Wire"
-            active={wireframeEnabled}
-            disabled={controlsDisabled || !hasModel}
-            onClick={onToggleWireframe}
-          />
-          <ToolButton
-            label="Grid"
-            active={gridEnabled}
-            disabled={controlsDisabled}
-            onClick={onToggleGrid}
-          />
-          <ToolButton
-            label="Shadow"
-            active={shadowEnabled}
-            disabled={controlsDisabled}
-            onClick={onToggleShadows}
-          />
-          <ToolButton
-            label="Capture"
-            disabled={controlsDisabled}
-            onClick={() => void onCaptureViewport()}
-          />
-        </ToolbarBlock>
+        <div className="relative flex items-center justify-center">
+          <ToolbarBlock>
+            <ToolButton
+              label="Reset"
+              disabled={controlsDisabled}
+              onClick={onResetView}
+            />
+            <ToolButton
+              label="Frame"
+              disabled={controlsDisabled || !hasModel}
+              onClick={onFrameModel}
+            />
+            <ToolButton
+              label={
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="text-[10px]">Tools</span>
+                  <span
+                    aria-hidden="true"
+                    className={`text-[9px] transition-transform ${showUtilityMenu ? "rotate-180" : ""}`}
+                  >
+                    v
+                  </span>
+                </span>
+              }
+              active={showUtilityMenu}
+              disabled={controlsDisabled}
+              onClick={() =>
+                setShowUtilityMenu((current) => !current)
+              }
+            />
+          </ToolbarBlock>
+
+          {showUtilityMenu && !isGenerating ? (
+            <div className="absolute bottom-[calc(100%+10px)] left-1/2 z-20 flex -translate-x-1/2 items-center gap-2 rounded-[16px] border border-[var(--workspace-divider)] bg-[var(--workspace-surface)] p-2 shadow-[0_18px_28px_rgba(0,0,0,0.24)]">
+              <ToolButton
+                label="Wire"
+                active={wireframeEnabled}
+                disabled={!hasModel}
+                onClick={onToggleWireframe}
+              />
+              <ToolButton
+                label="Grid"
+                active={gridEnabled}
+                onClick={onToggleGrid}
+              />
+              <ToolButton
+                label="Shadow"
+                active={shadowEnabled}
+                onClick={onToggleShadows}
+              />
+              <ToolButton
+                label="Capture"
+                onClick={() => void onCaptureViewport()}
+              />
+            </div>
+          ) : null}
+        </div>
       }
       right={
-        <ToolbarBlock emphasis>
+        <ToolbarBlock emphasis className="px-2.5 py-1.5">
           {isGenerating ? (
             <div className="flex min-w-0 items-center gap-2.5">
               <Badge tone="warning" dot>
@@ -205,8 +236,16 @@ export function ViewportTools({
                 </span>
               ) : null}
               <Button
+                variant="secondary"
+                className="hidden h-8 rounded-full px-3 text-[11px] min-[1320px]:inline-flex"
+                onClick={() => void onCaptureViewport()}
+                disabled={controlsDisabled}
+              >
+                Capture
+              </Button>
+              <Button
                 variant="primary"
-                className="h-8 rounded-full px-4 text-[11px]"
+                className="h-9 rounded-full px-5 text-[11px] font-medium"
                 onClick={() => void onGenerate()}
                 disabled={actionDisabled}
                 title={

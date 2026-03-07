@@ -89,7 +89,7 @@ export function TopBar({
     resetAllData,
   } = useAppCommands();
   const canUseDesktopBridge = hasDesktopBridge();
-  const barHeightClass = "h-12";
+  const barHeightClass = "h-11 min-h-[44px]";
   const activeProject = selectActiveProject(state);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const menuRegionRef = useRef<HTMLDivElement | null>(null);
@@ -244,9 +244,9 @@ export function TopBar({
 
   return (
     <header
-      className={`drag-region relative z-30 flex shrink-0 items-center justify-between border-b border-[var(--panel-border)] bg-[var(--shell-topbar)] px-3.5 ${barHeightClass}`}
+      className={`drag-region relative z-30 flex shrink-0 items-center justify-between border-b border-[var(--panel-border)] bg-[var(--shell-topbar)] px-2.5 ${barHeightClass}`}
     >
-      <div className="flex min-w-0 items-center gap-3">
+      <div className="flex min-w-0 items-center gap-2.5">
         <button
           type="button"
           onClick={() => navigate("/dashboard")}
@@ -257,10 +257,10 @@ export function TopBar({
             VOLUMIA
           </span>
         </button>
-        <div className="hidden h-4 w-px bg-[var(--panel-border)] md:block" />
+        <div className="hidden h-4 w-px bg-[var(--panel-border)] min-[1160px]:block" />
         <div
           ref={menuRegionRef}
-          className="hidden md:flex md:items-center md:gap-1"
+          className="hidden min-[1160px]:flex min-[1160px]:items-center min-[1160px]:gap-1"
         >
           {menus.map((menu) => {
             const isOpen = openMenuId === menu.id;
@@ -321,7 +321,7 @@ export function TopBar({
             );
           })}
         </div>
-        <div className="min-w-0">
+        <div className="min-w-0 max-[980px]:hidden">
           <p className="truncate text-[9px] font-semibold uppercase tracking-[0.14em] text-[var(--text-faint)]">
             {eyebrow}
           </p>
@@ -329,7 +329,7 @@ export function TopBar({
         </div>
       </div>
 
-      <div className="hidden min-w-0 flex-1 justify-center px-6 md:flex">
+      <div className="hidden min-w-0 flex-1 justify-center px-4 min-[1320px]:flex">
         {centerSlot ? (
           centerSlot
         ) : breadcrumb?.length ? (
@@ -360,8 +360,14 @@ export function TopBar({
       </div>
 
       <div className="no-drag flex items-center gap-2">
-        {statusSlot}
-        {rightSlot}
+        {statusSlot ? (
+          <div className="hidden min-[1030px]:flex items-center">{statusSlot}</div>
+        ) : null}
+        {rightSlot ? (
+          <div className="hidden min-[1240px]:flex items-center gap-2">
+            {rightSlot}
+          </div>
+        ) : null}
         {canUseDesktopBridge ? (
           <div className="ml-1 flex items-center gap-1">
             <WindowButton

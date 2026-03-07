@@ -1098,7 +1098,7 @@ export function ProjectPage() {
 
           {isReferenceDrawerOpen ? (
             <aside
-              className="flex min-h-0 w-[clamp(240px,22vw,300px)] shrink-0 flex-col gap-4 border-r border-[var(--workspace-divider)] bg-[var(--workspace-rail-bg)] px-4 py-4 text-[var(--workspace-text)]"
+              className="flex min-h-0 w-[clamp(220px,20vw,288px)] shrink-0 flex-col gap-4 border-r border-[var(--workspace-divider)] bg-[var(--workspace-rail-bg)] px-4 py-4 text-[var(--workspace-text)] max-[1300px]:w-[220px]"
               onWheelCapture={stopPanelWheel}
               onDragOver={handleReferenceDragOver}
               onDragLeave={handleReferenceDragLeave}
