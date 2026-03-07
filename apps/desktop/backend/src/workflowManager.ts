@@ -104,7 +104,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-const DEFAULT_WORKFLOW_NAME = "hunyuan_image_to_3d.json";
+const DEFAULT_WORKFLOW_NAME = "hunyuan_image_to_3d_textured.json";
 
 type WorkflowState = {
   activeWorkflowName: string | null;

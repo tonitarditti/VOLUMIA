@@ -143,40 +143,38 @@ export function ViewportTools({
         </ToolbarBlock>
       }
       center={
-        <div className="relative flex items-center justify-center">
-          <ToolbarBlock>
-            <ToolButton
-              label="Reset"
-              disabled={controlsDisabled}
-              onClick={onResetView}
-            />
-            <ToolButton
-              label="Frame"
-              disabled={controlsDisabled || !hasModel}
-              onClick={onFrameModel}
-            />
-            <ToolButton
-              label={
-                <span className="inline-flex items-center gap-1.5">
-                  <span className="text-[10px]">Tools</span>
-                  <span
-                    aria-hidden="true"
-                    className={`text-[9px] transition-transform ${showUtilityMenu ? "rotate-180" : ""}`}
-                  >
-                    v
-                  </span>
+        <ToolbarBlock>
+          <ToolButton
+            label="Reset"
+            disabled={controlsDisabled}
+            onClick={onResetView}
+          />
+          <ToolButton
+            label="Frame"
+            disabled={controlsDisabled || !hasModel}
+            onClick={onFrameModel}
+          />
+          <ToolButton
+            label={
+              <span className="inline-flex items-center gap-1.5">
+                <span className="text-[10px]">Tools</span>
+                <span
+                  aria-hidden="true"
+                  className={`text-[9px] transition-transform ${showUtilityMenu ? "rotate-180" : ""}`}
+                >
+                  v
                 </span>
-              }
-              active={showUtilityMenu}
-              disabled={controlsDisabled}
-              onClick={() =>
-                setShowUtilityMenu((current) => !current)
-              }
-            />
-          </ToolbarBlock>
+              </span>
+            }
+            active={showUtilityMenu}
+            disabled={controlsDisabled}
+            onClick={() =>
+              setShowUtilityMenu((current) => !current)
+            }
+          />
 
           {showUtilityMenu && !isGenerating ? (
-            <div className="absolute bottom-[calc(100%+10px)] left-1/2 z-20 flex -translate-x-1/2 items-center gap-2 rounded-[16px] border border-[var(--workspace-divider)] bg-[var(--workspace-surface)] p-2 shadow-[0_18px_28px_rgba(0,0,0,0.24)]">
+            <>
               <ToolButton
                 label="Wire"
                 active={wireframeEnabled}
@@ -197,9 +195,9 @@ export function ViewportTools({
                 label="Capture"
                 onClick={() => void onCaptureViewport()}
               />
-            </div>
+            </>
           ) : null}
-        </div>
+        </ToolbarBlock>
       }
       right={
         <ToolbarBlock emphasis className="px-2.5 py-1.5">

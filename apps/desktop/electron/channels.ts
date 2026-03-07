@@ -245,6 +245,26 @@ export type ComfyJobState = "QUEUED" | "RUNNING" | "RESULT_READY" | "ERROR" | "C
 
 export type ComfyJobOutputs = {
   glbPath?: string;
+  meshPath?: string;
+  texturedGlbPath?: string;
+  textureStatus?: "ready" | "failed" | "skipped";
+  textureErrorLogPath?: string;
+  textureMetadataPath?: string;
+  textureDependencies?: {
+    moduleRoots: string[];
+    validModuleRoots: string[];
+    hasCustomRasterizer: boolean;
+    hasDifferentiableRenderer: boolean;
+    missingPaths: string[];
+  };
+  textureValidation?: {
+    ok: boolean;
+    hasMaterials: boolean;
+    hasImages: boolean;
+    hasTextures: boolean;
+    hasMaterialTextureBinding: boolean;
+    reason?: string;
+  };
   previewImages?: string[];
   raw?: unknown;
 };

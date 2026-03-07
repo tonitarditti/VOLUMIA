@@ -1,9 +1,15 @@
+import { spawn } from "child_process";
 import fs from "fs";
 import path from "path";
 import { ComfyApi } from "./comfyApi";
 import { logger } from "./logger";
 import { checkModelsInstalled, ensureModels } from "./modelRegistry";
-import { getOutputsDir, getWorkflowsDir } from "./paths";
+import {
+  getBackendRootDir,
+  getLogsDir,
+  getOutputsDir,
+  getWorkflowsDir,
+} from "./paths";
 import {
   killProcessTree,
   ProcessManager,
@@ -106,8 +112,34 @@ export type ComfyWorkflowJobState =
   | "ERROR"
   | "CANCELED";
 
+export type TextureStageStatus = "ready" | "failed" | "skipped";
+
+export type TexgenDependencySnapshot = {
+  moduleRoots: string[];
+  validModuleRoots: string[];
+  hasCustomRasterizer: boolean;
+  hasDifferentiableRenderer: boolean;
+  missingPaths: string[];
+};
+
+export type TexturedGlbValidation = {
+  ok: boolean;
+  hasMaterials: boolean;
+  hasImages: boolean;
+  hasTextures: boolean;
+  hasMaterialTextureBinding: boolean;
+  reason?: string;
+};
+
 export type ComfyWorkflowJobOutputs = {
   glbPath?: string;
+  meshPath?: string;
+  texturedGlbPath?: string;
+  textureStatus?: TextureStageStatus;
+  textureErrorLogPath?: string;
+  textureMetadataPath?: string;
+  textureDependencies?: TexgenDependencySnapshot;
+  textureValidation?: TexturedGlbValidation;
   previewImages?: string[];
   raw?: unknown;
 };
@@ -149,10 +181,12 @@ type PreparedWorkflowSubmission = {
   comfyOutputDir: string;
   outputBefore: FileSnapshot[];
   startedAtMs: number;
+  inputImagePath: string | null;
 };
 
 type WorkflowJobRecord = ComfyWorkflowJobStatus & {
   projectId?: string;
+  inputImagePath?: string;
   outputDir: string;
   outputBefore: FileSnapshot[];
   history?: unknown;
@@ -183,6 +217,16 @@ function ensurePathExists(targetPath: string, label: string) {
   if (!fs.existsSync(targetPath)) {
     throw new Error(`${label} no existe: ${targetPath}`);
   }
+}
+
+function quoteCmdArg(value: string) {
+  if (value.length === 0) {
+    return "\"\"";
+  }
+  if (!/[\s"]/u.test(value)) {
+    return value;
+  }
+  return `"${value.replace(/"/g, "\"\"")}"`;
 }
 
 function toLegacyState(state: ComfySupervisorState): BackendServiceState {
@@ -345,6 +389,101 @@ function sleep(ms: number) {
   return new Promise<void>((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+function parseGlbJsonChunk(glbPath: string): Record<string, unknown> | null {
+  try {
+    const file = fs.readFileSync(glbPath);
+    if (file.length < 20) {
+      return null;
+    }
+    const magic = file.readUInt32LE(0);
+    const version = file.readUInt32LE(4);
+    if (magic !== 0x46546c67 || version < 2) {
+      return null;
+    }
+    const jsonChunkLength = file.readUInt32LE(12);
+    const jsonChunkType = file.readUInt32LE(16);
+    if (jsonChunkType !== 0x4e4f534a) {
+      return null;
+    }
+    const jsonStart = 20;
+    const jsonEnd = jsonStart + jsonChunkLength;
+    if (jsonEnd > file.length) {
+      return null;
+    }
+    const jsonText = file.slice(jsonStart, jsonEnd).toString("utf8");
+    const parsed = JSON.parse(jsonText) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return null;
+    }
+    return parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function validateTexturedGlb(glbPath: string): TexturedGlbValidation {
+  const parsed = parseGlbJsonChunk(glbPath);
+  if (!parsed) {
+    return {
+      ok: false,
+      hasMaterials: false,
+      hasImages: false,
+      hasTextures: false,
+      hasMaterialTextureBinding: false,
+      reason: "No se pudo parsear GLB/JSON chunk para validar texturas.",
+    };
+  }
+
+  const materials = Array.isArray(parsed.materials) ? parsed.materials : [];
+  const images = Array.isArray(parsed.images) ? parsed.images : [];
+  const textures = Array.isArray(parsed.textures) ? parsed.textures : [];
+
+  const hasMaterialTextureBinding = materials.some((material) => {
+    if (!material || typeof material !== "object" || Array.isArray(material)) {
+      return false;
+    }
+    const node = material as Record<string, unknown>;
+    const pbr =
+      node.pbrMetallicRoughness &&
+      typeof node.pbrMetallicRoughness === "object" &&
+      !Array.isArray(node.pbrMetallicRoughness)
+        ? (node.pbrMetallicRoughness as Record<string, unknown>)
+        : null;
+
+    const pbrTexture =
+      pbr?.baseColorTexture ||
+      pbr?.metallicRoughnessTexture ||
+      pbr?.normalTexture ||
+      pbr?.occlusionTexture;
+
+    return Boolean(
+      pbrTexture ||
+        node.normalTexture ||
+        node.occlusionTexture ||
+        node.emissiveTexture,
+    );
+  });
+
+  const validation: TexturedGlbValidation = {
+    ok:
+      materials.length > 0 &&
+      images.length > 0 &&
+      textures.length > 0 &&
+      hasMaterialTextureBinding,
+    hasMaterials: materials.length > 0,
+    hasImages: images.length > 0,
+    hasTextures: textures.length > 0,
+    hasMaterialTextureBinding,
+  };
+
+  if (!validation.ok) {
+    validation.reason =
+      "GLB generado sin binding de texturas/materiales reales (solo color base o material uniforme).";
+  }
+
+  return validation;
 }
 
 const COMFY_HEALTH_FAILURE_THRESHOLD = 3;
@@ -734,6 +873,460 @@ export class BackendSupervisor {
     return path.join(this.config.comfy.comfyDir, "output", normalized);
   }
 
+  private collectTexgenModuleRootCandidates() {
+    const candidates = new Set<string>();
+    const addCandidate = (value: string) => {
+      const normalized = path.resolve(value);
+      if (!fs.existsSync(normalized)) {
+        return;
+      }
+      if (!fs.statSync(normalized).isDirectory()) {
+        return;
+      }
+      candidates.add(normalized);
+    };
+
+    addCandidate(this.config.comfy.comfyDir);
+    const customNodesDir = path.join(this.config.comfy.comfyDir, "custom_nodes");
+    addCandidate(customNodesDir);
+
+    if (fs.existsSync(customNodesDir) && fs.statSync(customNodesDir).isDirectory()) {
+      const levelOne = fs.readdirSync(customNodesDir, { withFileTypes: true });
+      for (const entry of levelOne) {
+        if (!entry.isDirectory()) {
+          continue;
+        }
+        const levelOnePath = path.join(customNodesDir, entry.name);
+        addCandidate(levelOnePath);
+        try {
+          const levelTwo = fs.readdirSync(levelOnePath, { withFileTypes: true });
+          for (const nested of levelTwo) {
+            if (nested.isDirectory()) {
+              addCandidate(path.join(levelOnePath, nested.name));
+            }
+          }
+        } catch {
+          // No-op by design.
+        }
+      }
+    }
+
+    return Array.from(candidates.values());
+  }
+
+  private resolveTexgenDependencies(): TexgenDependencySnapshot {
+    const moduleRoots = this.collectTexgenModuleRootCandidates();
+    const validModuleRoots: string[] = [];
+    const missingPaths: string[] = [];
+    let hasCustomRasterizer = false;
+    let hasDifferentiableRenderer = false;
+
+    for (const moduleRoot of moduleRoots) {
+      const texgenRoot = path.join(moduleRoot, "hy3dgen", "texgen");
+      const customRasterizerPath = path.join(texgenRoot, "custom_rasterizer");
+      const differentiableRendererPath = path.join(
+        texgenRoot,
+        "differentiable_renderer",
+      );
+
+      const customOk = fs.existsSync(customRasterizerPath);
+      const diffOk = fs.existsSync(differentiableRendererPath);
+      hasCustomRasterizer = hasCustomRasterizer || customOk;
+      hasDifferentiableRenderer = hasDifferentiableRenderer || diffOk;
+
+      if (customOk && diffOk) {
+        validModuleRoots.push(moduleRoot);
+      } else if (fs.existsSync(texgenRoot)) {
+        const missing = [];
+        if (!customOk) {
+          missing.push("custom_rasterizer");
+        }
+        if (!diffOk) {
+          missing.push("differentiable_renderer");
+        }
+        missingPaths.push(`${moduleRoot}: missing ${missing.join(", ")}`);
+      }
+    }
+
+    if (!hasCustomRasterizer) {
+      missingPaths.push("hy3dgen/texgen/custom_rasterizer");
+    }
+    if (!hasDifferentiableRenderer) {
+      missingPaths.push("hy3dgen/texgen/differentiable_renderer");
+    }
+
+    return {
+      moduleRoots,
+      validModuleRoots,
+      hasCustomRasterizer,
+      hasDifferentiableRenderer,
+      missingPaths: Array.from(new Set(missingPaths.values())),
+    };
+  }
+
+  private resolveTexgenScriptPath() {
+    return path.join(getBackendRootDir(), "python", "hunyuan_texgen_stage.py");
+  }
+
+  private resolveTexgenRunner(scriptPath: string, scriptArgs: string[]) {
+    const pythonOverride = this.config.comfy.pythonExeOverride.trim();
+    if (pythonOverride && fs.existsSync(pythonOverride)) {
+      return {
+        command: pythonOverride,
+        args: [scriptPath, ...scriptArgs],
+        cwd: this.config.comfy.comfyDir,
+        details: `pythonExeOverride=${pythonOverride}`,
+      };
+    }
+
+    const condaHook = this.config.comfy.condaHook.trim();
+    const condaEnvName = this.config.comfy.condaEnvName.trim();
+    if (condaHook && condaEnvName && fs.existsSync(condaHook)) {
+      const condaRoot = path.resolve(path.dirname(condaHook), "..");
+      const condaEnvPython = path.join(
+        condaRoot,
+        "envs",
+        condaEnvName,
+        "python.exe",
+      );
+      if (fs.existsSync(condaEnvPython)) {
+        return {
+          command: condaEnvPython,
+          args: [scriptPath, ...scriptArgs],
+          cwd: this.config.comfy.comfyDir,
+          details: `conda-env-python=${condaEnvPython}`,
+        };
+      }
+
+      const cmdExe =
+        process.env.ComSpec?.trim() || "C:\\Windows\\System32\\cmd.exe";
+      const pythonCommand = [
+        "python",
+        quoteCmdArg(scriptPath),
+        ...scriptArgs.map(quoteCmdArg),
+      ].join(" ");
+      const commandLine = `call ${quoteCmdArg(condaHook)} ${quoteCmdArg(condaEnvName)} && ${pythonCommand}`;
+      return {
+        command: cmdExe,
+        args: ["/d", "/s", "/c", commandLine],
+        cwd: this.config.comfy.comfyDir,
+        details: `condaHook=${condaHook}; env=${condaEnvName}`,
+      };
+    }
+
+    return {
+      command: "python",
+      args: [scriptPath, ...scriptArgs],
+      cwd: this.config.comfy.comfyDir,
+      details: "python-from-path",
+    };
+  }
+
+  private async runTexgenScriptProcess(
+    scriptPath: string,
+    scriptArgs: string[],
+    stageLabel: string,
+  ) {
+    const runner = this.resolveTexgenRunner(scriptPath, scriptArgs);
+    return await new Promise<{
+      exitCode: number;
+      stdout: string;
+      stderr: string;
+      runnerDetails: string;
+      timedOut: boolean;
+    }>((resolve, reject) => {
+      const child = spawn(runner.command, runner.args, {
+        cwd: runner.cwd,
+        env: process.env,
+        windowsHide: true,
+        shell: false,
+      });
+
+      let stdout = "";
+      let stderr = "";
+      let completed = false;
+      let timedOut = false;
+      const timeout = setTimeout(() => {
+        timedOut = true;
+        try {
+          child.kill("SIGTERM");
+        } catch {
+          // No-op by design.
+        }
+      }, 8 * 60 * 1_000);
+
+      child.stdout?.on("data", (chunk: Buffer | string) => {
+        const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
+        stdout += text;
+      });
+
+      child.stderr?.on("data", (chunk: Buffer | string) => {
+        const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
+        stderr += text;
+      });
+
+      child.on("error", (error) => {
+        if (completed) {
+          return;
+        }
+        completed = true;
+        clearTimeout(timeout);
+        reject(error);
+      });
+
+      child.on("close", (code) => {
+        if (completed) {
+          return;
+        }
+        completed = true;
+        clearTimeout(timeout);
+        resolve({
+          exitCode: code ?? -1,
+          stdout,
+          stderr,
+          runnerDetails: runner.details,
+          timedOut,
+        });
+      });
+
+      this.appendComfyLog(
+        `[${stageLabel}] Launching texgen with ${runner.details}`,
+      );
+    });
+  }
+
+  private writeTextureMetadata(
+    runDir: string,
+    payload: Record<string, unknown>,
+  ) {
+    const metadataPath = path.join(runDir, "texture-metadata.json");
+    fs.mkdirSync(runDir, { recursive: true });
+    fs.writeFileSync(metadataPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+    return metadataPath;
+  }
+
+  private async runTextureStage(job: WorkflowJobRecord, meshPath: string) {
+    const runDir = path.dirname(meshPath);
+    const stageLabel = `texgen:${job.promptId}`;
+    const logPath = path.join(getLogsDir(), `${stageLabel}.log`);
+    const dependencies = this.resolveTexgenDependencies();
+    const nowIso = new Date().toISOString();
+    const inputImagePath = job.inputImagePath?.trim() ?? "";
+
+    if (!inputImagePath || !fs.existsSync(inputImagePath)) {
+      const metadataPath = this.writeTextureMetadata(runDir, {
+        createdAt: nowIso,
+        promptId: job.promptId,
+        meshPath,
+        texturedGlbPath: null,
+        textureStatus: "skipped",
+        reason: "Input image path unavailable for texgen stage.",
+        textureDependencies: dependencies,
+      });
+      this.appendComfyLog(
+        `[${stageLabel}] skipped: input image missing (fallback mesh).`,
+        "warn",
+      );
+      return {
+        glbPath: meshPath,
+        meshPath,
+        texturedGlbPath: undefined,
+        textureStatus: "skipped" as TextureStageStatus,
+        textureErrorLogPath: undefined,
+        textureMetadataPath: metadataPath,
+        textureDependencies: dependencies,
+        textureValidation: undefined,
+      };
+    }
+
+    if (dependencies.validModuleRoots.length === 0) {
+      const reason = `Texgen dependencies missing: ${dependencies.missingPaths.join(" | ")}`;
+      fs.writeFileSync(logPath, `${reason}\n`, "utf8");
+      const metadataPath = this.writeTextureMetadata(runDir, {
+        createdAt: nowIso,
+        promptId: job.promptId,
+        meshPath,
+        texturedGlbPath: null,
+        textureStatus: "failed",
+        reason,
+        textureDependencies: dependencies,
+        textureErrorLogPath: logPath,
+      });
+      this.appendComfyLog(`[${stageLabel}] ${reason}`, "warn");
+      return {
+        glbPath: meshPath,
+        meshPath,
+        texturedGlbPath: undefined,
+        textureStatus: "failed" as TextureStageStatus,
+        textureErrorLogPath: logPath,
+        textureMetadataPath: metadataPath,
+        textureDependencies: dependencies,
+        textureValidation: undefined,
+      };
+    }
+
+    const scriptPath = this.resolveTexgenScriptPath();
+    if (!fs.existsSync(scriptPath)) {
+      const reason = `Texgen script not found: ${scriptPath}`;
+      fs.writeFileSync(logPath, `${reason}\n`, "utf8");
+      const metadataPath = this.writeTextureMetadata(runDir, {
+        createdAt: nowIso,
+        promptId: job.promptId,
+        meshPath,
+        texturedGlbPath: null,
+        textureStatus: "failed",
+        reason,
+        textureDependencies: dependencies,
+        textureErrorLogPath: logPath,
+      });
+      this.appendComfyLog(`[${stageLabel}] ${reason}`, "warn");
+      return {
+        glbPath: meshPath,
+        meshPath,
+        texturedGlbPath: undefined,
+        textureStatus: "failed" as TextureStageStatus,
+        textureErrorLogPath: logPath,
+        textureMetadataPath: metadataPath,
+        textureDependencies: dependencies,
+        textureValidation: undefined,
+      };
+    }
+
+    const texturedGlbPath = path.join(runDir, "textured.glb");
+    const resultJsonPath = path.join(runDir, "texgen-result.json");
+    const scriptArgs: string[] = [
+      "--mesh",
+      meshPath,
+      "--image",
+      inputImagePath,
+      "--out",
+      texturedGlbPath,
+      "--result-json",
+      resultJsonPath,
+    ];
+    for (const moduleRoot of dependencies.validModuleRoots) {
+      scriptArgs.push("--module-root", moduleRoot);
+    }
+
+    const processResult = await this.runTexgenScriptProcess(
+      scriptPath,
+      scriptArgs,
+      stageLabel,
+    );
+    const logLines = [
+      `stage=${stageLabel}`,
+      `runner=${processResult.runnerDetails}`,
+      `exit_code=${processResult.exitCode}`,
+      `timed_out=${String(processResult.timedOut)}`,
+      "",
+      "[stdout]",
+      processResult.stdout.trim(),
+      "",
+      "[stderr]",
+      processResult.stderr.trim(),
+      "",
+    ];
+    fs.writeFileSync(logPath, `${logLines.join("\n")}\n`, "utf8");
+
+    let texgenJson: Record<string, unknown> | null = null;
+    if (fs.existsSync(resultJsonPath)) {
+      try {
+        const parsed = JSON.parse(fs.readFileSync(resultJsonPath, "utf8")) as unknown;
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          texgenJson = parsed as Record<string, unknown>;
+        }
+      } catch {
+        // No-op by design.
+      }
+    }
+
+    const executionFailed =
+      processResult.exitCode !== 0 ||
+      processResult.timedOut ||
+      !fs.existsSync(texturedGlbPath);
+    if (executionFailed) {
+      const reason =
+        typeof texgenJson?.error === "string"
+          ? texgenJson.error
+          : `Texgen stage failed (exit=${processResult.exitCode}, timedOut=${String(processResult.timedOut)}).`;
+      const metadataPath = this.writeTextureMetadata(runDir, {
+        createdAt: nowIso,
+        promptId: job.promptId,
+        meshPath,
+        texturedGlbPath: null,
+        textureStatus: "failed",
+        reason,
+        textureDependencies: dependencies,
+        textureErrorLogPath: logPath,
+        texgenResult: texgenJson,
+      });
+      this.appendComfyLog(`[${stageLabel}] ${reason}`, "warn");
+      return {
+        glbPath: meshPath,
+        meshPath,
+        texturedGlbPath: undefined,
+        textureStatus: "failed" as TextureStageStatus,
+        textureErrorLogPath: logPath,
+        textureMetadataPath: metadataPath,
+        textureDependencies: dependencies,
+        textureValidation: undefined,
+      };
+    }
+
+    const validation = validateTexturedGlb(texturedGlbPath);
+    if (!validation.ok) {
+      const reason = validation.reason ?? "Textured GLB validation failed.";
+      const metadataPath = this.writeTextureMetadata(runDir, {
+        createdAt: nowIso,
+        promptId: job.promptId,
+        meshPath,
+        texturedGlbPath,
+        textureStatus: "failed",
+        reason,
+        textureDependencies: dependencies,
+        textureValidation: validation,
+        textureErrorLogPath: logPath,
+        texgenResult: texgenJson,
+      });
+      this.appendComfyLog(`[${stageLabel}] ${reason}`, "warn");
+      return {
+        glbPath: meshPath,
+        meshPath,
+        texturedGlbPath,
+        textureStatus: "failed" as TextureStageStatus,
+        textureErrorLogPath: logPath,
+        textureMetadataPath: metadataPath,
+        textureDependencies: dependencies,
+        textureValidation: validation,
+      };
+    }
+
+    const metadataPath = this.writeTextureMetadata(runDir, {
+      createdAt: nowIso,
+      promptId: job.promptId,
+      meshPath,
+      texturedGlbPath,
+      textureStatus: "ready",
+      textureDependencies: dependencies,
+      textureValidation: validation,
+      textureErrorLogPath: logPath,
+      texgenResult: texgenJson,
+    });
+    this.appendComfyLog(
+      `[${stageLabel}] ready. textured_glb=${texturedGlbPath}`,
+    );
+    return {
+      glbPath: texturedGlbPath,
+      meshPath,
+      texturedGlbPath,
+      textureStatus: "ready" as TextureStageStatus,
+      textureErrorLogPath: undefined,
+      textureMetadataPath: metadataPath,
+      textureDependencies: dependencies,
+      textureValidation: validation,
+    };
+  }
+
   private copyDetectedGlb(
     promptId: string,
     startedAtMs: number,
@@ -762,7 +1355,7 @@ export class BackendSupervisor {
     return runLatest;
   }
 
-  private finalizeWorkflowJobSuccess(
+  private async finalizeWorkflowJobSuccess(
     job: WorkflowJobRecord,
     history?: unknown,
   ) {
@@ -781,14 +1374,54 @@ export class BackendSupervisor {
     const historyOutputPath = history
       ? this.buildOutputPathFromHistory(history)
       : null;
-    const resolvedGlbPath =
+    const resolvedMeshPath =
       detectedGlbPath || historyOutputPath || job.outputs?.glbPath;
     const previewImages = history
       ? extractPreviewImagesFromHistory(history, this.config.comfy.comfyDir)
       : job.outputs?.previewImages;
 
+    let textureStage = {
+      glbPath: resolvedMeshPath ?? undefined,
+      meshPath: resolvedMeshPath ?? undefined,
+      texturedGlbPath: undefined as string | undefined,
+      textureStatus: "skipped" as TextureStageStatus,
+      textureErrorLogPath: undefined as string | undefined,
+      textureMetadataPath: undefined as string | undefined,
+      textureDependencies: this.resolveTexgenDependencies(),
+      textureValidation: undefined as TexturedGlbValidation | undefined,
+    };
+
+    if (resolvedMeshPath) {
+      try {
+        textureStage = await this.runTextureStage(job, resolvedMeshPath);
+      } catch (error) {
+        const fallbackReason = `Texgen runtime error: ${errorMessage(error)}`;
+        this.appendComfyLog(
+          `[texgen:${job.promptId}] ${fallbackReason}`,
+          "warn",
+        );
+        textureStage = {
+          glbPath: resolvedMeshPath,
+          meshPath: resolvedMeshPath,
+          texturedGlbPath: undefined,
+          textureStatus: "failed",
+          textureErrorLogPath: undefined,
+          textureMetadataPath: undefined,
+          textureDependencies: this.resolveTexgenDependencies(),
+          textureValidation: undefined,
+        };
+      }
+    }
+
     job.outputs = {
-      glbPath: resolvedGlbPath ?? undefined,
+      glbPath: textureStage.glbPath,
+      meshPath: textureStage.meshPath,
+      texturedGlbPath: textureStage.texturedGlbPath,
+      textureStatus: textureStage.textureStatus,
+      textureErrorLogPath: textureStage.textureErrorLogPath,
+      textureMetadataPath: textureStage.textureMetadataPath,
+      textureDependencies: textureStage.textureDependencies,
+      textureValidation: textureStage.textureValidation,
       previewImages,
       raw: history ?? job.outputs?.raw,
     };
@@ -796,9 +1429,11 @@ export class BackendSupervisor {
     job.progress = 100;
     job.updatedAt = Date.now();
     job.finishedAt = job.finishedAt ?? Date.now();
-    job.message = resolvedGlbPath
-      ? `Workflow completado. promptId=${job.promptId}. GLB=${resolvedGlbPath}`
-      : `Workflow completado. promptId=${job.promptId}`;
+    if (textureStage.glbPath) {
+      job.message = `Workflow completado. promptId=${job.promptId}. GLB=${textureStage.glbPath} (texture_status=${textureStage.textureStatus})`;
+    } else {
+      job.message = `Workflow completado. promptId=${job.promptId}.`;
+    }
     return job;
   }
 
@@ -905,6 +1540,7 @@ export class BackendSupervisor {
       comfyOutputDir,
       outputBefore,
       startedAtMs: Date.now(),
+      inputImagePath: imageInputPath,
     };
   }
 
@@ -1173,6 +1809,7 @@ export class BackendSupervisor {
       message: `Workflow encolado en ComfyUI con promptId=${queue.promptId}`,
       startedAt: prepared.startedAtMs,
       updatedAt: prepared.startedAtMs,
+      inputImagePath: prepared.inputImagePath ?? undefined,
       outputDir: prepared.comfyOutputDir,
       outputBefore: prepared.outputBefore,
       cancelRequested: false,
@@ -1217,7 +1854,7 @@ export class BackendSupervisor {
       ]);
 
       if (historyEntry) {
-        this.finalizeWorkflowJobSuccess(job, historyEntry);
+        await this.finalizeWorkflowJobSuccess(job, historyEntry);
         return JSON.parse(JSON.stringify(job)) as ComfyWorkflowJobStatus;
       }
 
