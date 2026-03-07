@@ -44,28 +44,38 @@ export function RightPanel({
 
   return (
     <aside
-      className={`flex min-h-0 w-[368px] shrink-0 flex-col border-l ${rootClass} ${glassClass} ${className}`}
+      className={`relative isolate flex min-h-0 w-[356px] shrink-0 flex-col overflow-hidden border-l ${rootClass} ${glassClass} ${className}`}
       onWheelCapture={onWheelCapture}
     >
-      <div className={`border-b px-6 py-4 ${headerBorderClass}`}>
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-x-6 top-0 h-24 opacity-55"
+        style={{
+          background:
+            "radial-gradient(circle at top, color-mix(in srgb, var(--accent) 10%, transparent) 0%, transparent 72%)",
+        }}
+      />
+      <div className={`relative z-10 border-b px-6 pb-4 pt-5 ${headerBorderClass}`}>
         <div className="flex items-start justify-between gap-3">
           <div>
             <p
-              className={`text-[9px] font-semibold uppercase tracking-[0.14em] ${eyebrowClass}`}
+              className={`text-[10px] font-semibold uppercase tracking-[0.16em] ${eyebrowClass}`}
             >
               {eyebrow}
             </p>
-            <h2 className={`mt-1 text-[15px] font-medium tracking-[0.01em] ${titleClass}`}>
+            <h2
+              className={`mt-1 text-[17px] font-medium tracking-[0.01em] ${titleClass}`}
+            >
               {title}
             </h2>
             {subtitle ? (
-              <p className={`mt-1 text-[11px] ${subtitleClass}`}>{subtitle}</p>
+              <p className={`mt-1 text-[12px] ${subtitleClass}`}>{subtitle}</p>
             ) : null}
           </div>
           {headerSlot}
         </div>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+      <div className="relative z-10 min-h-0 flex-1 overflow-y-auto px-6 py-4">
         {children}
       </div>
     </aside>

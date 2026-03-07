@@ -1,8 +1,10 @@
 import type { ReactNode } from "react";
 import { Badge, Button } from "@/ui/primitives";
 import { BottomToolbar } from "@/ui/shell";
+import type { WorkspaceMode } from "./modes";
 
 type ViewportToolsProps = {
+  activeMode: WorkspaceMode;
   isGenerating: boolean;
   generationPercent: number;
   generationMessage: string;
@@ -11,12 +13,15 @@ type ViewportToolsProps = {
   isEngineReady: boolean;
   gridEnabled: boolean;
   shadowEnabled: boolean;
+  wireframeEnabled: boolean;
   onGenerate: () => void | Promise<void>;
   onCancelGeneration: () => void | Promise<void>;
   onResetView: () => void;
   onFrameModel: () => void;
   onToggleGrid: () => void;
   onToggleShadows: () => void;
+  onToggleWireframe: () => void;
+  onCaptureViewport: () => void;
 };
 
 function Hint({ children }: { children: ReactNode }) {
@@ -27,14 +32,34 @@ function Hint({ children }: { children: ReactNode }) {
   );
 }
 
-function ToolToggle({
+function ToolbarBlock({
+  children,
+  emphasis = false,
+}: {
+  children: ReactNode;
+  emphasis?: boolean;
+}) {
+  return (
+    <div
+      className={`flex min-w-0 items-center gap-2 rounded-[18px] border px-2.5 py-2 ${
+        emphasis
+          ? "border-[var(--workspace-selected-border)] bg-[color:color-mix(in_srgb,var(--workspace-selected-bg)_88%,var(--workspace-surface)_12%)]"
+          : "border-[var(--workspace-divider)] bg-[var(--workspace-surface)]"
+      }`}
+    >
+      {children}
+    </div>
+  );
+}
+
+function ToolButton({
   label,
   active,
   disabled,
   onClick,
 }: {
   label: string;
-  active: boolean;
+  active?: boolean;
   disabled?: boolean;
   onClick: () => void;
 }) {
@@ -45,25 +70,19 @@ function ToolToggle({
       aria-pressed={active}
       disabled={disabled}
       onClick={onClick}
-      title={`${label} ${active ? "enabled" : "disabled"}`}
-      className={`h-8 whitespace-nowrap gap-2 rounded-full px-3 text-[11px] ${
+      className={`h-8 whitespace-nowrap rounded-full px-3 text-[11px] ${
         active
           ? "border-[var(--workspace-selected-border)] bg-[var(--workspace-selected-bg)] text-[var(--workspace-text)]"
           : "border-[var(--workspace-divider)] bg-[var(--workspace-surface)] text-[var(--workspace-text-muted)] hover:border-[var(--workspace-selected-border)] hover:bg-[var(--workspace-surface-hover)] hover:text-[var(--workspace-text)]"
       }`}
     >
-      <span
-        aria-hidden="true"
-        className={`h-1.5 w-1.5 rounded-full ${
-          active ? "bg-[var(--accent)]" : "bg-current opacity-45"
-        }`}
-      />
-      <span>{label}</span>
+      {label}
     </Button>
   );
 }
 
 export function ViewportTools({
+  activeMode,
   isGenerating,
   generationPercent,
   generationMessage,
@@ -72,136 +91,137 @@ export function ViewportTools({
   isEngineReady,
   gridEnabled,
   shadowEnabled,
+  wireframeEnabled,
   onGenerate,
   onCancelGeneration,
   onResetView,
   onFrameModel,
   onToggleGrid,
   onToggleShadows,
+  onToggleWireframe,
+  onCaptureViewport,
 }: ViewportToolsProps) {
   const hasImages = selectedImages.length > 0;
   const primaryLabel = hasModel ? "Regenerate 3D" : "Generate 3D";
   const controlsDisabled = isGenerating;
   const actionDisabled = isGenerating || !hasImages || !isEngineReady;
+  const compactDetails = activeMode === "result" || activeMode === "ai";
 
-  const toolButtonClass =
-    "h-8 whitespace-nowrap rounded-full px-3 text-[11px] border-[var(--workspace-divider)] bg-[var(--workspace-surface)] text-[var(--workspace-text-muted)] hover:border-[var(--accent)] hover:bg-[var(--workspace-surface-hover)] hover:text-[var(--workspace-text)]";
-  const secondaryButtonClass =
-    "h-8 whitespace-nowrap rounded-full px-3 text-[11px] border-[var(--workspace-divider)] bg-[var(--workspace-surface)] text-[var(--workspace-text)] hover:border-[var(--accent)] hover:bg-[var(--workspace-surface-hover)]";
-  const primaryButtonClass =
-    "h-9 whitespace-nowrap rounded-full px-4 text-[12px] shadow-[var(--shadow)]";
+  const readinessTone = isGenerating
+    ? ("warning" as const)
+    : !hasImages
+      ? ("neutral" as const)
+      : !isEngineReady
+        ? ("danger" as const)
+        : ("success" as const);
+  const readinessLabel = isGenerating
+    ? "Generating"
+    : !hasImages
+      ? "No refs"
+      : !isEngineReady
+        ? "Engine offline"
+        : "Ready";
 
   return (
     <BottomToolbar
       tone="contrast"
       progress={isGenerating ? generationPercent : null}
       left={
-        <div className="flex min-w-0 items-center gap-2 overflow-hidden">
-          <Hint>LMB Orbit</Hint>
-          <Hint>RMB Pan</Hint>
-          <Hint>Wheel Zoom</Hint>
-        </div>
+        <ToolbarBlock>
+          <Hint>Orbit</Hint>
+          <Hint>Pan</Hint>
+          <Hint>Zoom</Hint>
+        </ToolbarBlock>
       }
       center={
-        <div
-          className={`flex min-w-0 items-center justify-center gap-2 overflow-x-auto ${
-            controlsDisabled ? "opacity-50" : ""
-          }`}
-        >
-          <Button
-            variant="ghost"
-            className={toolButtonClass}
+        <ToolbarBlock>
+          <ToolButton
+            label="Reset"
             disabled={controlsDisabled}
             onClick={onResetView}
-          >
-            Reset View
-          </Button>
-          <Button
-            variant="ghost"
-            className={toolButtonClass}
+          />
+          <ToolButton
+            label="Frame"
             disabled={controlsDisabled || !hasModel}
             onClick={onFrameModel}
-          >
-            Frame Model
-          </Button>
-          <ToolToggle
+          />
+          <ToolButton
+            label="Wire"
+            active={wireframeEnabled}
+            disabled={controlsDisabled || !hasModel}
+            onClick={onToggleWireframe}
+          />
+          <ToolButton
             label="Grid"
             active={gridEnabled}
             disabled={controlsDisabled}
             onClick={onToggleGrid}
           />
-          <ToolToggle
-            label="Shadows"
+          <ToolButton
+            label="Shadow"
             active={shadowEnabled}
             disabled={controlsDisabled}
             onClick={onToggleShadows}
           />
-        </div>
+          <ToolButton
+            label="Capture"
+            disabled={controlsDisabled}
+            onClick={() => void onCaptureViewport()}
+          />
+        </ToolbarBlock>
       }
       right={
-        isGenerating ? (
-          <div className="flex min-w-0 items-center justify-end gap-3">
-            <Badge tone="warning" dot>
-              Generating
-            </Badge>
-            <div className="min-w-0">
-              <div className="h-2 w-48 overflow-hidden rounded-full bg-[var(--workspace-surface)]">
+        <ToolbarBlock emphasis>
+          {isGenerating ? (
+            <div className="flex min-w-0 items-center gap-2.5">
+              <Badge tone="warning" dot>
+                Generating
+              </Badge>
+              <div
+                className="h-2 w-28 overflow-hidden rounded-full bg-[var(--workspace-surface)]"
+                title={generationMessage}
+              >
                 <div
                   className="h-full bg-[linear-gradient(90deg,var(--accent),var(--accent-2))] transition-all duration-150 ease-out"
                   style={{ width: `${generationPercent}%` }}
                 />
               </div>
-              <p className="mt-1 truncate text-[11px] text-[var(--workspace-text-muted)]">
-                {generationMessage}
-              </p>
-            </div>
-            <Button
-              variant="ghost"
-              className={secondaryButtonClass}
-              onClick={() => void onCancelGeneration()}
-            >
-              Cancel generation
-            </Button>
-          </div>
-        ) : (
-          <div className="flex min-w-0 items-center justify-end gap-2">
-            {!hasImages ? (
-              <span className="whitespace-nowrap text-[11px] text-[var(--workspace-text-muted)]">
-                Add images from References
-              </span>
-            ) : null}
-            {!isEngineReady && hasImages ? (
-              <span className="whitespace-nowrap text-[11px] text-[var(--workspace-text-muted)]">
-                Engine offline - Restart in AI
-              </span>
-            ) : null}
-            <Button
-              variant="primary"
-              className={primaryButtonClass}
-              onClick={() => void onGenerate()}
-              disabled={actionDisabled}
-              title={
-                !hasImages
-                  ? "Add images from References"
-                  : !isEngineReady
-                    ? "Engine offline - Restart in AI"
-                    : undefined
-              }
-            >
-              {primaryLabel}
-            </Button>
-            {hasModel ? (
               <Button
-                variant="secondary"
-                className={secondaryButtonClass}
-                disabled
-                title="Texture workflow is not available in this build"
+                variant="ghost"
+                className="h-8 rounded-full px-3 text-[11px]"
+                onClick={() => void onCancelGeneration()}
               >
-                Texture
+                Cancel
               </Button>
-            ) : null}
-          </div>
-        )
+            </div>
+          ) : (
+            <div className="flex min-w-0 items-center gap-2.5">
+              <Badge tone={readinessTone} dot>
+                {readinessLabel}
+              </Badge>
+              {!compactDetails ? (
+                <span className="text-[10px] text-[var(--workspace-text-muted)]">
+                  {selectedImages.length} refs
+                </span>
+              ) : null}
+              <Button
+                variant="primary"
+                className="h-8 rounded-full px-4 text-[11px]"
+                onClick={() => void onGenerate()}
+                disabled={actionDisabled}
+                title={
+                  !hasImages
+                    ? "Add images from References"
+                    : !isEngineReady
+                      ? "Engine offline - Restart in AI"
+                      : undefined
+                }
+              >
+                {primaryLabel}
+              </Button>
+            </div>
+          )}
+        </ToolbarBlock>
       }
     />
   );

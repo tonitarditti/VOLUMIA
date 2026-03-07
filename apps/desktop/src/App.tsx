@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { HashRouter, Navigate, Route, Routes, useParams } from "react-router-dom";
 import { desktopApi } from "@/electron/desktopApi";
+import { AppCommandsProvider } from "@/app/AppCommandsContext";
 import { AppFrame } from "@/layout/AppFrame";
 import { BootScreen } from "@/pages/BootScreen";
 import { DashboardPage } from "@/pages/DashboardPage";
@@ -22,7 +23,6 @@ function AppContent() {
   const { state, mergeImportedProjects, resetProjects } = useProjects();
   const {
     settings,
-    resolvedTheme,
     applyImportedSettings,
     resetSettings,
   } = useSettings();
@@ -145,7 +145,16 @@ function AppContent() {
   }, [notice]);
 
   return (
-    <>
+    <AppCommandsProvider
+      value={{
+        exportProjects,
+        importProjects,
+        exportSettings,
+        importSettings,
+        resetWindowLayout: handleResetWindowLayout,
+        resetAllData: handleResetAllData,
+      }}
+    >
       <Routes>
         <Route path="/" element={<BootScreen />} />
         <Route
@@ -176,7 +185,7 @@ function AppContent() {
         />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Routes>
-    </>
+    </AppCommandsProvider>
   );
 }
 

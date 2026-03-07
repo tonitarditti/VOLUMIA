@@ -31,10 +31,14 @@ export function BottomToolbar({
 
   return (
     <footer
-      className={`relative grid h-[62px] shrink-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center border-t ${rootClass} ${glassClass} ${className}`}
+      className={`relative isolate grid min-h-[68px] shrink-0 grid-cols-[minmax(0,0.72fr)_minmax(0,0.96fr)_minmax(0,1.32fr)] items-center gap-2 border-t px-3 py-2 ${rootClass} ${glassClass} ${className}`}
     >
       <div
-        className={`absolute inset-x-0 top-0 h-px ${isContrast ? "bg-[var(--workspace-divider)]" : "bg-[var(--panel-border)]"}`}
+        className="pointer-events-none absolute inset-x-0 top-0 h-3"
+        style={{
+          background:
+            "linear-gradient(180deg, color-mix(in srgb, var(--accent) 16%, transparent), transparent)",
+        }}
       />
       {typeof progress === "number" ? (
         <div
@@ -46,15 +50,13 @@ export function BottomToolbar({
           />
         </div>
       ) : null}
-      <div className="flex min-w-0 items-center gap-2 px-4">
+      <div className="flex min-w-0 items-center">
         {left}
       </div>
-      <div
-        className={`flex min-w-0 items-center justify-center gap-2 border-x px-5 ${dividerClass}`}
-      >
+      <div className={`flex min-w-0 items-center justify-center border-x px-2 ${dividerClass}`}>
         {center}
       </div>
-      <div className="flex min-w-0 items-center justify-end gap-2 px-4">
+      <div className="flex min-w-0 items-center justify-end">
         {right}
       </div>
     </footer>

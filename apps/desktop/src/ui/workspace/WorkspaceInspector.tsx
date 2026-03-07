@@ -9,12 +9,12 @@ import type {
 import {
   EmptyState,
   ModeHeader,
-  ProjectBadges,
   RunSummary,
   Section,
   SummaryGrid,
   Label,
   Value,
+  WorkspaceSnapshot,
 } from "./InspectorCommon";
 import { ModePanel } from "./ModePanel";
 import {
@@ -94,30 +94,35 @@ function InspectorTabs({
   ] as const;
 
   return (
-    <div
-      role="tablist"
-      aria-label="Inspector sections"
-      className="mb-5 flex rounded-full border border-[var(--workspace-divider)] bg-[var(--workspace-surface)] p-1"
-    >
-      {tabs.map((tab) => {
-        const isActive = activeTab === tab.id;
-        return (
-          <button
-            key={tab.id}
-            type="button"
-            role="tab"
-            aria-selected={isActive}
-            onClick={() => onTabChange(tab.id)}
-            className={`flex-1 rounded-full px-3 py-2 text-[11px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] ${
-              isActive
-                ? "bg-[var(--workspace-selected-bg)] text-[var(--workspace-text)]"
-                : "text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-surface-hover)] hover:text-[var(--workspace-text)]"
-            }`}
-          >
-            {tab.label}
-          </button>
-        );
-      })}
+    <div className="space-y-2">
+      <p className="px-1 text-[9px] font-semibold uppercase tracking-[0.16em] text-[var(--workspace-text-muted)]">
+        Panels
+      </p>
+      <div
+        role="tablist"
+        aria-label="Inspector sections"
+        className="grid grid-cols-3 gap-1 rounded-[18px] border border-[var(--workspace-divider)] bg-[var(--workspace-surface)] p-1"
+      >
+        {tabs.map((tab) => {
+          const isActive = activeTab === tab.id;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              role="tab"
+              aria-selected={isActive}
+              onClick={() => onTabChange(tab.id)}
+              className={`rounded-[14px] px-3 py-2 text-[11px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] ${
+                isActive
+                  ? "bg-[var(--workspace-selected-bg)] text-[var(--workspace-text)] shadow-[0_10px_24px_rgba(0,0,0,0.18)]"
+                  : "text-[var(--workspace-text-muted)] hover:bg-[var(--workspace-surface-hover)] hover:text-[var(--workspace-text)]"
+              }`}
+            >
+              {tab.label}
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -274,6 +279,30 @@ export function WorkspaceInspector({
 }: WorkspaceInspectorProps) {
   const hasModel = Boolean(project.model?.glbPath);
   const modeDefinition = getWorkspaceModeDefinition(mode);
+  const headerStatus =
+    !isEngineReady && mode === "ai"
+      ? {
+          label: "Engine offline",
+          className:
+            "border-[var(--badge-danger-border)] bg-[var(--badge-danger-bg)] text-[var(--badge-danger-text)]",
+        }
+      : isGenerating
+        ? {
+            label: "Generating",
+            className:
+              "border-[var(--badge-warning-border)] bg-[var(--badge-warning-bg)] text-[var(--badge-warning-text)]",
+          }
+        : hasModel
+          ? {
+              label: "Model ready",
+              className:
+                "border-[var(--badge-success-border)] bg-[var(--badge-success-bg)] text-[var(--badge-success-text)]",
+            }
+          : {
+              label: "In setup",
+              className:
+                "border-[var(--workspace-divider)] bg-[var(--workspace-surface)] text-[var(--workspace-text-muted)]",
+            };
 
   let body: ReactNode;
   if (tab === "references") {
@@ -351,24 +380,35 @@ export function WorkspaceInspector({
       eyebrow="Workspace"
       title="Inspector"
       subtitle={project.name}
+      headerSlot={
+        <div
+          className={`rounded-full border px-2.5 py-1 text-[9px] font-semibold uppercase tracking-[0.14em] ${headerStatus.className}`}
+        >
+          {headerStatus.label}
+        </div>
+      }
       tone="contrast"
       onWheelCapture={onWheelCapture}
     >
-      <InspectorTabs activeTab={tab} onTabChange={onTabChange} />
-      {tab === "inspector" ? (
-        <div className="space-y-6">
-          <ModeHeader mode={mode} />
-          <ProjectBadges
-            projectName={project.name}
-            selectedImages={selectedImages}
-            hasModel={hasModel}
-            generationDeviceLabel={generationDeviceLabel}
-          />
-          {body}
-        </div>
-      ) : (
-        body
-      )}
+      <div className="space-y-6">
+        <WorkspaceSnapshot
+          projectName={project.name}
+          selectedImages={selectedImages}
+          hasModel={hasModel}
+          generationDeviceLabel={generationDeviceLabel}
+          modeLabel={modeDefinition.title}
+          statusLabel={headerStatus.label}
+        />
+        <InspectorTabs activeTab={tab} onTabChange={onTabChange} />
+        {tab === "inspector" ? (
+          <div className="space-y-6">
+            <ModeHeader mode={mode} />
+            {body}
+          </div>
+        ) : (
+          body
+        )}
+      </div>
     </RightPanel>
   );
 }

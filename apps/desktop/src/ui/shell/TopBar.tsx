@@ -1,6 +1,14 @@
-import type { ReactNode } from "react";
-import { useNavigate } from "react-router-dom";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import { useLocation, useNavigate } from "react-router-dom";
+import { useAppCommands } from "@/app/AppCommandsContext";
 import { desktopApi, hasDesktopBridge } from "@/electron/desktopApi";
+import { useProjects } from "@/projects/context";
+import { selectActiveProject } from "@/projects/selectors";
 import { BrandMark } from "./BrandMark";
 
 type ShellTopBarProps = {
@@ -11,6 +19,31 @@ type ShellTopBarProps = {
   statusSlot?: ReactNode;
   rightSlot?: ReactNode;
 };
+
+type TopBarMenuActionItem = {
+  id: string;
+  label: string;
+  onSelect: () => void | Promise<void>;
+  disabled?: boolean;
+  shortcut?: string;
+};
+
+type TopBarMenuSeparatorItem = {
+  id: string;
+  separator: true;
+};
+
+type TopBarMenuItem = TopBarMenuActionItem | TopBarMenuSeparatorItem;
+
+type TopBarMenu = {
+  id: string;
+  label: string;
+  items: TopBarMenuItem[];
+};
+
+function isSeparatorItem(item: TopBarMenuItem): item is TopBarMenuSeparatorItem {
+  return "separator" in item;
+}
 
 function WindowButton({
   label,
@@ -45,41 +78,254 @@ export function TopBar({
   rightSlot,
 }: ShellTopBarProps) {
   const navigate = useNavigate();
+  const location = useLocation();
+  const { state } = useProjects();
+  const {
+    importProjects,
+    exportProjects,
+    importSettings,
+    exportSettings,
+    resetWindowLayout,
+    resetAllData,
+  } = useAppCommands();
   const canUseDesktopBridge = hasDesktopBridge();
-  const barHeightClass = centerSlot ? "h-14" : "h-12";
+  const barHeightClass = "h-12";
+  const activeProject = selectActiveProject(state);
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const menuRegionRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!openMenuId) {
+      return;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (
+        menuRegionRef.current &&
+        event.target instanceof Node &&
+        !menuRegionRef.current.contains(event.target)
+      ) {
+        setOpenMenuId(null);
+      }
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpenMenuId(null);
+      }
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [openMenuId]);
+
+  useEffect(() => {
+    setOpenMenuId(null);
+  }, [location.pathname]);
+
+  const runMenuAction = (action: () => void | Promise<void>) => {
+    setOpenMenuId(null);
+    void Promise.resolve()
+      .then(action)
+      .catch(() => undefined);
+  };
+
+  const handleResetAllData = () => {
+    const shouldContinue =
+      typeof window === "undefined" || typeof window.confirm !== "function"
+        ? true
+        : window.confirm(
+            "Reset all local projects, settings, and saved window layout?",
+          );
+
+    if (!shouldContinue) {
+      return;
+    }
+
+    return resetAllData();
+  };
+
+  const menus: TopBarMenu[] = [
+    {
+      id: "file",
+      label: "File",
+      items: [
+        {
+          id: "import-projects",
+          label: "Import projects...",
+          onSelect: importProjects,
+        },
+        {
+          id: "export-projects",
+          label: "Export projects...",
+          onSelect: exportProjects,
+        },
+        { id: "sep-projects", separator: true },
+        {
+          id: "import-settings",
+          label: "Import settings...",
+          onSelect: importSettings,
+        },
+        {
+          id: "export-settings",
+          label: "Export settings...",
+          onSelect: exportSettings,
+        },
+        { id: "sep-storage", separator: true },
+        {
+          id: "open-user-data-folder",
+          label: "Open user data folder",
+          onSelect: async () => {
+            await desktopApi.openUserDataFolder();
+          },
+          disabled: !canUseDesktopBridge,
+        },
+      ],
+    },
+    {
+      id: "edit",
+      label: "Edit",
+      items: [
+        {
+          id: "reset-window-layout",
+          label: "Reset window layout",
+          onSelect: resetWindowLayout,
+          disabled: !canUseDesktopBridge,
+        },
+        {
+          id: "reset-all-data",
+          label: "Reset all local data",
+          onSelect: handleResetAllData,
+        },
+      ],
+    },
+    {
+      id: "view",
+      label: "View",
+      items: [
+        {
+          id: "go-dashboard",
+          label: "Projects dashboard",
+          onSelect: () => navigate("/dashboard"),
+        },
+        {
+          id: "go-active-workspace",
+          label: activeProject ? `Open ${activeProject.name}` : "Open active workspace",
+          onSelect: () => {
+            if (!activeProject) {
+              return;
+            }
+            navigate(`/workspace/${activeProject.id}`);
+          },
+          disabled: !activeProject,
+        },
+        {
+          id: "go-settings",
+          label: "Settings",
+          onSelect: () => navigate("/settings"),
+        },
+        { id: "sep-window", separator: true },
+        {
+          id: "toggle-maximize",
+          label: "Toggle maximize window",
+          onSelect: async () => {
+            await desktopApi.toggleMaximizeWindow();
+          },
+          disabled: !canUseDesktopBridge,
+        },
+      ],
+    },
+  ];
 
   return (
     <header
-      className={`drag-region relative z-30 flex shrink-0 items-center justify-between border-b border-[var(--panel-border)] bg-[var(--shell-topbar)] px-4 ${barHeightClass}`}
+      className={`drag-region relative z-30 flex shrink-0 items-center justify-between border-b border-[var(--panel-border)] bg-[var(--shell-topbar)] px-3.5 ${barHeightClass}`}
     >
-      <div className="flex min-w-0 items-center gap-3.5">
+      <div className="flex min-w-0 items-center gap-3">
         <button
           type="button"
           onClick={() => navigate("/dashboard")}
           className="no-drag flex items-center gap-2 rounded-[var(--radius-md)] px-2 py-1.5 transition-colors hover:bg-[var(--accent-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
         >
           <BrandMark size={18} />
-          <span className="text-[11px] font-semibold tracking-[0.18em] text-[var(--text)]">
+          <span className="text-[10px] font-semibold tracking-[0.18em] text-[var(--text)]">
             VOLUMIA
           </span>
         </button>
         <div className="hidden h-4 w-px bg-[var(--panel-border)] md:block" />
-        <div className="hidden md:flex md:items-center md:gap-1">
-          {["File", "Edit", "View"].map((item) => (
-            <button
-              key={item}
-              type="button"
-              className="no-drag rounded-[var(--radius-sm)] px-2.5 py-1.5 text-[11px] text-[var(--muted-text)] transition-colors hover:bg-[var(--panel-2)] hover:text-[var(--text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
-            >
-              {item}
-            </button>
-          ))}
+        <div
+          ref={menuRegionRef}
+          className="hidden md:flex md:items-center md:gap-1"
+        >
+          {menus.map((menu) => {
+            const isOpen = openMenuId === menu.id;
+
+            return (
+              <div key={menu.id} className="no-drag relative">
+                <button
+                  type="button"
+                  aria-haspopup="menu"
+                  aria-expanded={isOpen}
+                  onClick={() =>
+                    setOpenMenuId((current) =>
+                      current === menu.id ? null : menu.id,
+                    )
+                  }
+                  className={`rounded-[var(--radius-sm)] px-2.5 py-1.5 text-[11px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] ${
+                    isOpen
+                      ? "bg-[var(--panel-elevated)] text-[var(--text)]"
+                      : "text-[var(--muted-text)] hover:bg-[var(--panel-2)] hover:text-[var(--text)]"
+                  }`}
+                >
+                  {menu.label}
+                </button>
+                {isOpen ? (
+                  <div
+                    role="menu"
+                    aria-label={`${menu.label} menu`}
+                    className="absolute left-0 top-[calc(100%+0.4rem)] z-50 min-w-[220px] rounded-[16px] border border-[var(--panel-border-strong)] bg-[var(--panel-elevated)] p-1.5 shadow-[0_24px_50px_rgba(0,0,0,0.28)] backdrop-blur-xl"
+                  >
+                    {menu.items.map((item) =>
+                      isSeparatorItem(item) ? (
+                        <div
+                          key={item.id}
+                          role="separator"
+                          className="my-1 h-px bg-[var(--panel-border)]"
+                        />
+                      ) : (
+                        <button
+                          key={item.id}
+                          type="button"
+                          role="menuitem"
+                          disabled={item.disabled}
+                          onClick={() => runMenuAction(item.onSelect)}
+                          className="flex w-full items-center justify-between gap-4 rounded-[12px] px-3 py-2 text-left text-[11px] transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)] disabled:cursor-not-allowed disabled:opacity-45 disabled:hover:bg-transparent enabled:text-[var(--text)] enabled:hover:bg-[var(--panel-2)]"
+                        >
+                          <span className="truncate">{item.label}</span>
+                          {item.shortcut ? (
+                            <span className="shrink-0 text-[10px] text-[var(--text-faint)]">
+                              {item.shortcut}
+                            </span>
+                          ) : null}
+                        </button>
+                      ),
+                    )}
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
         </div>
         <div className="min-w-0">
           <p className="truncate text-[9px] font-semibold uppercase tracking-[0.14em] text-[var(--text-faint)]">
             {eyebrow}
           </p>
-          <p className="truncate text-[12px] text-[var(--text)]">{title}</p>
+          <p className="truncate text-[11px] text-[var(--text)]">{title}</p>
         </div>
       </div>
 
@@ -113,7 +359,7 @@ export function TopBar({
       ) : null}
       </div>
 
-      <div className="no-drag flex items-center gap-2.5">
+      <div className="no-drag flex items-center gap-2">
         {statusSlot}
         {rightSlot}
         {canUseDesktopBridge ? (

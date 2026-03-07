@@ -51,6 +51,9 @@ type ProjectViewportProps = {
   gridEnabled?: boolean;
   wireframe?: boolean;
   onToggleWireframe?: () => void;
+  screenshotSignal?: number;
+  onStatsChange?: (stats: ModelViewportStats | null) => void;
+  onCameraTelemetryChange?: (telemetry: ViewportCameraTelemetry) => void;
 };
 
 type ViewportMultiviewCaptureArgs = {
@@ -114,13 +117,23 @@ type ModelNormalizationDebug = {
   centeredZ: number;
 };
 
-type ModelViewportStats = {
+export type ModelViewportStats = {
   triangleCount: number;
+  vertexCount: number;
+  meshCount: number;
+  materialCount: number;
   bounds: {
     x: number;
     y: number;
     z: number;
   };
+};
+
+export type ViewportCameraTelemetry = {
+  projection: "Perspective";
+  azimuthDeg: number;
+  elevationDeg: number;
+  distance: number;
 };
 
 type CoplanarHeuristicStats = {
@@ -218,7 +231,8 @@ type ViewportThemeConfig = {
 };
 
 const VIEW_TARGET = new THREE.Vector3(0, 0, 0);
-const VIEWER_DEBUG = import.meta.env.DEV;
+const VIEWER_DEBUG =
+  import.meta.env.DEV && import.meta.env.VITE_VOLUMIA_DEBUG_VIEWPORT === "1";
 const VIEWPORT_EVENT_DEBUG =
   import.meta.env.DEV && import.meta.env.VITE_VOLUMIA_DEBUG_VIEWPORT === "1";
 const VIEWPORT_CAPTURE_DEBUG =
@@ -290,6 +304,53 @@ function countVisibleTriangles(root: THREE.Object3D) {
   return Math.round(total);
 }
 
+function countVisibleVertices(root: THREE.Object3D) {
+  let total = 0;
+  root.traverse((child) => {
+    if (!(child instanceof THREE.Mesh) || !child.visible) {
+      return;
+    }
+    const geometry = child.geometry;
+    if (!geometry) {
+      return;
+    }
+    const positionAttribute = geometry.getAttribute("position");
+    if (positionAttribute) {
+      total += positionAttribute.count;
+    }
+  });
+  return Math.round(total);
+}
+
+function countVisibleMeshes(root: THREE.Object3D) {
+  let total = 0;
+  root.traverse((child) => {
+    if (child instanceof THREE.Mesh && child.visible) {
+      total += 1;
+    }
+  });
+  return total;
+}
+
+function countVisibleMaterials(root: THREE.Object3D) {
+  const materials = new Set<THREE.Material>();
+  root.traverse((child) => {
+    if (!(child instanceof THREE.Mesh) || !child.visible || !child.material) {
+      return;
+    }
+    if (Array.isArray(child.material)) {
+      for (const material of child.material) {
+        if (material) {
+          materials.add(material);
+        }
+      }
+      return;
+    }
+    materials.add(child.material);
+  });
+  return materials.size;
+}
+
 function collectModelViewportStats(
   root: THREE.Object3D | null,
 ): ModelViewportStats | null {
@@ -303,11 +364,38 @@ function collectModelViewportStats(
   const size = bounds.getSize(new THREE.Vector3());
   return {
     triangleCount: countVisibleTriangles(root),
+    vertexCount: countVisibleVertices(root),
+    meshCount: countVisibleMeshes(root),
+    materialCount: countVisibleMaterials(root),
     bounds: {
       x: size.x,
       y: size.y,
       z: size.z,
     },
+  };
+}
+
+function createViewportCameraTelemetry(
+  camera: THREE.PerspectiveCamera,
+  target: THREE.Vector3,
+): ViewportCameraTelemetry {
+  const offset = camera.position.clone().sub(target);
+  const horizontalDistance = Math.sqrt(
+    offset.x * offset.x + offset.z * offset.z,
+  );
+  const azimuthDeg = THREE.MathUtils.euclideanModulo(
+    THREE.MathUtils.radToDeg(Math.atan2(offset.x, offset.z)),
+    360,
+  );
+  const elevationDeg = THREE.MathUtils.radToDeg(
+    Math.atan2(offset.y, Math.max(horizontalDistance, 0.0001)),
+  );
+
+  return {
+    projection: "Perspective",
+    azimuthDeg,
+    elevationDeg,
+    distance: offset.length(),
   };
 }
 
@@ -1174,7 +1262,7 @@ function LoadedModel({
     return () => {
       cancelled = true;
     };
-  }, [glbPath, modelUrl]);
+  }, [fittedForUrlRef, glbPath, glbVersion, modelUrl]);
 
   useEffect(() => {
     if (!loadedModel || !(camera instanceof THREE.PerspectiveCamera)) {
@@ -1567,6 +1655,9 @@ export function ProjectViewport({
   gridEnabled = true,
   wireframe: wireframeProp,
   onToggleWireframe,
+  screenshotSignal,
+  onStatsChange,
+  onCameraTelemetryChange,
 }: ProjectViewportProps) {
   const { t } = useT();
   const { settings, resolvedTheme } = useSettings();
@@ -1594,6 +1685,7 @@ export function ProjectViewport({
   const [modelStats, setModelStats] = useState<ModelViewportStats | null>(null);
   const wireframe = wireframeProp ?? wireframeInternal;
   const isOrbitingRef = useRef(false);
+  const lastTelemetryKeyRef = useRef("");
   const url = useMemo(
     () =>
       glbPath
@@ -1685,12 +1777,41 @@ export function ProjectViewport({
       : "bg-[var(--surface-1)] text-[var(--text-muted)] hover:bg-[var(--surface-2)] hover:text-[var(--text)]"
   }`;
 
+  const emitCameraTelemetry = useCallback(() => {
+    if (!onCameraTelemetryChange) {
+      return;
+    }
+    const camera = cameraRef.current;
+    if (!camera) {
+      return;
+    }
+    const target =
+      controlsRef.current?.target.clone() ?? cameraSnapshotRef.current.target;
+    const telemetry = createViewportCameraTelemetry(camera, target);
+    const telemetryKey = `${Math.round(telemetry.azimuthDeg)}:${Math.round(
+      telemetry.elevationDeg,
+    )}:${telemetry.distance.toFixed(2)}`;
+    if (lastTelemetryKeyRef.current === telemetryKey) {
+      return;
+    }
+    lastTelemetryKeyRef.current = telemetryKey;
+    onCameraTelemetryChange(telemetry);
+  }, [onCameraTelemetryChange]);
+
   useEffect(() => {
     if (rendererRef.current) {
       rendererRef.current.toneMappingExposure = themeConfig.toneMappingExposure;
     }
     invalidateRef.current?.();
   }, [studioProfile, themeConfig.toneMappingExposure, viewportTheme]);
+
+  useEffect(() => {
+    onStatsChange?.(modelStats);
+  }, [modelStats, onStatsChange]);
+
+  useEffect(() => {
+    emitCameraTelemetry();
+  }, [emitCameraTelemetry, wireframe, glbPath, glbVersion]);
 
   useEffect(() => {
     console.debug("[ProjectViewport] studioProfile changed", {
@@ -1739,6 +1860,7 @@ export function ProjectViewport({
     themeConfig.fillIntensity,
     themeConfig.rimIntensity,
     themeConfig.topDownKeyIntensity,
+    themeConfig.toneMappingExposure,
     themeConfig.contactShadowOpacity,
     themeConfig.ambientOcclusionOpacity,
     themeConfig.vignetteGradient,
@@ -1768,7 +1890,8 @@ export function ProjectViewport({
       return;
     }
     applyCameraSnapshot(camera, controlsRef, cameraSnapshotRef.current);
-  }, []);
+    emitCameraTelemetry();
+  }, [emitCameraTelemetry]);
 
   const handleScreenshot = useCallback(() => {
     const renderer = rendererRef.current;
@@ -1785,6 +1908,13 @@ export function ProjectViewport({
       setLoadError(`Screenshot failed: ${extractErrorMessage(error)}`);
     }
   }, []);
+
+  useEffect(() => {
+    if (typeof screenshotSignal !== "number" || screenshotSignal <= 0) {
+      return;
+    }
+    handleScreenshot();
+  }, [handleScreenshot, screenshotSignal]);
 
   const captureMultiviewSnapshots = useCallback(
     async (args: ViewportMultiviewCaptureArgs) => {
@@ -2007,8 +2137,9 @@ export function ProjectViewport({
       far: snapshot.far,
     };
     applyCameraSnapshot(camera, controlsRef, cameraSnapshotRef.current);
+    emitCameraTelemetry();
     invalidateRef.current?.();
-  }, [fitSignal]);
+  }, [emitCameraTelemetry, fitSignal]);
 
   useEffect(() => {
     const generation = (
@@ -2162,7 +2293,7 @@ export function ProjectViewport({
               {loadError}
             </div>
           ) : null}
-          {modelStats ? (
+          {showChrome && modelStats ? (
             <div className="pointer-events-none absolute right-3 top-3 z-20 rounded-[var(--radius-md)] border border-[var(--glass-border)] bg-[var(--glass-bg-strong)] px-3 py-2 text-right text-[10px] uppercase tracking-[0.12em] text-[var(--muted-text)] shadow-[var(--glass-shadow)] backdrop-blur-[12px]">
               <div>Mesh {modelStats.triangleCount.toLocaleString()} tris</div>
               <div className="mt-1 text-[9px] tracking-[0.1em] text-[var(--text-faint)]">
@@ -2249,6 +2380,7 @@ export function ProjectViewport({
                       cameraSnapshotRef.current,
                     );
                     controlsRef.current?.update();
+                    emitCameraTelemetry();
                   }
                 }}
               >
@@ -2350,6 +2482,7 @@ export function ProjectViewport({
                   }}
                   onCameraFit={(snapshot) => {
                     cameraSnapshotRef.current = snapshot;
+                    emitCameraTelemetry();
                   }}
                   onModelNormalizationDebug={setModelNormalizationDebug}
                 />
@@ -2377,6 +2510,19 @@ export function ProjectViewport({
                     if (VIEWPORT_EVENT_DEBUG) {
                       console.debug("[ProjectViewport][controls] start");
                     }
+                  }}
+                  onChange={() => {
+                    const camera = cameraRef.current;
+                    const controls = controlsRef.current;
+                    if (camera && controls) {
+                      cameraSnapshotRef.current = {
+                        position: camera.position.clone(),
+                        target: controls.target.clone(),
+                        near: camera.near,
+                        far: camera.far,
+                      };
+                    }
+                    emitCameraTelemetry();
                   }}
                   onEnd={() => {
                     if (VIEWPORT_EVENT_DEBUG) {

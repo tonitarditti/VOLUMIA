@@ -8,30 +8,29 @@ import {
   type WheelEvent as ReactWheelEvent,
 } from "react";
 import { Navigate, useNavigate, useParams } from "react-router-dom";
-import { createChatMessage } from "@/projects/factory";
 import { useProjects } from "@/projects/context";
 import { selectProjectById } from "@/projects/selectors";
 import type { GenerationPreset, ProjectModel } from "@/projects/types";
-import {
-  buildMockAssistantReply,
-  summarizeReply,
-} from "@/projects/mockAssistant";
 import { desktopApi, hasDesktopBridge } from "@/electron/desktopApi";
 import { Badge, type BadgeTone } from "@/ui/primitives";
 import { TopBar } from "@/ui/shell";
 import {
   ModeSelector,
+  ViewportHud,
   ViewportTools,
   WorkspaceInspector,
   workspaceModeDefinitions,
   type WorkspaceMode,
 } from "@/ui/workspace";
-import { ProjectViewport } from "@/three/ProjectViewport";
+import {
+  ProjectViewport,
+  type ModelViewportStats,
+  type ViewportCameraTelemetry,
+} from "@/three/ProjectViewport";
 import {
   DEFAULT_COMFY_WORKFLOW_ID,
   useGenerationJobStore,
 } from "@/services/comfyui";
-import { useT } from "@/volumia/i18n/useT";
 import { useSettings } from "@/volumia/settings/context";
 
 type GenerationDevice = {
@@ -51,13 +50,6 @@ type PendingGenerationRun = {
   preset: GenerationPreset;
 };
 type WorkspaceStatus = "idle" | "generating" | "ready" | "error";
-
-function formatMessageTime(value: string, locale: string) {
-  return new Intl.DateTimeFormat(locale, {
-    hour: "2-digit",
-    minute: "2-digit",
-  }).format(new Date(value));
-}
 
 function filenameFromPath(value: string) {
   const parts = value.split(/[/\\]/);
@@ -213,7 +205,6 @@ export function ProjectPage() {
     initialGenerationUiState.hasStoredMultiviewPreference,
   );
   const navigate = useNavigate();
-  const { t, language } = useT();
   const { settings, setAutoGenerationProfile } = useSettings();
   const {
     state: generationJob,
@@ -224,10 +215,7 @@ export function ProjectPage() {
   const {
     state,
     hydrated,
-    renameProject,
     updateNotes,
-    appendChatMessage,
-    updateModelMetadata,
     updateProjectModel,
   } = useProjects();
 
@@ -235,7 +223,6 @@ export function ProjectPage() {
     () => selectProjectById(state, projectId),
     [projectId, state],
   );
-  const [chatInput, setChatInput] = useState("");
   const [selectedImages, setSelectedImages] = useState<string[]>([]);
   const [preset, setPreset] = useState<GenerationPreset>("balanced");
   const [generationStage, setGenerationStage] = useState("idle");
@@ -274,6 +261,13 @@ export function ProjectPage() {
   const [viewportFitSignal, setViewportFitSignal] = useState(0);
   const [viewportGridEnabled, setViewportGridEnabled] = useState(true);
   const [viewportShadowEnabled, setViewportShadowEnabled] = useState(true);
+  const [viewportWireframeEnabled, setViewportWireframeEnabled] =
+    useState(false);
+  const [viewportScreenshotSignal, setViewportScreenshotSignal] = useState(0);
+  const [viewportStats, setViewportStats] =
+    useState<ModelViewportStats | null>(null);
+  const [viewportCameraTelemetry, setViewportCameraTelemetry] =
+    useState<ViewportCameraTelemetry | null>(null);
   const [isReferenceDropActive, setIsReferenceDropActive] = useState(false);
   const [comfyStatus, setComfyStatus] = useState<Awaited<
     ReturnType<typeof desktopApi.getComfyStatus>
@@ -281,7 +275,6 @@ export function ProjectPage() {
   const [engineMessage, setEngineMessage] = useState("Checking AI engine...");
   const [isRestartingEngine, setIsRestartingEngine] = useState(false);
   const [showEngineLogs, setShowEngineLogs] = useState(false);
-  const historyBottomRef = useRef<HTMLDivElement | null>(null);
   const projectModel = getProjectModel(project?.model);
   const currentProjectId = project?.id ?? "";
   const projectRef = useRef(project);
@@ -291,6 +284,9 @@ export function ProjectPage() {
   const pendingGenerationRef = useRef<PendingGenerationRun | null>(null);
   const handledGenerationStateRef = useRef("");
   const workspaceStatusRef = useRef<WorkspaceStatus>("idle");
+  const projectModelRef = useRef(projectModel);
+  const reconstructionTierRef = useRef(reconstructionTier);
+  const autoGenerationProfileRef = useRef(settings.autoGenerationProfile);
 
   useEffect(() => {
     projectRef.current = project;
@@ -309,21 +305,24 @@ export function ProjectPage() {
   }, [updateProjectModel]);
 
   useEffect(() => {
-    if (historyBottomRef.current) {
-      historyBottomRef.current.scrollIntoView({
-        behavior: "smooth",
-        block: "end",
-      });
-    }
-  }, [project?.chatHistory.length]);
+    projectModelRef.current = projectModel;
+  }, [projectModel]);
 
   useEffect(() => {
-    if (!project) {
+    reconstructionTierRef.current = reconstructionTier;
+  }, [reconstructionTier]);
+
+  useEffect(() => {
+    autoGenerationProfileRef.current = settings.autoGenerationProfile;
+  }, [settings.autoGenerationProfile]);
+
+  useEffect(() => {
+    if (!project?.id) {
       return;
     }
 
-    setSelectedImages(projectModel.sourceImages);
-    setPreset(projectModel.preset ?? "balanced");
+    setSelectedImages(projectModelRef.current.sourceImages);
+    setPreset(projectModelRef.current.preset ?? "balanced");
     setGenerationStage("idle");
     setGenerationPercent(0);
     setGenerationMessage("Selecciona imagenes para iniciar.");
@@ -332,12 +331,14 @@ export function ProjectPage() {
     setAutoUsedEngine(null);
     setAutoUsedPreset(null);
     setGenerationLogPath("");
-    const storedMultiview = resolveStoredMultiviewEnabled(reconstructionTier);
+    const storedMultiview = resolveStoredMultiviewEnabled(
+      reconstructionTierRef.current,
+    );
     hasStoredMultiviewPreferenceRef.current =
       storedMultiview.hasStoredPreference;
     setMultiviewEnabled(storedMultiview.enabled);
     setMultiviewPreset(
-      resolveDefaultMultiviewPreset(settings.autoGenerationProfile),
+      resolveDefaultMultiviewPreset(autoGenerationProfileRef.current),
     );
     setImagePreviews({});
     pendingGenerationRef.current = null;
@@ -348,6 +349,10 @@ export function ProjectPage() {
     setViewportFitSignal(0);
     setViewportGridEnabled(true);
     setViewportShadowEnabled(true);
+    setViewportWireframeEnabled(false);
+    setViewportScreenshotSignal(0);
+    setViewportStats(null);
+    setViewportCameraTelemetry(null);
   }, [project?.id]);
 
   useEffect(() => {
@@ -710,7 +715,7 @@ export function ProjectPage() {
     return () => {
       window.removeEventListener("keydown", handleShortcut);
     };
-  }, [setWorkspaceMode, workspaceModeDefinitions]);
+  }, []);
 
   const engineState =
     isRestartingEngine || comfyStatus?.state === "STARTING"
@@ -742,30 +747,6 @@ export function ProjectPage() {
   if (!project) {
     return <Navigate to="/" replace />;
   }
-
-  const submitChat = () => {
-    const trimmed = chatInput.trim();
-    if (!trimmed) return;
-
-    const userMessage = createChatMessage("user", trimmed);
-    appendChatMessage(project.id, userMessage);
-
-    const assistantReplyText = buildMockAssistantReply(
-      project.name,
-      trimmed,
-      language,
-    );
-    const assistantMessage = createChatMessage("assistant", assistantReplyText);
-    appendChatMessage(project.id, assistantMessage);
-
-    updateModelMetadata(project.id, {
-      ...project.modelMetadata,
-      lastPrompt: trimmed,
-      lastAssistantSummary: summarizeReply(assistantReplyText),
-    });
-
-    setChatInput("");
-  };
 
   const applySelectedImages = (nextImages: string[]) => {
     const limited = nextImages
@@ -1038,17 +1019,23 @@ export function ProjectPage() {
     setViewportShadowEnabled((current) => !current);
   };
 
-  const topMetaClass =
-    "rounded-full border border-[var(--panel-border)] bg-[var(--panel-2)] px-3 py-1.5 text-[11px] tracking-[0.01em] text-[var(--muted-text)]";
+  const handleViewportToggleWireframe = () => {
+    setViewportWireframeEnabled((current) => !current);
+  };
+
+  const handleViewportScreenshot = () => {
+    setViewportScreenshotSignal((current) => current + 1);
+  };
+
   const drawerLabelClass =
-    "text-[9px] font-semibold uppercase tracking-[0.14em] text-[var(--workspace-text-muted)]";
+    "text-[9px] font-semibold uppercase tracking-[0.16em] text-[var(--workspace-text-muted)]";
   const drawerMetaClass =
     "rounded-full border border-[var(--workspace-divider)] bg-[var(--workspace-surface)] px-3 py-1.5 text-[11px] text-[var(--workspace-text-muted)]";
   const drawerCardClass =
-    "rounded-[var(--radius-lg)] border border-[var(--workspace-divider)] bg-[var(--workspace-surface)] p-4";
+    "rounded-[18px] border border-[var(--workspace-divider)] bg-[var(--workspace-surface)] p-4";
   const drawerDropClass = isReferenceDropActive
     ? "border-[var(--workspace-selected-border)] bg-[var(--workspace-selected-bg)]"
-    : "border-[var(--workspace-divider)] bg-[var(--workspace-surface)]";
+    : "border-[var(--workspace-divider)] bg-[color:color-mix(in_srgb,var(--workspace-surface)_84%,black_16%)]";
   const isReferenceDrawerOpen = workspaceMode === "references";
   const hasModel = Boolean(project.model?.glbPath);
   const autoProfileLabel = formatAutoProfileLabel(
@@ -1090,7 +1077,6 @@ export function ProjectPage() {
           }
           rightSlot={
             <div className="flex items-center gap-2">
-              <span className={topMetaClass}>Preset {preset}</span>
               <button
                 type="button"
                 onClick={() => navigate("/settings")}
@@ -1125,32 +1111,45 @@ export function ProjectPage() {
           <ModeSelector
             activeMode={workspaceMode}
             onModeChange={setWorkspaceMode}
+            workflowStatus={workspaceStatus}
+            selectedImagesCount={selectedImages.length}
+            hasModel={hasModel}
             onWheelCapture={stopPanelWheel}
           />
 
           {isReferenceDrawerOpen ? (
             <aside
-              className="flex min-h-0 w-[292px] shrink-0 flex-col gap-5 border-r border-[var(--workspace-divider)] bg-[var(--workspace-rail-bg)] px-5 py-5 text-[var(--workspace-text)]"
+              className="flex min-h-0 w-[300px] shrink-0 flex-col gap-4 border-r border-[var(--workspace-divider)] bg-[var(--workspace-rail-bg)] px-4 py-4 text-[var(--workspace-text)]"
               onWheelCapture={stopPanelWheel}
               onDragOver={handleReferenceDragOver}
               onDragLeave={handleReferenceDragLeave}
               onDrop={handleReferenceDrop}
             >
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <p className={drawerLabelClass}>Reference Drawer</p>
-                  <p className="mt-1 text-sm font-medium text-[var(--workspace-text)]">
-                    Input imagery
+              <div className={drawerCardClass}>
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className={drawerLabelClass}>Reference pack</p>
+                    <p className="mt-1 text-[15px] font-medium text-[var(--workspace-text)]">
+                      Input imagery
+                    </p>
+                  </div>
+                  <span className={drawerMetaClass}>{selectedImages.length} / 4</span>
+                </div>
+                <div className="mt-3">
+                  <p className="mt-2 text-[12px] leading-5 text-[var(--workspace-text-muted)]">
+                    Curate only the images that really define silhouette, material or proportion.
                   </p>
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className={drawerMetaClass}>
-                    {selectedImages.length} imgs
-                  </span>
+                <div className="mt-3 flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <span className={drawerMetaClass}>
+                      {selectedImages[0] ? "Primary locked" : "No primary yet"}
+                    </span>
+                  </div>
                   <button
                     type="button"
                     onClick={() => void handleSelectImages()}
-                    className="inline-flex h-8 items-center rounded-full border border-[var(--accent-primary)] bg-[var(--accent-primary)] px-3 text-[11px] text-[var(--accent-contrast)] transition-colors hover:border-[var(--accent-primary-hover)] hover:bg-[var(--accent-primary-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+                    className="inline-flex h-9 items-center rounded-full border border-[var(--accent-primary)] bg-[var(--accent-primary)] px-4 text-[11px] font-medium text-[var(--accent-contrast)] transition-colors hover:border-[var(--accent-primary-hover)] hover:bg-[var(--accent-primary-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
                   >
                     + Add images
                   </button>
@@ -1158,33 +1157,52 @@ export function ProjectPage() {
               </div>
 
               <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
+                <div
+                  className={`${drawerCardClass} ${drawerDropClass} transition-colors`}
+                >
+                  <p className={drawerLabelClass}>Drop zone</p>
+                  <p className="mt-2 text-[12px] leading-5 text-[var(--workspace-text-muted)]">
+                    Drag images here or use Add images. Keep the pack compact and intentional so the next run has a clear visual direction.
+                  </p>
+                </div>
+
                 {selectedImages.length > 0 ? (
-                  selectedImages.map((imagePath) => (
+                  selectedImages.map((imagePath, index) => (
                     <figure
                       key={imagePath}
                       className={`${drawerCardClass} overflow-hidden`}
                     >
-                      {imagePreviews[imagePath] ? (
-                        <img
-                          src={imagePreviews[imagePath]}
-                          alt={filenameFromPath(imagePath)}
-                          className="h-36 w-full rounded-xl object-cover"
-                        />
-                      ) : (
-                        <div className="h-36 w-full rounded-xl bg-[var(--shell-contrast-tag)]" />
-                      )}
-                      <figcaption className="mt-3 truncate text-[11px] text-[var(--workspace-text-muted)]">
-                        {filenameFromPath(imagePath)}
+                      <div className="relative">
+                        {imagePreviews[imagePath] ? (
+                          <img
+                            src={imagePreviews[imagePath]}
+                            alt={filenameFromPath(imagePath)}
+                            className="h-32 w-full rounded-[14px] object-cover"
+                          />
+                        ) : (
+                          <div className="h-32 w-full rounded-[14px] bg-[var(--shell-contrast-tag)]" />
+                        )}
+                        <div className="absolute inset-x-3 top-3 flex items-center justify-between gap-2">
+                          <span className="rounded-full border border-[rgba(255,255,255,0.18)] bg-[rgba(0,0,0,0.26)] px-2.5 py-1 text-[9px] font-semibold uppercase tracking-[0.14em] text-white">
+                            {index === 0 ? "Primary" : `Ref ${index + 1}`}
+                          </span>
+                        </div>
+                      </div>
+                      <figcaption className="mt-2 flex items-center justify-between gap-3">
+                        <span className="truncate text-[11px] text-[var(--workspace-text-muted)]">
+                          {filenameFromPath(imagePath)}
+                        </span>
                       </figcaption>
                     </figure>
                   ))
                 ) : (
-                  <div
-                    className={`${drawerCardClass} ${drawerDropClass} text-xs text-[var(--workspace-text-muted)] transition-colors`}
-                  >
-                    Drag and drop images here or use + Add images. References
-                    stay docked in their own column so the viewport remains
-                    clear for orbit and zoom.
+                  <div className={drawerCardClass}>
+                    <p className="text-[13px] font-medium text-[var(--workspace-text)]">
+                      No references attached yet
+                    </p>
+                    <p className="mt-2 text-[12px] leading-5 text-[var(--workspace-text-muted)]">
+                      Start with one strong image, then add only the references that truly reinforce silhouette, material or proportion.
+                    </p>
                   </div>
                 )}
               </div>
@@ -1194,6 +1212,16 @@ export function ProjectPage() {
           <div className="flex min-w-0 flex-1 flex-col">
             <div className="flex min-h-0 flex-1">
               <section className="relative min-w-0 flex-1 border-r border-[var(--workspace-divider)] bg-[var(--shell-viewport)]">
+                <ViewportHud
+                  mode={workspaceMode}
+                  projectName={project.name}
+                  hasModel={hasModel}
+                  wireframe={viewportWireframeEnabled}
+                  cameraTelemetry={viewportCameraTelemetry}
+                  modelStats={viewportStats}
+                  onSetWireframe={setViewportWireframeEnabled}
+                />
+
                 <ProjectViewport
                   glbPath={project.model?.glbPath}
                   glbVersion={project.model?.generatedAt}
@@ -1205,6 +1233,10 @@ export function ProjectPage() {
                   fitSignal={viewportFitSignal}
                   gridEnabled={viewportGridEnabled}
                   shadowEnabled={viewportShadowEnabled}
+                  wireframe={viewportWireframeEnabled}
+                  screenshotSignal={viewportScreenshotSignal}
+                  onStatsChange={setViewportStats}
+                  onCameraTelemetryChange={setViewportCameraTelemetry}
                 />
               </section>
 
@@ -1258,6 +1290,7 @@ export function ProjectPage() {
             </div>
 
             <ViewportTools
+              activeMode={workspaceMode}
               isGenerating={isGenerating}
               generationPercent={generationPercent}
               generationMessage={generationMessage}
@@ -1266,12 +1299,15 @@ export function ProjectPage() {
               isEngineReady={isEngineReady}
               gridEnabled={viewportGridEnabled}
               shadowEnabled={viewportShadowEnabled}
+              wireframeEnabled={viewportWireframeEnabled}
               onGenerate={handleRunGeneration}
               onCancelGeneration={handleCancelGeneration}
               onResetView={handleViewportReset}
               onFrameModel={handleViewportFit}
               onToggleGrid={handleViewportToggleGrid}
               onToggleShadows={handleViewportToggleShadows}
+              onToggleWireframe={handleViewportToggleWireframe}
+              onCaptureViewport={handleViewportScreenshot}
             />
           </div>
         </div>
