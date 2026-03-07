@@ -2,12 +2,7 @@ import { getWorkspaceModeDefinition, type WorkspaceMode } from "./modes";
 
 type ViewportHudProps = {
   mode: WorkspaceMode;
-  projectName: string;
   hasModel: boolean;
-  wireframe: boolean;
-  cameraTelemetry: unknown;
-  modelStats: unknown;
-  onSetWireframe: (nextValue: boolean) => void;
 };
 
 export function ViewportHud({

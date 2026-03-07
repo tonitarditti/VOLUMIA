@@ -14,7 +14,6 @@ import {
   SummaryGrid,
   Label,
   Value,
-  WorkspaceSnapshot,
 } from "./InspectorCommon";
 import { ModePanel } from "./ModePanel";
 import {
@@ -55,7 +54,6 @@ type WorkspaceInspectorProps = {
   autoUsedEngineLabel: string;
   autoUsedPresetLabel: string;
   generationLogPath: string;
-  generationDeviceLabel?: string;
   onTabChange: (tab: WorkspaceInspectorTab) => void;
   onToggleNotes: () => void;
   onUpdateNotes: (value: string) => void;
@@ -260,7 +258,6 @@ export function WorkspaceInspector({
   autoUsedEngineLabel,
   autoUsedPresetLabel,
   generationLogPath,
-  generationDeviceLabel,
   onTabChange,
   onToggleNotes,
   onUpdateNotes,
@@ -391,14 +388,6 @@ export function WorkspaceInspector({
       onWheelCapture={onWheelCapture}
     >
       <div className="space-y-6">
-        <WorkspaceSnapshot
-          projectName={project.name}
-          selectedImages={selectedImages}
-          hasModel={hasModel}
-          generationDeviceLabel={generationDeviceLabel}
-          modeLabel={modeDefinition.title}
-          statusLabel={headerStatus.label}
-        />
         <InspectorTabs activeTab={tab} onTabChange={onTabChange} />
         {tab === "inspector" ? (
           <div className="space-y-6">

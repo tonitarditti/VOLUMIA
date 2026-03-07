@@ -44,7 +44,7 @@ export function RightPanel({
 
   return (
     <aside
-      className={`relative isolate flex min-h-0 w-[356px] shrink-0 flex-col overflow-hidden border-l ${rootClass} ${glassClass} ${className}`}
+      className={`relative isolate flex min-h-0 w-[clamp(292px,26vw,356px)] shrink-0 flex-col overflow-hidden border-l ${rootClass} ${glassClass} ${className}`}
       onWheelCapture={onWheelCapture}
     >
       <div

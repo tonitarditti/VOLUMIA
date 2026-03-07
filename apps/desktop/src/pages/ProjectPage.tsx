@@ -24,8 +24,6 @@ import {
 } from "@/ui/workspace";
 import {
   ProjectViewport,
-  type ModelViewportStats,
-  type ViewportCameraTelemetry,
 } from "@/three/ProjectViewport";
 import {
   DEFAULT_COMFY_WORKFLOW_ID,
@@ -33,10 +31,6 @@ import {
 } from "@/services/comfyui";
 import { useSettings } from "@/volumia/settings/context";
 
-type GenerationDevice = {
-  device: "cuda" | "cpu";
-  name: string;
-};
 type AutoEngine = "instantmesh" | "triposr" | "arch" | "blockout";
 type AutoPreset = "hard_surface" | "organic";
 type AutoProfile = "auto" | "hard_surface" | "organic";
@@ -231,8 +225,6 @@ export function ProjectPage() {
     "Selecciona imagenes para iniciar.",
   );
   const [isGenerating, setIsGenerating] = useState(false);
-  const [generationDevice, setGenerationDevice] =
-    useState<GenerationDevice | null>(null);
   const [autoUsedEngine, setAutoUsedEngine] = useState<AutoEngine | null>(null);
   const [autoUsedPreset, setAutoUsedPreset] = useState<AutoPreset | null>(null);
   const [generationLogPath, setGenerationLogPath] = useState("");
@@ -264,10 +256,6 @@ export function ProjectPage() {
   const [viewportWireframeEnabled, setViewportWireframeEnabled] =
     useState(false);
   const [viewportScreenshotSignal, setViewportScreenshotSignal] = useState(0);
-  const [viewportStats, setViewportStats] =
-    useState<ModelViewportStats | null>(null);
-  const [viewportCameraTelemetry, setViewportCameraTelemetry] =
-    useState<ViewportCameraTelemetry | null>(null);
   const [isReferenceDropActive, setIsReferenceDropActive] = useState(false);
   const [comfyStatus, setComfyStatus] = useState<Awaited<
     ReturnType<typeof desktopApi.getComfyStatus>
@@ -327,7 +315,6 @@ export function ProjectPage() {
     setGenerationPercent(0);
     setGenerationMessage("Selecciona imagenes para iniciar.");
     setIsGenerating(false);
-    setGenerationDevice(null);
     setAutoUsedEngine(null);
     setAutoUsedPreset(null);
     setGenerationLogPath("");
@@ -351,8 +338,6 @@ export function ProjectPage() {
     setViewportShadowEnabled(true);
     setViewportWireframeEnabled(false);
     setViewportScreenshotSignal(0);
-    setViewportStats(null);
-    setViewportCameraTelemetry(null);
   }, [project?.id]);
 
   useEffect(() => {
@@ -501,7 +486,6 @@ export function ProjectPage() {
           ? ` Aviso: ${payload.warnings.join(" | ")}`
           : "";
       setGenerationMessage(`${baseMessage}${warningSuffix}`);
-      setGenerationDevice(payload.device ?? null);
       setAutoUsedEngine(payload.autoUsed ?? null);
       setAutoUsedPreset(payload.autoPreset ?? null);
       setGenerationLogPath("");
@@ -862,7 +846,6 @@ export function ProjectPage() {
     setGenerationStage("running");
     setGenerationPercent(5);
     setGenerationMessage("Iniciando generacion en ComfyUI...");
-    setGenerationDevice(null);
     setAutoUsedEngine(null);
     setGenerationLogPath("");
 
@@ -916,7 +899,6 @@ export function ProjectPage() {
     setGenerationStage("running");
     setGenerationPercent(5);
     setGenerationMessage("Iniciando generacion ComfyUI (SKP)...");
-    setGenerationDevice(null);
     setAutoUsedEngine(null);
     setGenerationLogPath("");
 
@@ -1047,9 +1029,6 @@ export function ProjectPage() {
   const autoUsedPresetLabel = autoUsedPreset
     ? formatAutoPresetLabel(autoUsedPreset)
     : "n/a";
-  const generationDeviceLabel = generationDevice
-    ? `${generationDevice.device.toUpperCase()} ${generationDevice.name}`
-    : undefined;
   const stopPanelWheel = (event: ReactWheelEvent<HTMLElement>) => {
     event.stopPropagation();
   };
@@ -1119,7 +1098,7 @@ export function ProjectPage() {
 
           {isReferenceDrawerOpen ? (
             <aside
-              className="flex min-h-0 w-[300px] shrink-0 flex-col gap-4 border-r border-[var(--workspace-divider)] bg-[var(--workspace-rail-bg)] px-4 py-4 text-[var(--workspace-text)]"
+              className="flex min-h-0 w-[clamp(240px,22vw,300px)] shrink-0 flex-col gap-4 border-r border-[var(--workspace-divider)] bg-[var(--workspace-rail-bg)] px-4 py-4 text-[var(--workspace-text)]"
               onWheelCapture={stopPanelWheel}
               onDragOver={handleReferenceDragOver}
               onDragLeave={handleReferenceDragLeave}
@@ -1214,12 +1193,7 @@ export function ProjectPage() {
               <section className="relative min-w-0 flex-1 border-r border-[var(--workspace-divider)] bg-[var(--shell-viewport)]">
                 <ViewportHud
                   mode={workspaceMode}
-                  projectName={project.name}
                   hasModel={hasModel}
-                  wireframe={viewportWireframeEnabled}
-                  cameraTelemetry={viewportCameraTelemetry}
-                  modelStats={viewportStats}
-                  onSetWireframe={setViewportWireframeEnabled}
                 />
 
                 <ProjectViewport
@@ -1235,8 +1209,6 @@ export function ProjectPage() {
                   shadowEnabled={viewportShadowEnabled}
                   wireframe={viewportWireframeEnabled}
                   screenshotSignal={viewportScreenshotSignal}
-                  onStatsChange={setViewportStats}
-                  onCameraTelemetryChange={setViewportCameraTelemetry}
                 />
               </section>
 
@@ -1267,7 +1239,6 @@ export function ProjectPage() {
                 autoUsedEngineLabel={autoUsedEngineLabel}
                 autoUsedPresetLabel={autoUsedPresetLabel}
                 generationLogPath={generationLogPath}
-                generationDeviceLabel={generationDeviceLabel}
                 onToggleNotes={() => setIsNotesOpen((current) => !current)}
                 onUpdateNotes={(value) => updateNotes(project.id, value)}
                 onOpenOutputFolder={handleOpenOutputFolder}
