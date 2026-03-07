@@ -1,4 +1,5 @@
 import argparse
+import importlib
 import json
 import os
 import shutil
@@ -29,8 +30,34 @@ def resolve_existing_module_roots(raw_roots: List[str]) -> List[str]:
 
 def add_module_roots_to_syspath(roots: List[str]) -> None:
     for root in roots:
-        if root not in sys.path:
-            sys.path.insert(0, root)
+        candidates = [
+            root,
+            os.path.join(root, "hy3dgen", "texgen"),
+        ]
+        for candidate in candidates:
+            if os.path.isdir(candidate) and candidate not in sys.path:
+                sys.path.insert(0, candidate)
+
+
+def probe_required_imports() -> Dict[str, str]:
+    # Order matters on Windows: torch must be loaded before rasterizer kernels.
+    modules = [
+        "torch",
+        "custom_rasterizer",
+        "custom_rasterizer_kernel",
+        "differentiable_renderer",
+        "hy3dgen",
+        "hy3dgen.texgen",
+        "segment_anything",
+    ]
+    results: Dict[str, str] = {}
+    for module_name in modules:
+        try:
+            importlib.import_module(module_name)
+            results[module_name] = "ok"
+        except Exception as exc:  # noqa: BLE001
+            results[module_name] = f"{type(exc).__name__}: {exc}"
+    return results
 
 
 def check_texgen_dependencies(roots: List[str]) -> Tuple[List[str], List[str]]:
@@ -231,6 +258,47 @@ def main() -> int:
             )
 
         add_module_roots_to_syspath(valid_roots)
+        import_probe = probe_required_imports()
+        result["import_probe"] = import_probe
+        torch_status = import_probe.get("torch", "missing")
+        custom_status = import_probe.get("custom_rasterizer", "missing")
+        diff_status = import_probe.get("differentiable_renderer", "missing")
+        print(
+            f"[texgen-bootstrap] torch preload {'OK' if torch_status == 'ok' else 'FAILED'} "
+            f"({torch_status})"
+        )
+        print(
+            f"[texgen-bootstrap] custom_rasterizer import {'OK' if custom_status == 'ok' else 'FAILED'} "
+            f"({custom_status})"
+        )
+        print(
+            f"[texgen-bootstrap] differentiable_renderer import {'OK' if diff_status == 'ok' else 'FAILED'} "
+            f"({diff_status})"
+        )
+
+        required_modules = [
+            "torch",
+            "hy3dgen",
+            "hy3dgen.texgen",
+            "custom_rasterizer",
+            "custom_rasterizer_kernel",
+            "differentiable_renderer",
+        ]
+        optional_modules = ["segment_anything"]
+        missing_required = [
+            f"{name}: {import_probe.get(name, 'missing')}"
+            for name in required_modules
+            if import_probe.get(name) != "ok"
+        ]
+        missing_optional = [
+            f"{name}: {import_probe.get(name, 'missing')}"
+            for name in optional_modules
+            if import_probe.get(name) != "ok"
+        ]
+        result["import_probe_required_missing"] = missing_required
+        result["import_probe_optional_missing"] = missing_optional
+        if missing_required:
+            raise RuntimeError("Missing Python dependencies: " + " | ".join(missing_required))
 
         from PIL import Image  # noqa: WPS433
         import trimesh  # noqa: WPS433

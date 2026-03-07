@@ -1,79 +1,459 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { hasDesktopBridge } from "@/electron/desktopApi";
-import { comfyuiService } from "@/services/comfyui";
+import type {
+  BackendStatusResponse,
+  ComfyStatusResponse,
+} from "@/electron/channels";
+import { desktopApi, hasDesktopBridge } from "@/electron/desktopApi";
 import { BrandMark } from "@/ui/shell";
 
-function bootSteps(detail: string, bootError: string | null) {
-  return [
-    { text: "Initializing AI engine", done: true },
-    { text: "Loading workspace shell", done: !bootError },
-    { text: detail, done: !bootError, active: !bootError },
-    {
-      text: bootError ?? "Awaiting ready signal",
-      done: false,
-      error: Boolean(bootError),
-    },
-  ];
+type StartupStage =
+  | "initializing_shell"
+  | "loading_workspace"
+  | "launching_comfyui"
+  | "connecting_local_engine"
+  | "loading_nodes_and_models"
+  | "verifying_engine_ready"
+  | "finalizing_ui"
+  | "ready";
+
+type StageSpec = {
+  min: number;
+  max: number;
+  label: string;
+};
+
+const STARTUP_STAGE_ORDER: StartupStage[] = [
+  "initializing_shell",
+  "loading_workspace",
+  "launching_comfyui",
+  "connecting_local_engine",
+  "loading_nodes_and_models",
+  "verifying_engine_ready",
+  "finalizing_ui",
+  "ready",
+];
+
+const STARTUP_STAGE_SPEC: Record<StartupStage, StageSpec> = {
+  initializing_shell: {
+    min: 0,
+    max: 15,
+    label: "Initializing shell runtime",
+  },
+  loading_workspace: {
+    min: 15,
+    max: 28,
+    label: "Loading workspace context",
+  },
+  launching_comfyui: {
+    min: 28,
+    max: 42,
+    label: "Launching ComfyUI process",
+  },
+  connecting_local_engine: {
+    min: 42,
+    max: 55,
+    label: "Connecting local AI engine",
+  },
+  loading_nodes_and_models: {
+    min: 55,
+    max: 75,
+    label: "Loading nodes and model registry",
+  },
+  verifying_engine_ready: {
+    min: 75,
+    max: 88,
+    label: "Verifying engine readiness",
+  },
+  finalizing_ui: {
+    min: 88,
+    max: 97,
+    label: "Finalizing interactive UI",
+  },
+  ready: {
+    min: 100,
+    max: 100,
+    label: "Ready",
+  },
+};
+
+type BootState = {
+  stage: StartupStage;
+  actualProgress: number;
+  detail: string;
+  error: string | null;
+};
+
+const INITIAL_BOOT_STATE: BootState = {
+  stage: "initializing_shell",
+  actualProgress: 0,
+  detail: "Preparing runtime shell...",
+  error: null,
+};
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function stageProgress(stage: StartupStage, ratio: number) {
+  const spec = STARTUP_STAGE_SPEC[stage];
+  const boundedRatio = clamp(ratio, 0, 1);
+  return spec.min + (spec.max - spec.min) * boundedRatio;
+}
+
+function nextBootState(
+  prev: BootState,
+  update: {
+    stage: StartupStage;
+    ratio: number;
+    detail?: string;
+  },
+) {
+  const target =
+    update.stage === "ready" ? 100 : stageProgress(update.stage, update.ratio);
+  return {
+    stage: update.stage,
+    actualProgress: Math.max(prev.actualProgress, target),
+    detail: update.detail ?? prev.detail,
+    error: null,
+  };
+}
+
+function describeComfyStatus(status: ComfyStatusResponse) {
+  const stateToken = status.state.toLowerCase();
+  if (status.running) {
+    return `Engine online at ${status.url}`;
+  }
+  return status.message || `ComfyUI ${stateToken}.`;
+}
+
+function summarizeNodeAndModelStage(backend: BackendStatusResponse) {
+  const workflowPart = backend.workflows.activeName
+    ? `Workflow ${backend.workflows.activeName}`
+    : "Resolving workflow graph";
+  const modelPart = backend.models.message || "Scanning model registry";
+  return `${workflowPart} - ${modelPart}`;
 }
 
 export function BootScreen() {
   const navigate = useNavigate();
-  const [detail, setDetail] = useState("Waiting for ComfyUI readiness...");
-  const [bootError, setBootError] = useState<string | null>(null);
-  const [progress, setProgress] = useState(18);
-  const steps = useMemo(
-    () => bootSteps(detail, bootError),
-    [bootError, detail],
-  );
+  const [boot, setBoot] = useState<BootState>(INITIAL_BOOT_STATE);
+  const [displayedProgress, setDisplayedProgress] = useState(0);
+  const displayedProgressRef = useRef(0);
+  const actualProgressRef = useRef(boot.actualProgress);
+
+  const steps = useMemo(() => {
+    const currentIndex = STARTUP_STAGE_ORDER.indexOf(boot.stage);
+    return STARTUP_STAGE_ORDER.filter((stage) => stage !== "ready").map(
+      (stage) => {
+        const index = STARTUP_STAGE_ORDER.indexOf(stage);
+        const isCurrent = index === currentIndex;
+        const done = boot.stage === "ready" || index < currentIndex;
+        const active = isCurrent && !boot.error;
+        return {
+          id: stage,
+          text: STARTUP_STAGE_SPEC[stage].label,
+          done,
+          active,
+          error: isCurrent && Boolean(boot.error),
+        };
+      },
+    );
+  }, [boot.error, boot.stage]);
+
+  useEffect(() => {
+    displayedProgressRef.current = displayedProgress;
+  }, [displayedProgress]);
+
+  useEffect(() => {
+    actualProgressRef.current = boot.actualProgress;
+  }, [boot.actualProgress]);
+
+  useEffect(() => {
+    let rafId = 0;
+    let lastTime = performance.now();
+
+    const animate = (now: number) => {
+      const dt = Math.max(8, now - lastTime);
+      lastTime = now;
+
+      setDisplayedProgress((current) => {
+        const target = actualProgressRef.current;
+        const delta = target - current;
+        if (Math.abs(delta) < 0.02) {
+          return target;
+        }
+
+        const dtFactor = dt / 16.67;
+        const baseStep = Math.max(0.06, Math.abs(delta) * 0.18);
+        const maxStep = 1.3 * dtFactor;
+        const step = Math.min(Math.abs(delta), baseStep * dtFactor, maxStep);
+        return current + Math.sign(delta) * step;
+      });
+
+      rafId = window.requestAnimationFrame(animate);
+    };
+
+    rafId = window.requestAnimationFrame(animate);
+    return () => {
+      window.cancelAnimationFrame(rafId);
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
 
-    const completeBoot = () => {
+    const wait = (ms: number) =>
+      new Promise<void>((resolve) => {
+        window.setTimeout(resolve, ms);
+      });
+
+    const applyStage = (
+      stage: StartupStage,
+      ratio: number,
+      detail?: string,
+    ) => {
       if (!active) {
         return;
       }
-      navigate("/dashboard", { replace: true });
+      setBoot((prev) => nextBootState(prev, { stage, ratio, detail }));
     };
 
-    if (!hasDesktopBridge()) {
-      setProgress(100);
-      const timer = window.setTimeout(completeBoot, 900);
-      return () => {
-        active = false;
-        window.clearTimeout(timer);
-      };
-    }
-
-    void (async () => {
-      try {
-        setDetail("Starting ComfyUI engine...");
-        setProgress(42);
-        setBootError(null);
-        const ready = await comfyuiService.ensureReady();
-        if (!active) {
-          return;
-        }
-        setDetail(ready.details ?? "Waiting for ComfyUI readiness...");
-        if (ready.ready) {
-          setProgress(100);
-          window.setTimeout(completeBoot, 250);
-          return;
-        }
-        setProgress(72);
-        setBootError(ready.details ?? "ComfyUI did not become ready.");
-      } catch (error) {
-        if (!active) {
-          return;
-        }
-        const message =
-          error instanceof Error ? error.message : "Unable to start ComfyUI.";
-        setDetail(message);
-        setProgress(72);
-        setBootError(message);
+    const applyError = (message: string, detail?: string) => {
+      if (!active) {
+        return;
       }
-    })();
+      setBoot((prev) => ({
+        ...prev,
+        detail: detail ?? prev.detail,
+        error: message,
+      }));
+    };
+
+    const waitForDisplayedAtLeast = async (target: number, timeoutMs: number) => {
+      const deadline = Date.now() + timeoutMs;
+      while (active && Date.now() < deadline) {
+        if (displayedProgressRef.current >= target) {
+          return;
+        }
+        await wait(16);
+      }
+    };
+
+    const runBoot = async () => {
+      try {
+        applyStage("initializing_shell", 0.2, "Preparing shell runtime...");
+        await wait(80);
+        applyStage(
+          "initializing_shell",
+          0.85,
+          "Shell initialized. Loading startup context...",
+        );
+
+        if (!hasDesktopBridge()) {
+          applyStage(
+            "loading_workspace",
+            1,
+            "Desktop bridge unavailable. Starting standalone workspace.",
+          );
+          applyStage("finalizing_ui", 1, "Finalizing standalone UI...");
+          applyStage("ready", 1, "Workspace ready.");
+          await waitForDisplayedAtLeast(99.5, 3_000);
+          if (active) {
+            navigate("/dashboard", { replace: true });
+          }
+          return;
+        }
+
+        applyStage("loading_workspace", 0.15, "Reading backend status...");
+        const initialBackend = await desktopApi.getBackendStatus();
+        if (!active) {
+          return;
+        }
+        applyStage(
+          "loading_workspace",
+          1,
+          initialBackend.workflows.activeName
+            ? `Workspace loaded - ${initialBackend.workflows.activeName}`
+            : initialBackend.workflows.error
+              ? initialBackend.workflows.error
+              : "Workspace shell loaded.",
+        );
+
+        let comfy = await desktopApi.getComfyStatus();
+        if (!active) {
+          return;
+        }
+
+        applyStage("launching_comfyui", 0.1, describeComfyStatus(comfy));
+        if (!comfy.running && comfy.state !== "STARTING") {
+          comfy = await desktopApi.startComfy();
+          if (!active) {
+            return;
+          }
+        }
+
+        const launchStart = Date.now();
+        while (
+          active &&
+          !comfy.running &&
+          comfy.state !== "STARTING" &&
+          Date.now() - launchStart < 15_000
+        ) {
+          const ratio = clamp((Date.now() - launchStart) / 12_000, 0.12, 0.94);
+          applyStage("launching_comfyui", ratio, describeComfyStatus(comfy));
+          await wait(700);
+          comfy = await desktopApi.getComfyStatus();
+        }
+        applyStage("launching_comfyui", 1, describeComfyStatus(comfy));
+
+        const connectStart = Date.now();
+        while (active) {
+          comfy = await desktopApi.getComfyStatus();
+          if (comfy.running) {
+            applyStage(
+              "connecting_local_engine",
+              1,
+              `Connected to local engine at ${comfy.url}`,
+            );
+            break;
+          }
+          if (comfy.state === "ERROR") {
+            throw new Error(comfy.lastError ?? comfy.message);
+          }
+          const ratio = clamp((Date.now() - connectStart) / 32_000, 0.08, 0.94);
+          applyStage(
+            "connecting_local_engine",
+            ratio,
+            describeComfyStatus(comfy),
+          );
+          if (Date.now() - connectStart > Math.max(45_000, comfy.config.startupTimeoutMs + 10_000)) {
+            throw new Error(
+              comfy.lastError ??
+                "Timed out while connecting to local ComfyUI engine.",
+            );
+          }
+          await wait(700);
+        }
+
+        const nodesStart = Date.now();
+        while (active) {
+          const [backend, comfyStatus] = await Promise.all([
+            desktopApi.getBackendStatus(),
+            desktopApi.getComfyStatus(),
+          ]);
+
+          if (comfyStatus.state === "ERROR") {
+            throw new Error(comfyStatus.lastError ?? comfyStatus.message);
+          }
+
+          const workflowSettled =
+            Boolean(backend.workflows.activeName) ||
+            Boolean(backend.workflows.lastSyncAt) ||
+            Boolean(backend.workflows.error);
+          const modelsSettled =
+            backend.models.ok ||
+            backend.models.totalFiles > 0 ||
+            Boolean(backend.models.error);
+          const settled = workflowSettled && modelsSettled;
+
+          if (settled) {
+            applyStage(
+              "loading_nodes_and_models",
+              1,
+              summarizeNodeAndModelStage(backend),
+            );
+            break;
+          }
+
+          const ratio = clamp((Date.now() - nodesStart) / 30_000, 0.06, 0.94);
+          applyStage(
+            "loading_nodes_and_models",
+            ratio,
+            summarizeNodeAndModelStage(backend),
+          );
+
+          if (Date.now() - nodesStart > 45_000) {
+            applyStage(
+              "loading_nodes_and_models",
+              0.94,
+              `${summarizeNodeAndModelStage(backend)} - continuing with current availability`,
+            );
+            break;
+          }
+
+          await wait(850);
+        }
+
+        const verifyStart = Date.now();
+        while (active) {
+          const [backend, comfyStatus] = await Promise.all([
+            desktopApi.getBackendStatus(),
+            desktopApi.getComfyStatus(),
+          ]);
+
+          if (comfyStatus.state === "ERROR" || backend.comfy.state === "error") {
+            throw new Error(
+              backend.comfy.lastError ??
+                comfyStatus.lastError ??
+                comfyStatus.message,
+            );
+          }
+
+          const engineReady =
+            comfyStatus.running &&
+            backend.comfy.running &&
+            backend.comfy.healthy;
+
+          if (engineReady) {
+            applyStage(
+              "verifying_engine_ready",
+              1,
+              "Engine ready and health checks passed.",
+            );
+            break;
+          }
+
+          const ratio = clamp((Date.now() - verifyStart) / 20_000, 0.08, 0.94);
+          applyStage(
+            "verifying_engine_ready",
+            ratio,
+            comfyStatus.message || backend.comfy.message,
+          );
+
+          if (Date.now() - verifyStart > 30_000) {
+            throw new Error(
+              backend.comfy.lastError ??
+                comfyStatus.lastError ??
+                "Engine verification timed out.",
+            );
+          }
+
+          await wait(700);
+        }
+
+        applyStage("finalizing_ui", 0.2, "Finalizing interface state...");
+        await wait(80);
+        applyStage("finalizing_ui", 0.7, "Preparing interactive workspace...");
+        await wait(90);
+        applyStage("finalizing_ui", 1, "UI finalized.");
+
+        applyStage("ready", 1, "Workspace ready.");
+        await waitForDisplayedAtLeast(99.5, 6_000);
+
+        if (active) {
+          navigate("/dashboard", { replace: true });
+        }
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : "Startup sequence failed unexpectedly.";
+        applyError(message, `Startup halted: ${message}`);
+      }
+    };
+
+    void runBoot();
 
     return () => {
       active = false;
@@ -99,12 +479,9 @@ export function BootScreen() {
           </div>
         </div>
 
-        <div className="w-full max-w-[340px] space-y-4">
-          {steps.map((step, index) => (
-            <div
-              key={`${step.text}-${index}`}
-              className="flex items-center gap-3"
-            >
+        <div className="w-full max-w-[360px] space-y-3">
+          {steps.map((step) => (
+            <div key={step.id} className="flex items-center gap-3">
               <div className="grid h-4 w-4 place-items-center">
                 {step.error ? (
                   <div className="h-2.5 w-2.5 rounded-full bg-[var(--danger)]" />
@@ -117,7 +494,7 @@ export function BootScreen() {
                 )}
               </div>
               <p
-                className={`text-sm ${step.error ? "text-[var(--danger)]" : step.active ? "text-[var(--text)]" : "text-[var(--text-muted)]"}`}
+                className={`text-[13px] ${step.error ? "text-[var(--danger)]" : step.active ? "text-[var(--text)]" : "text-[var(--text-muted)]"}`}
               >
                 {step.text}
               </p>
@@ -125,22 +502,28 @@ export function BootScreen() {
           ))}
         </div>
 
-        <div className="w-full max-w-[340px]">
-          <div className="h-1 overflow-hidden rounded-full bg-[var(--surface-1)]">
+        <div className="w-full max-w-[360px]">
+          <div className="h-1.5 overflow-hidden rounded-full bg-[var(--surface-1)]">
             <div
-              className="h-full rounded-full bg-[linear-gradient(90deg,var(--accent),var(--accent-2))] transition-[width] duration-300"
-              style={{ width: `${progress}%` }}
+              className="h-full rounded-full bg-[linear-gradient(90deg,var(--accent),var(--accent-2))]"
+              style={{ width: `${clamp(displayedProgress, 0, 100)}%` }}
             />
           </div>
           <div className="mt-2 flex items-center justify-between text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--text-faint)]">
             <span>
-              {bootError ? "Attention" : progress >= 100 ? "Ready" : "Loading"}
+              {boot.error
+                ? `error - ${STARTUP_STAGE_SPEC[boot.stage].label}`
+                : STARTUP_STAGE_SPEC[boot.stage].label}
             </span>
-            <span>{Math.floor(progress)}%</span>
+            <span>{Math.floor(clamp(displayedProgress, 0, 100))}%</span>
           </div>
-          {bootError ? (
-            <p className="mt-4 text-sm text-[var(--text-muted)]">
-              Retry from Dashboard via Advanced / Engine after the app loads.
+          <p className="mt-3 text-[12px] leading-5 text-[var(--text-muted)]">
+            {boot.detail}
+          </p>
+          {boot.error ? (
+            <p className="mt-3 text-[12px] leading-5 text-[var(--danger)]">
+              Startup stopped. Open diagnostics from Dashboard once engine is
+              reachable.
             </p>
           ) : null}
         </div>

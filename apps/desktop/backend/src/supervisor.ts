@@ -1,4 +1,4 @@
-import { spawn } from "child_process";
+import { spawn, spawnSync } from "child_process";
 import fs from "fs";
 import path from "path";
 import { ComfyApi } from "./comfyApi";
@@ -120,6 +120,9 @@ export type TexgenDependencySnapshot = {
   hasCustomRasterizer: boolean;
   hasDifferentiableRenderer: boolean;
   missingPaths: string[];
+  pythonExecutable: string | null;
+  pythonRunnerDetails: string | null;
+  importChecks: Record<string, string>;
 };
 
 export type TexturedGlbValidation = {
@@ -191,6 +194,15 @@ type WorkflowJobRecord = ComfyWorkflowJobStatus & {
   outputBefore: FileSnapshot[];
   history?: unknown;
   cancelRequested: boolean;
+};
+
+type PythonSnippetResult = {
+  ok: boolean;
+  stdout: string;
+  stderr: string;
+  status: number | null;
+  signal: NodeJS.Signals | null;
+  runnerDetails: string;
 };
 
 function errorMessage(error: unknown) {
@@ -507,6 +519,8 @@ export class BackendSupervisor {
   private comfyHealthFailureCount = 0;
   private comfyAutoRestartConsumed = false;
   private comfyAutoRestartPromise: Promise<void> | null = null;
+  private comfyStartPromise: Promise<ComfyStatus> | null = null;
+  private comfyRuntimePythonPath: string | null = null;
 
   private status: BackendStatus = {
     mode: "dev",
@@ -595,7 +609,9 @@ export class BackendSupervisor {
     this.status.comfy.state = toLegacyState(snapshot.state);
     this.status.comfy.host = snapshot.host;
     this.status.comfy.port = snapshot.port;
-    this.status.comfy.python = snapshot.config.pythonExeOverride.trim() || null;
+    const configuredPython = snapshot.config.pythonExeOverride.trim();
+    this.status.comfy.python =
+      this.comfyRuntimePythonPath ?? (configuredPython.length > 0 ? configuredPython : null);
     this.status.comfy.comfyRoot = snapshot.config.comfyDir;
     this.status.comfy.healthy = snapshot.running;
     this.status.comfy.external = snapshot.running && !snapshot.startedByApp;
@@ -873,6 +889,208 @@ export class BackendSupervisor {
     return path.join(this.config.comfy.comfyDir, "output", normalized);
   }
 
+  private runPythonSnippet(script: string, moduleRoots: string[] = [], timeoutMs = 25_000): PythonSnippetResult {
+    const scriptLines: string[] = [];
+    if (moduleRoots.length > 0) {
+      const rootsJson = JSON.stringify(moduleRoots);
+      scriptLines.push(
+        "import os, sys",
+        `__volumia_roots = ${rootsJson}`,
+        "for __root in __volumia_roots:",
+        "  if not isinstance(__root, str) or len(__root) == 0:",
+        "    continue",
+        "  __abs = os.path.abspath(__root)",
+        "  __texgen = os.path.join(__abs, 'hy3dgen', 'texgen')",
+        "  for __candidate in (__abs, __texgen):",
+        "    if os.path.isdir(__candidate) and __candidate not in sys.path:",
+        "      sys.path.insert(0, __candidate)",
+      );
+    }
+    scriptLines.push(script);
+    const runner = this.resolveTexgenRunner("-c", [scriptLines.join("\n")]);
+    const result = spawnSync(runner.command, runner.args, {
+      cwd: runner.cwd,
+      env: process.env,
+      windowsHide: true,
+      shell: false,
+      encoding: "utf8",
+      timeout: timeoutMs,
+    });
+
+    return {
+      ok: !result.error && result.status === 0,
+      stdout: typeof result.stdout === "string" ? result.stdout : "",
+      stderr: typeof result.stderr === "string" ? result.stderr : "",
+      status: result.status,
+      signal: result.signal,
+      runnerDetails: runner.details,
+    };
+  }
+
+  private parseJsonFromPythonSnippetOutput(stdout: string) {
+    const lines = stdout
+      .split(/\r?\n/u)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+    for (let index = lines.length - 1; index >= 0; index -= 1) {
+      const line = lines[index];
+      if (!line) {
+        continue;
+      }
+      try {
+        return JSON.parse(line) as unknown;
+      } catch {
+        // Continue scanning prior lines.
+      }
+    }
+    return null;
+  }
+
+  private discoverTexgenModuleRootsFromPython() {
+    const probe = this.runPythonSnippet(
+      [
+        "import json, os, sys",
+        "payload = {'python': sys.executable, 'module_roots': [], 'error': None}",
+        "try:",
+        "  import hy3dgen, hy3dgen.texgen as texgen",
+        "  hy3dgen_pkg = os.path.dirname(getattr(hy3dgen, '__file__', '') or '')",
+        "  texgen_pkg = os.path.dirname(getattr(texgen, '__file__', '') or '')",
+        "  roots = set()",
+        "  if hy3dgen_pkg:",
+        "    roots.add(os.path.abspath(os.path.dirname(hy3dgen_pkg)))",
+        "  if texgen_pkg:",
+        "    roots.add(os.path.abspath(os.path.join(texgen_pkg, '..', '..')))",
+        "  payload['module_roots'] = sorted(item for item in roots if os.path.isdir(item))",
+        "except Exception as exc:",
+        "  payload['error'] = f'{type(exc).__name__}: {exc}'",
+        "print(json.dumps(payload, ensure_ascii=False))",
+      ].join("\n"),
+      [],
+      30_000,
+    );
+
+    const parsed = this.parseJsonFromPythonSnippetOutput(probe.stdout);
+    let pythonExecutable: string | null = null;
+    let moduleRoots: string[] = [];
+    let error: string | null = null;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const payload = parsed as Record<string, unknown>;
+      pythonExecutable = typeof payload.python === "string" ? payload.python.trim() : null;
+      if (Array.isArray(payload.module_roots)) {
+        moduleRoots = payload.module_roots
+          .filter((item): item is string => typeof item === "string")
+          .map((item) => item.trim())
+          .filter((item) => item.length > 0);
+      }
+      if (typeof payload.error === "string" && payload.error.trim().length > 0) {
+        error = payload.error.trim();
+      }
+    }
+
+    if (!probe.ok && !error) {
+      const details = [
+        `status=${String(probe.status)}`,
+        probe.signal ? `signal=${probe.signal}` : "",
+        probe.stderr.trim() ? `stderr=${probe.stderr.trim()}` : "",
+      ]
+        .filter(Boolean)
+        .join(" ");
+      error = details || "python discovery failed";
+    }
+
+    if (pythonExecutable && pythonExecutable.length > 0) {
+      this.comfyRuntimePythonPath = pythonExecutable;
+    }
+
+    return {
+      moduleRoots,
+      pythonExecutable: pythonExecutable && pythonExecutable.length > 0 ? pythonExecutable : null,
+      runnerDetails: probe.runnerDetails,
+      error,
+    };
+  }
+
+  private probeTexgenRequiredImports(moduleRoots: string[]) {
+    const probe = this.runPythonSnippet(
+      [
+        "import importlib, json, sys",
+        "modules = ['torch', 'custom_rasterizer', 'custom_rasterizer_kernel', 'differentiable_renderer', 'hy3dgen', 'hy3dgen.texgen', 'segment_anything']",
+        "results = {}",
+        "for module_name in modules:",
+        "  try:",
+        "    importlib.import_module(module_name)",
+        "    results[module_name] = 'ok'",
+        "  except Exception as exc:",
+        "    results[module_name] = f'{type(exc).__name__}: {exc}'",
+        "print(json.dumps({'python': sys.executable, 'results': results}, ensure_ascii=False))",
+      ].join("\n"),
+      moduleRoots,
+      45_000,
+    );
+
+    const parsed = this.parseJsonFromPythonSnippetOutput(probe.stdout);
+    const importChecks: Record<string, string> = {
+      torch: "probe-not-run",
+      hy3dgen: "probe-not-run",
+      "hy3dgen.texgen": "probe-not-run",
+      custom_rasterizer: "probe-not-run",
+      custom_rasterizer_kernel: "probe-not-run",
+      differentiable_renderer: "probe-not-run",
+      segment_anything: "probe-not-run",
+    };
+    let pythonExecutable: string | null = this.comfyRuntimePythonPath;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const payload = parsed as Record<string, unknown>;
+      if (typeof payload.python === "string" && payload.python.trim().length > 0) {
+        pythonExecutable = payload.python.trim();
+        this.comfyRuntimePythonPath = pythonExecutable;
+      }
+      if (payload.results && typeof payload.results === "object" && !Array.isArray(payload.results)) {
+        for (const [moduleName, value] of Object.entries(payload.results as Record<string, unknown>)) {
+          if (typeof value === "string") {
+            importChecks[moduleName] = value;
+          }
+        }
+      }
+    } else if (!probe.ok) {
+      const summary = [
+        `status=${String(probe.status)}`,
+        probe.signal ? `signal=${probe.signal}` : "",
+        probe.stderr.trim() ? `stderr=${probe.stderr.trim()}` : "",
+      ]
+        .filter(Boolean)
+        .join(" ");
+      const message = summary || "python import probe failed";
+      for (const key of Object.keys(importChecks)) {
+        importChecks[key] = message;
+      }
+    }
+
+    const requiredModules = [
+      "torch",
+      "hy3dgen",
+      "hy3dgen.texgen",
+      "custom_rasterizer",
+      "custom_rasterizer_kernel",
+      "differentiable_renderer",
+    ] as const;
+    const optionalModules = ["segment_anything"] as const;
+    const missingImports = requiredModules
+      .filter((moduleName) => importChecks[moduleName] !== "ok")
+      .map((moduleName) => `${moduleName}: ${importChecks[moduleName]}`);
+    const optionalMissingImports = optionalModules
+      .filter((moduleName) => importChecks[moduleName] !== "ok")
+      .map((moduleName) => `${moduleName}: ${importChecks[moduleName]}`);
+
+    return {
+      pythonExecutable,
+      runnerDetails: probe.runnerDetails,
+      importChecks,
+      missingImports,
+      optionalMissingImports,
+    };
+  }
+
   private collectTexgenModuleRootCandidates() {
     const candidates = new Set<string>();
     const addCandidate = (value: string) => {
@@ -915,7 +1133,12 @@ export class BackendSupervisor {
   }
 
   private resolveTexgenDependencies(): TexgenDependencySnapshot {
-    const moduleRoots = this.collectTexgenModuleRootCandidates();
+    const moduleRootSet = new Set<string>(this.collectTexgenModuleRootCandidates());
+    const pythonDiscovery = this.discoverTexgenModuleRootsFromPython();
+    for (const root of pythonDiscovery.moduleRoots) {
+      moduleRootSet.add(path.resolve(root));
+    }
+    const moduleRoots = Array.from(moduleRootSet.values());
     const validModuleRoots: string[] = [];
     const missingPaths: string[] = [];
     let hasCustomRasterizer = false;
@@ -954,6 +1177,9 @@ export class BackendSupervisor {
     if (!hasDifferentiableRenderer) {
       missingPaths.push("hy3dgen/texgen/differentiable_renderer");
     }
+    if (pythonDiscovery.error) {
+      missingPaths.push(`python-discovery: ${pythonDiscovery.error}`);
+    }
 
     return {
       moduleRoots,
@@ -961,6 +1187,9 @@ export class BackendSupervisor {
       hasCustomRasterizer,
       hasDifferentiableRenderer,
       missingPaths: Array.from(new Set(missingPaths.values())),
+      pythonExecutable: pythonDiscovery.pythonExecutable,
+      pythonRunnerDetails: pythonDiscovery.runnerDetails,
+      importChecks: {},
     };
   }
 
@@ -1141,6 +1370,69 @@ export class BackendSupervisor {
 
     if (dependencies.validModuleRoots.length === 0) {
       const reason = `Texgen dependencies missing: ${dependencies.missingPaths.join(" | ")}`;
+      fs.writeFileSync(logPath, `${reason}\n`, "utf8");
+      const metadataPath = this.writeTextureMetadata(runDir, {
+        createdAt: nowIso,
+        promptId: job.promptId,
+        meshPath,
+        texturedGlbPath: null,
+        textureStatus: "failed",
+        reason,
+        textureDependencies: dependencies,
+        textureErrorLogPath: logPath,
+      });
+      this.appendComfyLog(`[${stageLabel}] ${reason}`, "warn");
+      return {
+        glbPath: meshPath,
+        meshPath,
+        texturedGlbPath: undefined,
+        textureStatus: "failed" as TextureStageStatus,
+        textureErrorLogPath: logPath,
+        textureMetadataPath: metadataPath,
+        textureDependencies: dependencies,
+        textureValidation: undefined,
+      };
+    }
+
+    const importProbe = this.probeTexgenRequiredImports(
+      dependencies.validModuleRoots,
+    );
+    dependencies.importChecks = importProbe.importChecks;
+    if (importProbe.pythonExecutable) {
+      dependencies.pythonExecutable = importProbe.pythonExecutable;
+    }
+    dependencies.pythonRunnerDetails = importProbe.runnerDetails;
+    const importProbeSummary = [
+      `python=${dependencies.pythonExecutable ?? "unknown"}`,
+      `runner=${importProbe.runnerDetails}`,
+      `missing=${importProbe.missingImports.length}`,
+    ].join(" ");
+    this.appendComfyLog(`[${stageLabel}] texgen import probe: ${importProbeSummary}`);
+    const torchStatus = importProbe.importChecks.torch ?? "probe-not-run";
+    const customStatus =
+      importProbe.importChecks.custom_rasterizer ?? "probe-not-run";
+    const diffStatus =
+      importProbe.importChecks.differentiable_renderer ?? "probe-not-run";
+    this.appendComfyLog(
+      `[${stageLabel}] torch preload ${torchStatus === "ok" ? "OK" : "FAILED"} (${torchStatus})`,
+      torchStatus === "ok" ? "info" : "warn",
+    );
+    this.appendComfyLog(
+      `[${stageLabel}] custom_rasterizer import ${customStatus === "ok" ? "OK" : "FAILED"} (${customStatus})`,
+      customStatus === "ok" ? "info" : "warn",
+    );
+    this.appendComfyLog(
+      `[${stageLabel}] differentiable_renderer import ${diffStatus === "ok" ? "OK" : "FAILED"} (${diffStatus})`,
+      diffStatus === "ok" ? "info" : "warn",
+    );
+    if (importProbe.optionalMissingImports.length > 0) {
+      this.appendComfyLog(
+        `[${stageLabel}] optional Python imports missing: ${importProbe.optionalMissingImports.join(" | ")}`,
+        "warn",
+      );
+    }
+    if (importProbe.missingImports.length > 0) {
+      const reason = `Texgen Python imports missing: ${importProbe.missingImports.join(" | ")}`;
       fs.writeFileSync(logPath, `${reason}\n`, "utf8");
       const metadataPath = this.writeTextureMetadata(runDir, {
         createdAt: nowIso,
@@ -1552,6 +1844,7 @@ export class BackendSupervisor {
         this.comfyLastError = null;
         this.comfyHealthFailureCount = 0;
         this.comfyAutoRestartConsumed = false;
+        this.comfyRuntimePythonPath = null;
         this.updateLegacyComfyFromSnapshot(this.getComfyStatus());
         return this.getComfyStatus();
       }
@@ -1573,6 +1866,7 @@ export class BackendSupervisor {
       this.comfyLastError = null;
       this.comfyHealthFailureCount = 0;
       this.comfyAutoRestartConsumed = false;
+      this.comfyRuntimePythonPath = null;
       this.status.comfy.message = "ComfyUI detenido.";
       this.appendComfyLog(`ComfyUI detenido (${reason}).`);
       this.updateLegacyComfyFromSnapshot(this.getComfyStatus());
@@ -1583,6 +1877,23 @@ export class BackendSupervisor {
   }
 
   async startComfyUI() {
+    if (this.comfyStartPromise) {
+      this.appendComfyLog(
+        "ComfyUI start requested while another start is already in progress; reusing current startup promise.",
+      );
+      return await this.comfyStartPromise;
+    }
+
+    const startupPromise = this.startComfyUIInternal().finally(() => {
+      if (this.comfyStartPromise === startupPromise) {
+        this.comfyStartPromise = null;
+      }
+    });
+    this.comfyStartPromise = startupPromise;
+    return await startupPromise;
+  }
+
+  private async startComfyUIInternal() {
     this.refreshConfig(true);
     if (this.comfyState === "STARTING" && this.comfyProcess?.pid) {
       return this.getComfyStatus();
@@ -1611,6 +1922,16 @@ export class BackendSupervisor {
     this.updateLegacyComfyFromSnapshot(this.getComfyStatus());
 
     const launchPlan = resolveComfyLaunchPlan(this.config);
+    const pythonProbe = this.runPythonSnippet("import sys; print(sys.executable)");
+    const pythonProbeLine =
+      pythonProbe.stdout
+        .split(/\r?\n/u)
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0)
+        .pop() ?? null;
+    if (pythonProbeLine && !pythonProbeLine.startsWith("{")) {
+      this.comfyRuntimePythonPath = pythonProbeLine;
+    }
 
     logger.info("Starting ComfyUI process.", {
       command: launchPlan.command,
@@ -1618,10 +1939,16 @@ export class BackendSupervisor {
       cwd: launchPlan.cwd,
       mode: launchPlan.mode,
       details: launchPlan.details,
+      pythonProbeRunner: pythonProbe.runnerDetails,
+      pythonProbeStatus: pythonProbe.status,
+      pythonExecutable: this.comfyRuntimePythonPath,
       shell: false,
     });
     this.appendComfyLog(
       `Launching ComfyUI (${launchPlan.mode}) ${launchPlan.details}`,
+    );
+    this.appendComfyLog(
+      `ComfyUI python runtime probe: runner=${pythonProbe.runnerDetails} python=${this.comfyRuntimePythonPath ?? "unknown"} status=${String(pythonProbe.status)}`,
     );
 
     const managed = this.processManager.spawn(
