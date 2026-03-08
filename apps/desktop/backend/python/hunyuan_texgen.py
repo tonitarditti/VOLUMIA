@@ -13,6 +13,8 @@ from typing import Any, Callable, Dict, Optional
 
 DEFAULT_MODEL_ID = "tencent/Hunyuan3D-2"
 DEFAULT_MODEL_SUBFOLDER = "hunyuan3d-paint-v2-0-turbo"
+DEFAULT_RENDER_SIZE = 1024
+DEFAULT_TEXTURE_SIZE = 1024
 DEFAULT_LOCAL_MODEL_ROOTS = [
     r"E:\AI\Hunyuan3D_models",
     r"E:\AI\Hunyuan3D-2",
@@ -70,6 +72,29 @@ def resolve_model_subfolder() -> str:
 
 def resolve_path(raw_path: str) -> Path:
     return Path(raw_path).expanduser().resolve()
+
+
+def parse_positive_int_env(name: str, fallback: int) -> int:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return fallback
+    try:
+        parsed = int(raw)
+    except ValueError:
+        return fallback
+    return parsed if parsed > 0 else fallback
+
+
+def resolve_texgen_sizes() -> tuple[int, int]:
+    render_size = parse_positive_int_env(
+        "HUNYUAN_TEXGEN_RENDER_SIZE",
+        DEFAULT_RENDER_SIZE,
+    )
+    texture_size = parse_positive_int_env(
+        "HUNYUAN_TEXGEN_TEXTURE_SIZE",
+        render_size if render_size > 0 else DEFAULT_TEXTURE_SIZE,
+    )
+    return render_size, texture_size
 
 
 def build_model_root_candidates() -> list[str]:
@@ -326,6 +351,34 @@ def resolve_pipeline_unet_class_name(paint_pipeline: Any) -> str:
     return f"{unet.__class__.__module__}.{unet.__class__.__name__}"
 
 
+def apply_texgen_sizes(paint_pipeline: Any, render_size: int, texture_size: int) -> None:
+    if hasattr(paint_pipeline, "config"):
+        if hasattr(paint_pipeline.config, "render_size"):
+            paint_pipeline.config.render_size = render_size
+        if hasattr(paint_pipeline.config, "texture_size"):
+            paint_pipeline.config.texture_size = texture_size
+
+    renderer = getattr(paint_pipeline, "render", None)
+    if renderer is None:
+        return
+
+    if hasattr(renderer, "set_default_render_resolution"):
+        renderer.set_default_render_resolution(render_size)
+    if hasattr(renderer, "set_default_texture_resolution"):
+        renderer.set_default_texture_resolution(texture_size)
+
+    if hasattr(renderer, "default_resolution") and hasattr(
+        renderer,
+        "bake_unreliable_kernel_size",
+    ):
+        default_resolution = renderer.default_resolution
+        if isinstance(default_resolution, tuple):
+            max_dim = max(int(default_resolution[0]), int(default_resolution[1]))
+        else:
+            max_dim = int(default_resolution)
+        renderer.bake_unreliable_kernel_size = max(1, int((2 / 512) * max_dim))
+
+
 def export_result_mesh(result_mesh: Any, output_glb_path: str) -> None:
     if hasattr(result_mesh, "export"):
         result_mesh.export(output_glb_path)
@@ -448,6 +501,12 @@ def run_texgen(
     log_line("paint pipeline init OK")
     resolved_unet_class = resolve_pipeline_unet_class_name(pipeline)
     log_line(f"unet class resolved: {resolved_unet_class}")
+    render_size, texture_size = resolve_texgen_sizes()
+    apply_texgen_sizes(pipeline, render_size, texture_size)
+    log_line(
+        "texgen sizes configured: "
+        f"render_size={render_size} texture_size={texture_size}"
+    )
 
     if os.environ.get("HUNYUAN_TEXGEN_CPU_OFFLOAD", "").strip().lower() in (
         "1",
@@ -481,6 +540,8 @@ def run_texgen(
         "configured_unet_module": patch_details["configured_unet_module"],
         "model_index_patched": patch_details["model_index_patched"],
         "resolved_unet_class": resolved_unet_class,
+        "render_size": render_size,
+        "texture_size": texture_size,
         "timeout_ms": timeout_ms,
     }
 
@@ -591,6 +652,8 @@ def main() -> int:
                 "configured_unet_module": details["configured_unet_module"],
                 "model_index_patched": details["model_index_patched"],
                 "resolved_unet_class": details["resolved_unet_class"],
+                "render_size": details["render_size"],
+                "texture_size": details["texture_size"],
             }
         )
         exit_code = 0
