@@ -241,6 +241,18 @@ function quoteCmdArg(value: string) {
   return `"${value.replace(/"/g, "\"\"")}"`;
 }
 
+function parsePositiveIntEnv(name: string, fallback: number) {
+  const raw = process.env[name]?.trim() ?? "";
+  if (!raw) {
+    return fallback;
+  }
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return parsed;
+}
+
 function toLegacyState(state: ComfySupervisorState): BackendServiceState {
   if (state === "READY") {
     return "running";
@@ -501,6 +513,10 @@ function validateTexturedGlb(glbPath: string): TexturedGlbValidation {
 const COMFY_HEALTH_FAILURE_THRESHOLD = 3;
 const COMFY_AUTO_RESTART_DELAY_MS = 1_500;
 const PREFERRED_TEXGEN_PYTHON_EXE = "F:\\MINICONDA\\envs\\volumia\\python.exe";
+const DEFAULT_TEXGEN_MODEL_ROOT = "E:\\AI\\Hunyuan3D_models";
+const DEFAULT_HUNYUAN_REPO_ROOT = "E:\\AI\\Hunyuan3D-2";
+const DEFAULT_TEXGEN_TIMEOUT_MS = 20 * 60 * 1_000;
+const DEFAULT_WORKFLOW_WAIT_TIMEOUT_MS = 35 * 60 * 1_000;
 
 export class BackendSupervisor {
   private readonly processManager = new ProcessManager();
@@ -1220,6 +1236,64 @@ export class BackendSupervisor {
     return path.join(getBackendRootDir(), "python", "hunyuan_texgen.py");
   }
 
+  private resolveTexgenTimeoutMs() {
+    return parsePositiveIntEnv(
+      "VOLUMIA_TEXGEN_TIMEOUT_MS",
+      DEFAULT_TEXGEN_TIMEOUT_MS,
+    );
+  }
+
+  private resolveWorkflowWaitTimeoutMs() {
+    return parsePositiveIntEnv(
+      "VOLUMIA_WORKFLOW_WAIT_TIMEOUT_MS",
+      DEFAULT_WORKFLOW_WAIT_TIMEOUT_MS,
+    );
+  }
+
+  private resolveTexgenModelRoot() {
+    const fromEnv = process.env.HUNYUAN_TEXGEN_MODEL_PATH?.trim() ?? "";
+    if (fromEnv.length > 0) {
+      return fromEnv;
+    }
+    return DEFAULT_TEXGEN_MODEL_ROOT;
+  }
+
+  private resolveTexgenRepoRoot(validModuleRoots: string[]) {
+    const fromEnv = process.env.HY3DGEN_ROOT?.trim() ?? "";
+    if (fromEnv.length > 0) {
+      return fromEnv;
+    }
+    if (fs.existsSync(DEFAULT_HUNYUAN_REPO_ROOT)) {
+      return DEFAULT_HUNYUAN_REPO_ROOT;
+    }
+    const preferred = validModuleRoots.find((item) =>
+      item.toLowerCase().includes("hunyuan3d-2"),
+    );
+    if (preferred) {
+      return preferred;
+    }
+    return validModuleRoots[0] ?? "";
+  }
+
+  private promoteTexturedGlbAsLatest(
+    meshPath: string,
+    texturedGlbPath: string,
+    stageLabel: string,
+  ) {
+    const runDir = path.dirname(meshPath);
+    const projectAssetsRoot = path.resolve(runDir, "..");
+    const runLatest = path.join(runDir, "latest.glb");
+    const globalLatest = path.join(projectAssetsRoot, "latest.glb");
+
+    fs.copyFileSync(texturedGlbPath, runLatest);
+    fs.copyFileSync(texturedGlbPath, globalLatest);
+
+    this.appendComfyLog(
+      `[${stageLabel}] promoted textured glb to latest: run=${runLatest} global=${globalLatest}`,
+    );
+    return runLatest;
+  }
+
   private resolveTexgenRunner(scriptPath: string, scriptArgs: string[]) {
     if (fs.existsSync(PREFERRED_TEXGEN_PYTHON_EXE)) {
       return {
@@ -1287,8 +1361,13 @@ export class BackendSupervisor {
     scriptPath: string,
     scriptArgs: string[],
     stageLabel: string,
+    timeoutMs: number,
+    envOverrides?: Record<string, string>,
   ) {
     const runner = this.resolveTexgenRunner(scriptPath, scriptArgs);
+    const commandLine = [runner.command, ...runner.args]
+      .map((item) => quoteCmdArg(item))
+      .join(" ");
     return await new Promise<{
       exitCode: number;
       stdout: string;
@@ -1298,7 +1377,10 @@ export class BackendSupervisor {
     }>((resolve, reject) => {
       const child = spawn(runner.command, runner.args, {
         cwd: runner.cwd,
-        env: process.env,
+        env: {
+          ...process.env,
+          ...(envOverrides ?? {}),
+        },
         windowsHide: true,
         shell: false,
       });
@@ -1314,7 +1396,7 @@ export class BackendSupervisor {
         } catch {
           // No-op by design.
         }
-      }, 8 * 60 * 1_000);
+      }, timeoutMs);
 
       child.stdout?.on("data", (chunk: Buffer | string) => {
         const text = typeof chunk === "string" ? chunk : chunk.toString("utf8");
@@ -1353,6 +1435,7 @@ export class BackendSupervisor {
       this.appendComfyLog(
         `[${stageLabel}] Launching texgen with ${runner.details}`,
       );
+      this.appendComfyLog(`[${stageLabel}] texgen command: ${commandLine}`);
     });
   }
 
@@ -1408,9 +1491,17 @@ export class BackendSupervisor {
     const stageLabel = `texgen:${job.promptId}`;
     const logPath = path.join(getLogsDir(), `${stageLabel}.log`);
     const dependencies = this.resolveTexgenDependencies();
+    const texgenTimeoutMs = this.resolveTexgenTimeoutMs();
+    const texgenModelRoot = this.resolveTexgenModelRoot();
+    const texgenRepoRoot = this.resolveTexgenRepoRoot(
+      dependencies.validModuleRoots,
+    );
     const nowIso = new Date().toISOString();
     const inputImagePath = job.inputImagePath?.trim() ?? "";
     this.appendComfyLog(`[${stageLabel}] shape output path: ${meshPath}`);
+    this.appendComfyLog(
+      `[${stageLabel}] texgen config: timeout_ms=${texgenTimeoutMs} model_root=${texgenModelRoot} repo_root=${texgenRepoRoot || "<none>"}`,
+    );
 
     if (!inputImagePath || !fs.existsSync(inputImagePath)) {
       const metadataPath = this.writeTextureMetadata(runDir, {
@@ -1424,6 +1515,12 @@ export class BackendSupervisor {
         textured_glb_path: null,
         error: "Input image path unavailable for texgen stage.",
         reason: "Input image path unavailable for texgen stage.",
+        texgen_started_at: null,
+        texgen_ended_at: null,
+        duration_ms: 0,
+        timeout_ms: texgenTimeoutMs,
+        texgen_model_root: texgenModelRoot,
+        texgen_repo_root: texgenRepoRoot || null,
         textureDependencies: dependencies,
       });
       this.appendComfyLog(
@@ -1458,6 +1555,12 @@ export class BackendSupervisor {
         textured_glb_path: null,
         error: reason,
         reason,
+        texgen_started_at: null,
+        texgen_ended_at: null,
+        duration_ms: 0,
+        timeout_ms: texgenTimeoutMs,
+        texgen_model_root: texgenModelRoot,
+        texgen_repo_root: texgenRepoRoot || null,
         textureDependencies: dependencies,
         textureErrorLogPath: logPath,
       });
@@ -1537,6 +1640,12 @@ export class BackendSupervisor {
         textured_glb_path: null,
         error: reason,
         reason,
+        texgen_started_at: null,
+        texgen_ended_at: null,
+        duration_ms: 0,
+        timeout_ms: texgenTimeoutMs,
+        texgen_model_root: texgenModelRoot,
+        texgen_repo_root: texgenRepoRoot || null,
         textureDependencies: dependencies,
         textureErrorLogPath: logPath,
       });
@@ -1570,6 +1679,12 @@ export class BackendSupervisor {
         textured_glb_path: null,
         error: reason,
         reason,
+        texgen_started_at: null,
+        texgen_ended_at: null,
+        duration_ms: 0,
+        timeout_ms: texgenTimeoutMs,
+        texgen_model_root: texgenModelRoot,
+        texgen_repo_root: texgenRepoRoot || null,
         textureDependencies: dependencies,
         textureErrorLogPath: logPath,
       });
@@ -1597,22 +1712,47 @@ export class BackendSupervisor {
       inputImagePath,
       "--output-dir",
       runDir,
+      "--timeout-ms",
+      String(texgenTimeoutMs),
     ];
+    if (texgenRepoRoot) {
+      scriptArgs.push("--repo-root", texgenRepoRoot);
+    }
 
+    const texgenStartedAtMs = Date.now();
+    const texgenStartedAtIso = new Date(texgenStartedAtMs).toISOString();
     this.appendComfyLog(`[${stageLabel}] texgen started`);
+    this.appendComfyLog(
+      `[${stageLabel}] texgen started_at=${texgenStartedAtIso} timeout_ms=${texgenTimeoutMs}`,
+    );
     const processResult = await this.runTexgenScriptProcess(
       scriptPath,
       scriptArgs,
       stageLabel,
+      texgenTimeoutMs,
+      {
+        HUNYUAN_TEXGEN_MODEL_PATH: texgenModelRoot,
+        ...(texgenRepoRoot ? { HY3DGEN_ROOT: texgenRepoRoot } : {}),
+      },
     );
+    const texgenEndedAtMs = Date.now();
+    const texgenEndedAtIso = new Date(texgenEndedAtMs).toISOString();
+    const texgenDurationMs = texgenEndedAtMs - texgenStartedAtMs;
     this.appendComfyLog(
       `[${stageLabel}] texgen completed (exit=${processResult.exitCode}, timed_out=${String(processResult.timedOut)})`,
+    );
+    this.appendComfyLog(
+      `[${stageLabel}] texgen ended_at=${texgenEndedAtIso} duration_ms=${texgenDurationMs} timeout_ms=${texgenTimeoutMs}`,
     );
     const logLines = [
       `stage=${stageLabel}`,
       `runner=${processResult.runnerDetails}`,
       `exit_code=${processResult.exitCode}`,
       `timed_out=${String(processResult.timedOut)}`,
+      `started_at=${texgenStartedAtIso}`,
+      `ended_at=${texgenEndedAtIso}`,
+      `duration_ms=${texgenDurationMs}`,
+      `timeout_ms=${texgenTimeoutMs}`,
       "",
       "[stdout]",
       processResult.stdout.trim(),
@@ -1678,6 +1818,12 @@ export class BackendSupervisor {
         textured_glb_path: null,
         error: reason,
         reason,
+        texgen_started_at: texgenStartedAtIso,
+        texgen_ended_at: texgenEndedAtIso,
+        duration_ms: texgenDurationMs,
+        timeout_ms: texgenTimeoutMs,
+        texgen_model_root: texgenModelRoot,
+        texgen_repo_root: texgenRepoRoot || null,
         textureDependencies: dependencies,
         textureErrorLogPath: logPath,
         texgenResult: texgenJson,
@@ -1711,6 +1857,12 @@ export class BackendSupervisor {
         textured_glb_path: texturedGlbPath,
         error: reason,
         reason,
+        texgen_started_at: texgenStartedAtIso,
+        texgen_ended_at: texgenEndedAtIso,
+        duration_ms: texgenDurationMs,
+        timeout_ms: texgenTimeoutMs,
+        texgen_model_root: texgenModelRoot,
+        texgen_repo_root: texgenRepoRoot || null,
         textureDependencies: dependencies,
         textureValidation: validation,
         textureErrorLogPath: logPath,
@@ -1732,30 +1884,41 @@ export class BackendSupervisor {
       };
     }
 
+    const finalProjectGlbPath = this.promoteTexturedGlbAsLatest(
+      meshPath,
+      texturedGlbPath,
+      stageLabel,
+    );
     const metadataPath = this.writeTextureMetadata(runDir, {
       createdAt: nowIso,
       promptId: job.promptId,
       meshPath,
-      texturedGlbPath,
+      texturedGlbPath: finalProjectGlbPath,
       textureStatus: "ready",
       texture_status: "completed",
       shape_glb_path: meshPath,
-      textured_glb_path: texturedGlbPath,
+      textured_glb_path: finalProjectGlbPath,
       error: null,
+      texgen_started_at: texgenStartedAtIso,
+      texgen_ended_at: texgenEndedAtIso,
+      duration_ms: texgenDurationMs,
+      timeout_ms: texgenTimeoutMs,
+      texgen_model_root: texgenModelRoot,
+      texgen_repo_root: texgenRepoRoot || null,
       textureDependencies: dependencies,
       textureValidation: validation,
       textureErrorLogPath: logPath,
       texgenResult: texgenJson,
     });
     this.appendComfyLog(
-      `[${stageLabel}] ready. textured_glb=${texturedGlbPath}`,
+      `[${stageLabel}] ready. textured_glb=${finalProjectGlbPath}`,
     );
-    this.appendComfyLog(`[${stageLabel}] textured glb path: ${texturedGlbPath}`);
+    this.appendComfyLog(`[${stageLabel}] textured glb path: ${finalProjectGlbPath}`);
     this.appendComfyLog(`[${stageLabel}] texture_status=completed`);
     return {
-      glbPath: texturedGlbPath,
+      glbPath: finalProjectGlbPath,
       meshPath,
-      texturedGlbPath,
+      texturedGlbPath: finalProjectGlbPath,
       textureStatus: "ready" as TextureStageStatus,
       textureErrorLogPath: undefined,
       textureMetadataPath: metadataPath,
@@ -2432,7 +2595,11 @@ export class BackendSupervisor {
     input?: RunWorkflowInput,
   ): Promise<RunWorkflowResult> {
     const submitted = await this.submitWorkflow(workflowName, input);
-    const deadline = Date.now() + 6 * 60 * 1000;
+    const waitTimeoutMs = this.resolveWorkflowWaitTimeoutMs();
+    const deadline = Date.now() + waitTimeoutMs;
+    this.appendComfyLog(
+      `[workflow:${submitted.promptId}] wait timeout_ms=${waitTimeoutMs}`,
+    );
 
     while (Date.now() < deadline) {
       const status = await this.getWorkflowJobStatus(submitted.jobId);

@@ -1,10 +1,11 @@
-import argparse
+﻿import argparse
 import inspect
 import json
 import os
 import re
 import shutil
 import sys
+import time
 import traceback
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
@@ -13,6 +14,7 @@ from typing import Any, Callable, Dict, Optional
 DEFAULT_MODEL_ID = "tencent/Hunyuan3D-2"
 DEFAULT_MODEL_SUBFOLDER = "hunyuan3d-paint-v2-0-turbo"
 DEFAULT_LOCAL_MODEL_ROOTS = [
+    r"E:\AI\Hunyuan3D_models",
     r"E:\AI\Hunyuan3D-2",
 ]
 
@@ -41,12 +43,15 @@ def resolve_output_paths(output_dir: str) -> Dict[str, str]:
     }
 
 
-def prepend_module_roots() -> None:
-    roots = []
+def prepend_module_roots(repo_root: Optional[str] = None) -> None:
+    roots: list[str] = []
+    if repo_root:
+        roots.append(repo_root)
     env_root = os.environ.get("HY3DGEN_ROOT", "").strip()
     if env_root:
         roots.append(env_root)
     roots.extend(DEFAULT_LOCAL_MODEL_ROOTS)
+
     for root in roots:
         if not root:
             continue
@@ -69,6 +74,7 @@ def resolve_path(raw_path: str) -> Path:
 
 def build_model_root_candidates() -> list[str]:
     candidates: list[str] = []
+
     env_model = os.environ.get("HUNYUAN_TEXGEN_MODEL_PATH", "").strip()
     if env_model:
         candidates.append(env_model)
@@ -76,6 +82,8 @@ def build_model_root_candidates() -> list[str]:
     hy3dgen_models = os.environ.get("HY3DGEN_MODELS", "").strip()
     if hy3dgen_models:
         candidates.append(str(Path(hy3dgen_models).expanduser() / DEFAULT_MODEL_ID))
+
+    candidates.extend(DEFAULT_LOCAL_MODEL_ROOTS)
 
     hf_snapshots = (
         Path.home()
@@ -90,15 +98,16 @@ def build_model_root_candidates() -> list[str]:
             if snapshot.is_dir():
                 candidates.append(str(snapshot))
 
-    candidates.extend(DEFAULT_LOCAL_MODEL_ROOTS)
-
     unique: list[str] = []
     seen = set()
     for item in candidates:
         normalized = item.strip()
-        if not normalized or normalized in seen:
+        if not normalized:
             continue
-        seen.add(normalized)
+        norm_case = os.path.normcase(os.path.abspath(normalized))
+        if norm_case in seen:
+            continue
+        seen.add(norm_case)
         unique.append(normalized)
     return unique
 
@@ -118,11 +127,13 @@ def resolve_local_model_root(model_subfolder: str) -> Path:
 
         delight_dir = (root_candidate / "hunyuan3d-delight-v2-0").resolve()
         paint_dir = (root_candidate / model_subfolder).resolve()
+
         missing: list[str] = []
         if not delight_dir.is_dir():
             missing.append(str(delight_dir))
         if not paint_dir.is_dir():
             missing.append(str(paint_dir))
+
         if not missing:
             return root_candidate
 
@@ -178,7 +189,7 @@ def resolve_expected_unet_module_path(
     return None
 
 
-def patch_model_index_unet_module(
+def inspect_model_index_unet_module(
     model_subfolder_dir: Path,
     expected_unet_module: Optional[str],
 ) -> Dict[str, Any]:
@@ -187,6 +198,7 @@ def patch_model_index_unet_module(
         "configured_unet_module": "unknown",
         "model_index_patched": "no",
     }
+
     model_index_path = model_subfolder_dir / "model_index.json"
     if not model_index_path.is_file():
         return details
@@ -200,8 +212,7 @@ def patch_model_index_unet_module(
     ):
         return details
 
-    configured_unet_module = unet_entry[0]
-    details["configured_unet_module"] = configured_unet_module
+    details["configured_unet_module"] = unet_entry[0]
     return details
 
 
@@ -289,6 +300,7 @@ def apply_multiview_custom_pipeline_override(
 ) -> Optional[Callable[[], None]]:
     if not custom_pipeline_override_dir:
         return None
+
     import hy3dgen.texgen.utils.multiview_utils as multiview_utils  # noqa: WPS433
 
     original_file = getattr(multiview_utils, "__file__", None)
@@ -327,48 +339,71 @@ def export_result_mesh(result_mesh: Any, output_glb_path: str) -> None:
     )
 
 
-def run_texgen(image_path: str, mesh_path: str, output_glb_path: str) -> Dict[str, str]:
-    prepend_module_roots()
+def run_texgen(
+    image_path: str,
+    mesh_path: str,
+    output_glb_path: str,
+    timeout_ms: int,
+    repo_root: Optional[str],
+) -> Dict[str, Any]:
+    env_model_path = os.environ.get("HUNYUAN_TEXGEN_MODEL_PATH", "").strip()
+    log_line(f"env model path: {env_model_path or '<empty>'}")
+    if not env_model_path:
+        os.environ["HUNYUAN_TEXGEN_MODEL_PATH"] = DEFAULT_LOCAL_MODEL_ROOTS[0]
+        log_line(
+            "env model path defaulted to "
+            f"{os.environ['HUNYUAN_TEXGEN_MODEL_PATH']}"
+        )
+
+    prepend_module_roots(repo_root)
+
     if not os.environ.get("KMP_DUPLICATE_LIB_OK", "").strip():
         os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
         log_line("KMP_DUPLICATE_LIB_OK set to TRUE (workaround)")
 
     import torch  # noqa: WPS433
-
+    import custom_rasterizer_kernel  # noqa: F401,WPS433
     from hy3dgen.texgen.differentiable_renderer import (  # noqa: F401,WPS433
         mesh_processor,
         mesh_render,
     )
-    import custom_rasterizer_kernel  # noqa: F401,WPS433
-    from hy3dgen.texgen import Hunyuan3DPaintPipeline  # noqa: WPS433
+    from hy3dgen.texgen import (  # noqa: WPS433
+        Hunyuan3DPaintPipeline,
+        Hunyuan3DTexGenConfig,
+    )
     from PIL import Image  # noqa: WPS433
     import trimesh  # noqa: WPS433
-    log_line("paint pipeline import OK")
-    log_line(
-        "paint pipeline class: "
+
+    _ = Hunyuan3DTexGenConfig
+    pipeline_class = (
         f"{Hunyuan3DPaintPipeline.__module__}.{Hunyuan3DPaintPipeline.__name__}"
     )
+    log_line("paint pipeline import OK")
+    log_line(f"paint pipeline class: {pipeline_class}")
 
     model_subfolder = resolve_model_subfolder()
-    model_path = resolve_local_model_root(model_subfolder)
-    log_line(f"paint model path: {model_path}")
-    model_subfolder_dir = (model_path / model_subfolder).resolve()
+    model_root = resolve_local_model_root(model_subfolder)
+    log_line(f"resolved model path: {model_root}")
+
+    model_subfolder_dir = (model_root / model_subfolder).resolve()
     custom_pipeline_file = resolve_custom_pipeline_file(Hunyuan3DPaintPipeline)
     expected_unet_module = resolve_expected_unet_module_path(
         custom_pipeline_file=custom_pipeline_file,
         model_subfolder_dir=model_subfolder_dir,
     )
+    patch_details = inspect_model_index_unet_module(
+        model_subfolder_dir=model_subfolder_dir,
+        expected_unet_module=expected_unet_module,
+    )
+
     if custom_pipeline_file:
         log_line(f"paint custom pipeline file: {custom_pipeline_file}")
     if expected_unet_module:
         log_line(f"expected unet module: {expected_unet_module}")
-    model_index_patch = patch_model_index_unet_module(
-        model_subfolder_dir=model_subfolder_dir,
-        expected_unet_module=expected_unet_module,
-    )
+
     custom_pipeline_override_dir = prepare_custom_pipeline_override(
         custom_pipeline_file=custom_pipeline_file,
-        patch_details=model_index_patch,
+        patch_details=patch_details,
         output_glb_path=output_glb_path,
     )
     restore_multiview_override = apply_multiview_custom_pipeline_override(
@@ -394,7 +429,7 @@ def run_texgen(image_path: str, mesh_path: str, output_glb_path: str) -> Dict[st
     try:
         try:
             pipeline = Hunyuan3DPaintPipeline.from_pretrained(
-                str(model_path),
+                str(model_root),
                 **loader_kwargs,
             )
         except TypeError:
@@ -403,7 +438,7 @@ def run_texgen(image_path: str, mesh_path: str, output_glb_path: str) -> Dict[st
             local_files_only_used = False
             log_line("local_files_only usado: no (unsupported by paint pipeline)")
             pipeline = Hunyuan3DPaintPipeline.from_pretrained(
-                str(model_path),
+                str(model_root),
                 subfolder=model_subfolder,
             )
     finally:
@@ -413,6 +448,7 @@ def run_texgen(image_path: str, mesh_path: str, output_glb_path: str) -> Dict[st
     log_line("paint pipeline init OK")
     resolved_unet_class = resolve_pipeline_unet_class_name(pipeline)
     log_line(f"unet class resolved: {resolved_unet_class}")
+
     if os.environ.get("HUNYUAN_TEXGEN_CPU_OFFLOAD", "").strip().lower() in (
         "1",
         "true",
@@ -420,21 +456,32 @@ def run_texgen(image_path: str, mesh_path: str, output_glb_path: str) -> Dict[st
     ):
         pipeline.enable_model_cpu_offload()
 
-    log_line("texgen started")
+    log_line("mesh load started")
     mesh = trimesh.load(mesh_path, force="mesh")
+    log_line("mesh load OK")
+
+    log_line("image load started")
     image = Image.open(image_path).convert("RGBA")
+    log_line("image load OK")
+
+    log_line("texgen inference started")
     textured_mesh = pipeline(mesh, image=image)
+    log_line("texgen inference finished")
+
+    log_line("export started")
     export_result_mesh(textured_mesh, output_glb_path)
-    log_line("texgen completed")
+    log_line("export finished")
 
     return {
-        "model_path": str(model_path),
+        "model_root": str(model_root),
         "model_subfolder": model_subfolder,
+        "pipeline_class": pipeline_class,
         "local_files_only_used": "yes" if local_files_only_used else "no",
-        "expected_unet_module": model_index_patch["expected_unet_module"],
-        "configured_unet_module": model_index_patch["configured_unet_module"],
-        "model_index_patched": model_index_patch["model_index_patched"],
+        "expected_unet_module": patch_details["expected_unet_module"],
+        "configured_unet_module": patch_details["configured_unet_module"],
+        "model_index_patched": patch_details["model_index_patched"],
         "resolved_unet_class": resolved_unet_class,
+        "timeout_ms": timeout_ms,
     }
 
 
@@ -449,6 +496,17 @@ def parse_args() -> argparse.Namespace:
         required=True,
         help="Output directory where textured.glb and metadata are written",
     )
+    parser.add_argument(
+        "--timeout-ms",
+        type=int,
+        default=0,
+        help="Optional timeout metadata value provided by backend",
+    )
+    parser.add_argument(
+        "--repo-root",
+        default="",
+        help="Optional local Hunyuan repo root path",
+    )
     return parser.parse_args()
 
 
@@ -457,6 +515,7 @@ def build_result_payload(
     textured_glb_path: Optional[str],
     texture_status: str,
     error: Optional[str],
+    timeout_ms: int,
 ) -> Dict[str, Any]:
     return {
         "texture_status": texture_status,
@@ -465,6 +524,11 @@ def build_result_payload(
         if textured_glb_path
         else None,
         "error": error,
+        "traceback": None,
+        "duration_ms": None,
+        "timeout_ms": timeout_ms,
+        "model_root": None,
+        "pipeline_class": None,
     }
 
 
@@ -472,17 +536,24 @@ def main() -> int:
     args = parse_args()
     output_paths = resolve_output_paths(args.output_dir)
     ensure_dir(output_paths["output_dir"])
+
     shape_glb_path = os.path.abspath(args.mesh)
     image_path = os.path.abspath(args.image)
     textured_glb_path = output_paths["textured_glb_path"]
     metadata_path = output_paths["metadata_path"]
+    timeout_ms = max(0, int(args.timeout_ms))
+    repo_root = args.repo_root.strip() if isinstance(args.repo_root, str) else ""
 
     result = build_result_payload(
         shape_glb_path=shape_glb_path,
         textured_glb_path=None,
         texture_status="failed",
         error=None,
+        timeout_ms=timeout_ms,
     )
+
+    started_at = time.perf_counter()
+    exit_code = 1
 
     try:
         if not os.path.isfile(shape_glb_path):
@@ -494,6 +565,8 @@ def main() -> int:
             image_path=image_path,
             mesh_path=shape_glb_path,
             output_glb_path=textured_glb_path,
+            timeout_ms=timeout_ms,
+            repo_root=repo_root or None,
         )
 
         if (
@@ -504,30 +577,36 @@ def main() -> int:
                 "Texgen completed without producing a valid textured GLB."
             )
 
-        result = build_result_payload(
-            shape_glb_path=shape_glb_path,
-            textured_glb_path=textured_glb_path,
-            texture_status="completed",
-            error=None,
+        result.update(
+            {
+                "texture_status": "completed",
+                "textured_glb_path": os.path.abspath(textured_glb_path),
+                "error": None,
+                "traceback": None,
+                "model_root": details["model_root"],
+                "pipeline_class": details["pipeline_class"],
+                "model_subfolder": details["model_subfolder"],
+                "local_files_only_used": details["local_files_only_used"],
+                "expected_unet_module": details["expected_unet_module"],
+                "configured_unet_module": details["configured_unet_module"],
+                "model_index_patched": details["model_index_patched"],
+                "resolved_unet_class": details["resolved_unet_class"],
+            }
         )
-        result["model_path"] = details["model_path"]
-        result["model_subfolder"] = details["model_subfolder"]
-        result["local_files_only_used"] = details["local_files_only_used"]
-        result["expected_unet_module"] = details["expected_unet_module"]
-        result["configured_unet_module"] = details["configured_unet_module"]
-        result["model_index_patched"] = details["model_index_patched"]
-        result["resolved_unet_class"] = details["resolved_unet_class"]
-        write_metadata(metadata_path, result)
-        print(json.dumps(result, ensure_ascii=False))
-        return 0
+        exit_code = 0
     except Exception as exc:  # noqa: BLE001
         result["texture_status"] = "failed"
         result["textured_glb_path"] = None
         result["error"] = str(exc)
         result["traceback"] = traceback.format_exc()
+        if result.get("model_root") is None:
+            result["model_root"] = os.environ.get("HUNYUAN_TEXGEN_MODEL_PATH", "").strip() or None
+    finally:
+        result["duration_ms"] = int((time.perf_counter() - started_at) * 1000)
         write_metadata(metadata_path, result)
         print(json.dumps(result, ensure_ascii=False))
-        return 1
+
+    return exit_code
 
 
 if __name__ == "__main__":
