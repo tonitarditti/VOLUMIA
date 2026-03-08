@@ -14,6 +14,10 @@ DEFAULT_LOCAL_MODEL_ROOTS = [
 ]
 
 
+def log_line(message: str) -> None:
+    print(f"[hunyuan_texgen] {message}", flush=True)
+
+
 def ensure_dir(dir_path: str) -> None:
     os.makedirs(dir_path, exist_ok=True)
 
@@ -92,6 +96,7 @@ def run_texgen(image_path: str, mesh_path: str, output_glb_path: str) -> Dict[st
     from hy3dgen.texgen import Hunyuan3DPaintPipeline  # noqa: WPS433
     from PIL import Image  # noqa: WPS433
     import trimesh  # noqa: WPS433
+    log_line("paint pipeline import OK")
 
     model_id = resolve_model_id()
     model_subfolder = resolve_model_subfolder()
@@ -99,6 +104,7 @@ def run_texgen(image_path: str, mesh_path: str, output_glb_path: str) -> Dict[st
         model_id,
         subfolder=model_subfolder,
     )
+    log_line("paint pipeline init OK")
     if os.environ.get("HUNYUAN_TEXGEN_CPU_OFFLOAD", "").strip().lower() in (
         "1",
         "true",
@@ -106,10 +112,12 @@ def run_texgen(image_path: str, mesh_path: str, output_glb_path: str) -> Dict[st
     ):
         pipeline.enable_model_cpu_offload()
 
+    log_line("texgen started")
     mesh = trimesh.load(mesh_path, force="mesh")
     image = Image.open(image_path).convert("RGBA")
     textured_mesh = pipeline(mesh, image=image)
     export_result_mesh(textured_mesh, output_glb_path)
+    log_line("texgen completed")
 
     return {"model_id": model_id, "model_subfolder": model_subfolder}
 
