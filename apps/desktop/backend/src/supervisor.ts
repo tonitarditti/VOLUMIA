@@ -500,6 +500,7 @@ function validateTexturedGlb(glbPath: string): TexturedGlbValidation {
 
 const COMFY_HEALTH_FAILURE_THRESHOLD = 3;
 const COMFY_AUTO_RESTART_DELAY_MS = 1_500;
+const PREFERRED_TEXGEN_PYTHON_EXE = "F:\\MINICONDA\\envs\\volumia\\python.exe";
 
 export class BackendSupervisor {
   private readonly processManager = new ProcessManager();
@@ -576,6 +577,18 @@ export class BackendSupervisor {
     if (this.comfyLogs.length > this.comfyLogLimit) {
       this.comfyLogs.splice(0, this.comfyLogs.length - this.comfyLogLimit);
     }
+  }
+
+  private logTexgenFallback(
+    stageLabel: string,
+    shapeGlbPath: string,
+    reason?: string,
+  ) {
+    const suffix = reason ? ` reason=${reason}` : "";
+    this.appendComfyLog(
+      `[${stageLabel}] fallback used: shape_glb=${shapeGlbPath}${suffix}`,
+      "warn",
+    );
   }
 
   private refreshProcessSnapshot() {
@@ -1014,7 +1027,16 @@ export class BackendSupervisor {
     const probe = this.runPythonSnippet(
       [
         "import importlib, json, sys",
-        "modules = ['torch', 'custom_rasterizer', 'custom_rasterizer_kernel', 'differentiable_renderer', 'hy3dgen', 'hy3dgen.texgen', 'segment_anything']",
+        "modules = [",
+        "  'torch',",
+        "  'custom_rasterizer_kernel',",
+        "  'custom_rasterizer',",
+        "  'hy3dgen',",
+        "  'hy3dgen.texgen',",
+        "  'hy3dgen.texgen.differentiable_renderer.mesh_processor',",
+        "  'hy3dgen.texgen.differentiable_renderer.mesh_render',",
+        "  'segment_anything',",
+        "]",
         "results = {}",
         "for module_name in modules:",
         "  try:",
@@ -1033,9 +1055,10 @@ export class BackendSupervisor {
       torch: "probe-not-run",
       hy3dgen: "probe-not-run",
       "hy3dgen.texgen": "probe-not-run",
-      custom_rasterizer: "probe-not-run",
       custom_rasterizer_kernel: "probe-not-run",
-      differentiable_renderer: "probe-not-run",
+      custom_rasterizer: "probe-not-run",
+      "hy3dgen.texgen.differentiable_renderer.mesh_processor": "probe-not-run",
+      "hy3dgen.texgen.differentiable_renderer.mesh_render": "probe-not-run",
       segment_anything: "probe-not-run",
     };
     let pythonExecutable: string | null = this.comfyRuntimePythonPath;
@@ -1070,11 +1093,11 @@ export class BackendSupervisor {
       "torch",
       "hy3dgen",
       "hy3dgen.texgen",
-      "custom_rasterizer",
       "custom_rasterizer_kernel",
-      "differentiable_renderer",
+      "hy3dgen.texgen.differentiable_renderer.mesh_processor",
+      "hy3dgen.texgen.differentiable_renderer.mesh_render",
     ] as const;
-    const optionalModules = ["segment_anything"] as const;
+    const optionalModules = ["custom_rasterizer", "segment_anything"] as const;
     const missingImports = requiredModules
       .filter((moduleName) => importChecks[moduleName] !== "ok")
       .map((moduleName) => `${moduleName}: ${importChecks[moduleName]}`);
@@ -1194,10 +1217,19 @@ export class BackendSupervisor {
   }
 
   private resolveTexgenScriptPath() {
-    return path.join(getBackendRootDir(), "python", "hunyuan_texgen_stage.py");
+    return path.join(getBackendRootDir(), "python", "hunyuan_texgen.py");
   }
 
   private resolveTexgenRunner(scriptPath: string, scriptArgs: string[]) {
+    if (fs.existsSync(PREFERRED_TEXGEN_PYTHON_EXE)) {
+      return {
+        command: PREFERRED_TEXGEN_PYTHON_EXE,
+        args: [scriptPath, ...scriptArgs],
+        cwd: this.config.comfy.comfyDir,
+        details: `preferred-texgen-python=${PREFERRED_TEXGEN_PYTHON_EXE}`,
+      };
+    }
+
     const pythonOverride = this.config.comfy.pythonExeOverride.trim();
     if (pythonOverride && fs.existsSync(pythonOverride)) {
       return {
@@ -1328,9 +1360,46 @@ export class BackendSupervisor {
     runDir: string,
     payload: Record<string, unknown>,
   ) {
+    const textureStatus =
+      typeof payload.texture_status === "string"
+        ? payload.texture_status
+        : typeof payload.textureStatus === "string"
+          ? payload.textureStatus
+          : "failed";
+    const shapeGlbPath =
+      typeof payload.shape_glb_path === "string"
+        ? payload.shape_glb_path
+        : typeof payload.shapeGlbPath === "string"
+          ? payload.shapeGlbPath
+          : typeof payload.meshPath === "string"
+            ? payload.meshPath
+            : null;
+    const texturedGlbPath =
+      typeof payload.textured_glb_path === "string"
+        ? payload.textured_glb_path
+        : typeof payload.texturedGlbPath === "string"
+          ? payload.texturedGlbPath
+          : null;
+    const error =
+      typeof payload.error === "string"
+        ? payload.error
+        : typeof payload.reason === "string"
+          ? payload.reason
+          : null;
+    const normalizedPayload: Record<string, unknown> = {
+      ...payload,
+      texture_status: textureStatus,
+      shape_glb_path: shapeGlbPath,
+      textured_glb_path: texturedGlbPath,
+      error,
+    };
     const metadataPath = path.join(runDir, "texture-metadata.json");
     fs.mkdirSync(runDir, { recursive: true });
-    fs.writeFileSync(metadataPath, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+    fs.writeFileSync(
+      metadataPath,
+      `${JSON.stringify(normalizedPayload, null, 2)}\n`,
+      "utf8",
+    );
     return metadataPath;
   }
 
@@ -1341,6 +1410,7 @@ export class BackendSupervisor {
     const dependencies = this.resolveTexgenDependencies();
     const nowIso = new Date().toISOString();
     const inputImagePath = job.inputImagePath?.trim() ?? "";
+    this.appendComfyLog(`[${stageLabel}] shape output path: ${meshPath}`);
 
     if (!inputImagePath || !fs.existsSync(inputImagePath)) {
       const metadataPath = this.writeTextureMetadata(runDir, {
@@ -1349,6 +1419,10 @@ export class BackendSupervisor {
         meshPath,
         texturedGlbPath: null,
         textureStatus: "skipped",
+        texture_status: "skipped",
+        shape_glb_path: meshPath,
+        textured_glb_path: null,
+        error: "Input image path unavailable for texgen stage.",
         reason: "Input image path unavailable for texgen stage.",
         textureDependencies: dependencies,
       });
@@ -1356,6 +1430,8 @@ export class BackendSupervisor {
         `[${stageLabel}] skipped: input image missing (fallback mesh).`,
         "warn",
       );
+      this.appendComfyLog(`[${stageLabel}] texture_status=skipped`, "warn");
+      this.logTexgenFallback(stageLabel, meshPath, "input image missing");
       return {
         glbPath: meshPath,
         meshPath,
@@ -1377,11 +1453,17 @@ export class BackendSupervisor {
         meshPath,
         texturedGlbPath: null,
         textureStatus: "failed",
+        texture_status: "failed",
+        shape_glb_path: meshPath,
+        textured_glb_path: null,
+        error: reason,
         reason,
         textureDependencies: dependencies,
         textureErrorLogPath: logPath,
       });
       this.appendComfyLog(`[${stageLabel}] ${reason}`, "warn");
+      this.appendComfyLog(`[${stageLabel}] texture_status=failed`, "warn");
+      this.logTexgenFallback(stageLabel, meshPath, reason);
       return {
         glbPath: meshPath,
         meshPath,
@@ -1411,8 +1493,14 @@ export class BackendSupervisor {
     const torchStatus = importProbe.importChecks.torch ?? "probe-not-run";
     const customStatus =
       importProbe.importChecks.custom_rasterizer ?? "probe-not-run";
-    const diffStatus =
-      importProbe.importChecks.differentiable_renderer ?? "probe-not-run";
+    const meshProcessorStatus =
+      importProbe.importChecks[
+        "hy3dgen.texgen.differentiable_renderer.mesh_processor"
+      ] ?? "probe-not-run";
+    const meshRenderStatus =
+      importProbe.importChecks[
+        "hy3dgen.texgen.differentiable_renderer.mesh_render"
+      ] ?? "probe-not-run";
     this.appendComfyLog(
       `[${stageLabel}] torch preload ${torchStatus === "ok" ? "OK" : "FAILED"} (${torchStatus})`,
       torchStatus === "ok" ? "info" : "warn",
@@ -1422,8 +1510,12 @@ export class BackendSupervisor {
       customStatus === "ok" ? "info" : "warn",
     );
     this.appendComfyLog(
-      `[${stageLabel}] differentiable_renderer import ${diffStatus === "ok" ? "OK" : "FAILED"} (${diffStatus})`,
-      diffStatus === "ok" ? "info" : "warn",
+      `[${stageLabel}] mesh_processor import ${meshProcessorStatus === "ok" ? "OK" : "FAILED"} (${meshProcessorStatus})`,
+      meshProcessorStatus === "ok" ? "info" : "warn",
+    );
+    this.appendComfyLog(
+      `[${stageLabel}] mesh_render import ${meshRenderStatus === "ok" ? "OK" : "FAILED"} (${meshRenderStatus})`,
+      meshRenderStatus === "ok" ? "info" : "warn",
     );
     if (importProbe.optionalMissingImports.length > 0) {
       this.appendComfyLog(
@@ -1440,11 +1532,17 @@ export class BackendSupervisor {
         meshPath,
         texturedGlbPath: null,
         textureStatus: "failed",
+        texture_status: "failed",
+        shape_glb_path: meshPath,
+        textured_glb_path: null,
+        error: reason,
         reason,
         textureDependencies: dependencies,
         textureErrorLogPath: logPath,
       });
       this.appendComfyLog(`[${stageLabel}] ${reason}`, "warn");
+      this.appendComfyLog(`[${stageLabel}] texture_status=failed`, "warn");
+      this.logTexgenFallback(stageLabel, meshPath, reason);
       return {
         glbPath: meshPath,
         meshPath,
@@ -1467,11 +1565,17 @@ export class BackendSupervisor {
         meshPath,
         texturedGlbPath: null,
         textureStatus: "failed",
+        texture_status: "failed",
+        shape_glb_path: meshPath,
+        textured_glb_path: null,
+        error: reason,
         reason,
         textureDependencies: dependencies,
         textureErrorLogPath: logPath,
       });
       this.appendComfyLog(`[${stageLabel}] ${reason}`, "warn");
+      this.appendComfyLog(`[${stageLabel}] texture_status=failed`, "warn");
+      this.logTexgenFallback(stageLabel, meshPath, reason);
       return {
         glbPath: meshPath,
         meshPath,
@@ -1484,26 +1588,25 @@ export class BackendSupervisor {
       };
     }
 
-    const texturedGlbPath = path.join(runDir, "textured.glb");
-    const resultJsonPath = path.join(runDir, "texgen-result.json");
+    const fallbackTexturedGlbPath = path.join(runDir, "textured.glb");
+    const scriptMetadataPath = path.join(runDir, "texture-metadata.json");
     const scriptArgs: string[] = [
       "--mesh",
       meshPath,
       "--image",
       inputImagePath,
-      "--out",
-      texturedGlbPath,
-      "--result-json",
-      resultJsonPath,
+      "--output-dir",
+      runDir,
     ];
-    for (const moduleRoot of dependencies.validModuleRoots) {
-      scriptArgs.push("--module-root", moduleRoot);
-    }
 
+    this.appendComfyLog(`[${stageLabel}] texgen started`);
     const processResult = await this.runTexgenScriptProcess(
       scriptPath,
       scriptArgs,
       stageLabel,
+    );
+    this.appendComfyLog(
+      `[${stageLabel}] texgen completed (exit=${processResult.exitCode}, timed_out=${String(processResult.timedOut)})`,
     );
     const logLines = [
       `stage=${stageLabel}`,
@@ -1521,9 +1624,11 @@ export class BackendSupervisor {
     fs.writeFileSync(logPath, `${logLines.join("\n")}\n`, "utf8");
 
     let texgenJson: Record<string, unknown> | null = null;
-    if (fs.existsSync(resultJsonPath)) {
+    if (fs.existsSync(scriptMetadataPath)) {
       try {
-        const parsed = JSON.parse(fs.readFileSync(resultJsonPath, "utf8")) as unknown;
+        const parsed = JSON.parse(
+          fs.readFileSync(scriptMetadataPath, "utf8"),
+        ) as unknown;
         if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
           texgenJson = parsed as Record<string, unknown>;
         }
@@ -1532,9 +1637,30 @@ export class BackendSupervisor {
       }
     }
 
+    const textureStatusFromScriptRaw =
+      typeof texgenJson?.texture_status === "string"
+        ? texgenJson.texture_status.trim().toLowerCase()
+        : "";
+    const textureStatusFromScript =
+      textureStatusFromScriptRaw === "completed"
+        ? "ready"
+        : textureStatusFromScriptRaw;
+    const texturedPathFromScript =
+      typeof texgenJson?.textured_glb_path === "string"
+        ? texgenJson.textured_glb_path.trim()
+        : "";
+    const texturedGlbPath =
+      texturedPathFromScript.length > 0
+        ? path.resolve(texturedPathFromScript)
+        : fallbackTexturedGlbPath;
+    const resolvedTextureStatus: TextureStageStatus =
+      textureStatusFromScript === "ready" && fs.existsSync(texturedGlbPath)
+        ? "ready"
+        : "failed";
     const executionFailed =
       processResult.exitCode !== 0 ||
       processResult.timedOut ||
+      resolvedTextureStatus !== "ready" ||
       !fs.existsSync(texturedGlbPath);
     if (executionFailed) {
       const reason =
@@ -1547,12 +1673,18 @@ export class BackendSupervisor {
         meshPath,
         texturedGlbPath: null,
         textureStatus: "failed",
+        texture_status: "failed",
+        shape_glb_path: meshPath,
+        textured_glb_path: null,
+        error: reason,
         reason,
         textureDependencies: dependencies,
         textureErrorLogPath: logPath,
         texgenResult: texgenJson,
       });
       this.appendComfyLog(`[${stageLabel}] ${reason}`, "warn");
+      this.appendComfyLog(`[${stageLabel}] texture_status=failed`, "warn");
+      this.logTexgenFallback(stageLabel, meshPath, reason);
       return {
         glbPath: meshPath,
         meshPath,
@@ -1574,6 +1706,10 @@ export class BackendSupervisor {
         meshPath,
         texturedGlbPath,
         textureStatus: "failed",
+        texture_status: "failed",
+        shape_glb_path: meshPath,
+        textured_glb_path: texturedGlbPath,
+        error: reason,
         reason,
         textureDependencies: dependencies,
         textureValidation: validation,
@@ -1581,6 +1717,9 @@ export class BackendSupervisor {
         texgenResult: texgenJson,
       });
       this.appendComfyLog(`[${stageLabel}] ${reason}`, "warn");
+      this.appendComfyLog(`[${stageLabel}] textured glb path: ${texturedGlbPath}`);
+      this.appendComfyLog(`[${stageLabel}] texture_status=failed`, "warn");
+      this.logTexgenFallback(stageLabel, meshPath, reason);
       return {
         glbPath: meshPath,
         meshPath,
@@ -1599,6 +1738,10 @@ export class BackendSupervisor {
       meshPath,
       texturedGlbPath,
       textureStatus: "ready",
+      texture_status: "completed",
+      shape_glb_path: meshPath,
+      textured_glb_path: texturedGlbPath,
+      error: null,
       textureDependencies: dependencies,
       textureValidation: validation,
       textureErrorLogPath: logPath,
@@ -1607,6 +1750,8 @@ export class BackendSupervisor {
     this.appendComfyLog(
       `[${stageLabel}] ready. textured_glb=${texturedGlbPath}`,
     );
+    this.appendComfyLog(`[${stageLabel}] textured glb path: ${texturedGlbPath}`);
+    this.appendComfyLog(`[${stageLabel}] texture_status=completed`);
     return {
       glbPath: texturedGlbPath,
       meshPath,
@@ -1684,6 +1829,9 @@ export class BackendSupervisor {
     };
 
     if (resolvedMeshPath) {
+      this.appendComfyLog(
+        `[texgen:${job.promptId}] shape output path: ${resolvedMeshPath}`,
+      );
       try {
         textureStage = await this.runTextureStage(job, resolvedMeshPath);
       } catch (error) {
@@ -1691,6 +1839,12 @@ export class BackendSupervisor {
         this.appendComfyLog(
           `[texgen:${job.promptId}] ${fallbackReason}`,
           "warn",
+        );
+        this.appendComfyLog(`[texgen:${job.promptId}] texture_status=failed`, "warn");
+        this.logTexgenFallback(
+          `texgen:${job.promptId}`,
+          resolvedMeshPath,
+          fallbackReason,
         );
         textureStage = {
           glbPath: resolvedMeshPath,
