@@ -354,7 +354,21 @@ export class ComfyApi {
     }
 
     const record = history as Record<string, unknown>;
-    return record[promptId] ?? Object.values(record)[0] ?? null;
+    const matchedEntry = record[promptId];
+    if (matchedEntry && typeof matchedEntry === "object") {
+      return matchedEntry;
+    }
+
+    // Some ComfyUI builds can return the entry object directly for /history/{promptId}.
+    if (
+      ("outputs" in record && typeof record.outputs === "object") ||
+      ("status" in record && typeof record.status === "object") ||
+      ("prompt" in record && Array.isArray(record.prompt))
+    ) {
+      return record;
+    }
+
+    return null;
   }
 
   async interrupt(): Promise<void> {
