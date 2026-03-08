@@ -1,0 +1,7 @@
+{
+  "texture_status": "failed",
+  "shape_glb_path": "E:\\VOLUMIA\\apps\\desktop\\assets\\templates\\box.glb",
+  "textured_glb_path": null,
+  "error": "No local paint model root found. Set HUNYUAN_TEXGEN_MODEL_PATH to a folder containing 'hunyuan3d-delight-v2-0' and the paint subfolder. Checked: E:\\AI\\Hunyuan3D-2 (missing: E:\\AI\\Hunyuan3D-2\\hunyuan3d-delight-v2-0, E:\\AI\\Hunyuan3D-2\\hunyuan3d-paint-v2-0-turbo)",
+  "traceback": "Traceback (most recent call last):\n  File \"E:\\VOLUMIA\\apps\\desktop\\backend\\python\\hunyuan_texgen.py\", line 278, in main\n    details = run_texgen(\n  File \"E:\\VOLUMIA\\apps\\desktop\\backend\\python\\hunyuan_texgen.py\", line 170, in run_texgen\n    model_path = resolve_local_model_root(model_subfolder)\n  File \"E:\\VOLUMIA\\apps\\desktop\\backend\\python\\hunyuan_texgen.py\", line 133, in resolve_local_model_root\n    raise RuntimeError(\nRuntimeError: No local paint model root found. Set HUNYUAN_TEXGEN_MODEL_PATH to a folder containing 'hunyuan3d-delight-v2-0' and the paint subfolder. Checked: E:\\AI\\Hunyuan3D-2 (missing: E:\\AI\\Hunyuan3D-2\\hunyuan3d-delight-v2-0, E:\\AI\\Hunyuan3D-2\\hunyuan3d-paint-v2-0-turbo)\n"
+}

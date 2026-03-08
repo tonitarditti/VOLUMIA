@@ -1,9 +1,11 @@
 import argparse
+import inspect
 import json
 import os
 import shutil
 import sys
 import traceback
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 
@@ -55,19 +57,85 @@ def prepend_module_roots() -> None:
             sys.path.insert(0, texgen_abs)
 
 
-def resolve_model_id() -> str:
-    env_model = os.environ.get("HUNYUAN_TEXGEN_MODEL_PATH", "").strip()
-    if env_model:
-        return env_model
-    for candidate in DEFAULT_LOCAL_MODEL_ROOTS:
-        if os.path.isdir(candidate):
-            return candidate
-    return DEFAULT_MODEL_ID
-
-
 def resolve_model_subfolder() -> str:
     value = os.environ.get("HUNYUAN_TEXGEN_SUBFOLDER", "").strip()
     return value if value else DEFAULT_MODEL_SUBFOLDER
+
+
+def resolve_path(raw_path: str) -> Path:
+    return Path(raw_path).expanduser().resolve()
+
+
+def build_model_root_candidates() -> list[str]:
+    candidates: list[str] = []
+    env_model = os.environ.get("HUNYUAN_TEXGEN_MODEL_PATH", "").strip()
+    if env_model:
+        candidates.append(env_model)
+
+    hy3dgen_models = os.environ.get("HY3DGEN_MODELS", "").strip()
+    if hy3dgen_models:
+        candidates.append(str(Path(hy3dgen_models).expanduser() / DEFAULT_MODEL_ID))
+
+    hf_snapshots = (
+        Path.home()
+        / ".cache"
+        / "huggingface"
+        / "hub"
+        / "models--tencent--Hunyuan3D-2"
+        / "snapshots"
+    )
+    if hf_snapshots.is_dir():
+        for snapshot in sorted(hf_snapshots.iterdir(), reverse=True):
+            if snapshot.is_dir():
+                candidates.append(str(snapshot))
+
+    candidates.extend(DEFAULT_LOCAL_MODEL_ROOTS)
+
+    unique: list[str] = []
+    seen = set()
+    for item in candidates:
+        normalized = item.strip()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        unique.append(normalized)
+    return unique
+
+
+def resolve_local_model_root(model_subfolder: str) -> Path:
+    checked_paths: list[str] = []
+    for raw_candidate in build_model_root_candidates():
+        candidate = resolve_path(raw_candidate)
+
+        root_candidate = candidate
+        if candidate.name in ("hunyuan3d-delight-v2-0", model_subfolder):
+            root_candidate = candidate.parent.resolve()
+
+        if not root_candidate.is_dir():
+            checked_paths.append(f"{root_candidate} (not found)")
+            continue
+
+        delight_dir = (root_candidate / "hunyuan3d-delight-v2-0").resolve()
+        paint_dir = (root_candidate / model_subfolder).resolve()
+        missing: list[str] = []
+        if not delight_dir.is_dir():
+            missing.append(str(delight_dir))
+        if not paint_dir.is_dir():
+            missing.append(str(paint_dir))
+        if not missing:
+            return root_candidate
+
+        checked_paths.append(
+            f"{root_candidate} (missing: {', '.join(missing)})"
+        )
+
+    checked = " | ".join(checked_paths) if checked_paths else "no candidates"
+    raise RuntimeError(
+        "No local paint model root found. "
+        "Set HUNYUAN_TEXGEN_MODEL_PATH to a folder containing "
+        "'hunyuan3d-delight-v2-0' and the paint subfolder. "
+        f"Checked: {checked}"
+    )
 
 
 def export_result_mesh(result_mesh: Any, output_glb_path: str) -> None:
@@ -98,12 +166,41 @@ def run_texgen(image_path: str, mesh_path: str, output_glb_path: str) -> Dict[st
     import trimesh  # noqa: WPS433
     log_line("paint pipeline import OK")
 
-    model_id = resolve_model_id()
     model_subfolder = resolve_model_subfolder()
-    pipeline = Hunyuan3DPaintPipeline.from_pretrained(
-        model_id,
-        subfolder=model_subfolder,
+    model_path = resolve_local_model_root(model_subfolder)
+    log_line(f"paint model path: {model_path}")
+
+    from_pretrained_signature = inspect.signature(
+        Hunyuan3DPaintPipeline.from_pretrained
     )
+    supports_local_files_only = (
+        "local_files_only" in from_pretrained_signature.parameters
+    )
+    local_files_only_used = supports_local_files_only
+    log_line(
+        "local_files_only usado: "
+        + ("yes" if local_files_only_used else "no")
+    )
+
+    loader_kwargs: Dict[str, Any] = {"subfolder": model_subfolder}
+    if local_files_only_used:
+        loader_kwargs["local_files_only"] = True
+
+    try:
+        pipeline = Hunyuan3DPaintPipeline.from_pretrained(
+            str(model_path),
+            **loader_kwargs,
+        )
+    except TypeError:
+        if not local_files_only_used:
+            raise
+        local_files_only_used = False
+        log_line("local_files_only usado: no (unsupported by paint pipeline)")
+        pipeline = Hunyuan3DPaintPipeline.from_pretrained(
+            str(model_path),
+            subfolder=model_subfolder,
+        )
+
     log_line("paint pipeline init OK")
     if os.environ.get("HUNYUAN_TEXGEN_CPU_OFFLOAD", "").strip().lower() in (
         "1",
@@ -119,7 +216,11 @@ def run_texgen(image_path: str, mesh_path: str, output_glb_path: str) -> Dict[st
     export_result_mesh(textured_mesh, output_glb_path)
     log_line("texgen completed")
 
-    return {"model_id": model_id, "model_subfolder": model_subfolder}
+    return {
+        "model_path": str(model_path),
+        "model_subfolder": model_subfolder,
+        "local_files_only_used": "yes" if local_files_only_used else "no",
+    }
 
 
 def parse_args() -> argparse.Namespace:
@@ -194,8 +295,9 @@ def main() -> int:
             texture_status="completed",
             error=None,
         )
-        result["model_id"] = details["model_id"]
+        result["model_path"] = details["model_path"]
         result["model_subfolder"] = details["model_subfolder"]
+        result["local_files_only_used"] = details["local_files_only_used"]
         write_metadata(metadata_path, result)
         print(json.dumps(result, ensure_ascii=False))
         return 0
