@@ -2,11 +2,12 @@ import argparse
 import inspect
 import json
 import os
+import re
 import shutil
 import sys
 import traceback
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 
 DEFAULT_MODEL_ID = "tencent/Hunyuan3D-2"
@@ -138,6 +139,181 @@ def resolve_local_model_root(model_subfolder: str) -> Path:
     )
 
 
+def resolve_custom_pipeline_file(paint_pipeline_cls: type[Any]) -> Optional[Path]:
+    module = sys.modules.get(paint_pipeline_cls.__module__)
+    module_file = getattr(module, "__file__", None)
+    if not module_file:
+        return None
+    texgen_dir = Path(module_file).resolve().parent
+    custom_pipeline_file = texgen_dir / "hunyuanpaint" / "pipeline.py"
+    if custom_pipeline_file.is_file():
+        return custom_pipeline_file
+    return None
+
+
+def resolve_expected_unet_module_path(
+    custom_pipeline_file: Optional[Path],
+    model_subfolder_dir: Path,
+) -> Optional[str]:
+    if custom_pipeline_file and custom_pipeline_file.is_file():
+        source = custom_pipeline_file.read_text(encoding="utf-8", errors="ignore")
+        match = re.search(
+            r"from\s+\.unet\.(?P<module>[A-Za-z_][A-Za-z0-9_]*)\s+import\s+UNet2p5DConditionModel",
+            source,
+        )
+        if match:
+            return f"unet.{match.group('module')}"
+        if re.search(
+            r"from\s+\.modules\s+import\s+UNet2p5DConditionModel",
+            source,
+        ):
+            return "modules"
+
+    if (model_subfolder_dir / "unet" / "unet_modules.py").is_file():
+        return "unet.unet_modules"
+    if (model_subfolder_dir / "unet" / "modules.py").is_file():
+        return "unet.modules"
+    if (model_subfolder_dir / "modules.py").is_file():
+        return "modules"
+    return None
+
+
+def patch_model_index_unet_module(
+    model_subfolder_dir: Path,
+    expected_unet_module: Optional[str],
+) -> Dict[str, Any]:
+    details: Dict[str, Any] = {
+        "expected_unet_module": expected_unet_module or "unknown",
+        "configured_unet_module": "unknown",
+        "model_index_patched": "no",
+    }
+    model_index_path = model_subfolder_dir / "model_index.json"
+    if not model_index_path.is_file():
+        return details
+
+    payload = json.loads(model_index_path.read_text(encoding="utf-8"))
+    unet_entry = payload.get("unet")
+    if (
+        not isinstance(unet_entry, list)
+        or len(unet_entry) < 2
+        or not isinstance(unet_entry[0], str)
+    ):
+        return details
+
+    configured_unet_module = unet_entry[0]
+    details["configured_unet_module"] = configured_unet_module
+    return details
+
+
+def resolve_unet_module_source_file(custom_pipeline_dir: Path) -> Optional[Path]:
+    candidates = [
+        custom_pipeline_dir / "modules.py",
+        custom_pipeline_dir / "unet" / "modules.py",
+        custom_pipeline_dir / "unet" / "unet_modules.py",
+    ]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def prepare_custom_pipeline_override(
+    custom_pipeline_file: Optional[Path],
+    patch_details: Dict[str, Any],
+    output_glb_path: str,
+) -> Optional[Path]:
+    if not custom_pipeline_file or not custom_pipeline_file.is_file():
+        return None
+
+    configured_unet_module = patch_details.get("configured_unet_module")
+    expected_unet_module = patch_details.get("expected_unet_module")
+    if (
+        not isinstance(configured_unet_module, str)
+        or not isinstance(expected_unet_module, str)
+        or configured_unet_module == "unknown"
+        or expected_unet_module == "unknown"
+        or configured_unet_module == expected_unet_module
+    ):
+        return None
+    if configured_unet_module != "modules":
+        return None
+
+    source_dir = custom_pipeline_file.parent
+    source = custom_pipeline_file.read_text(encoding="utf-8", errors="ignore")
+    rewritten = re.sub(
+        r"from\s+\.(?:unet\.[A-Za-z_][A-Za-z0-9_]*|modules)\s+import\s+UNet2p5DConditionModel",
+        "from .modules import UNet2p5DConditionModel",
+        source,
+        count=1,
+    )
+    if rewritten == source:
+        return None
+
+    runtime_root = Path(output_glb_path).resolve().parent / "_texgen_runtime"
+    override_dir = runtime_root / "hunyuanpaint"
+    if runtime_root.exists():
+        shutil.rmtree(runtime_root, ignore_errors=True)
+    override_dir.mkdir(parents=True, exist_ok=True)
+
+    init_source = source_dir / "__init__.py"
+    if init_source.is_file():
+        shutil.copyfile(init_source, override_dir / "__init__.py")
+    else:
+        (override_dir / "__init__.py").write_text("", encoding="utf-8")
+    (override_dir / "pipeline.py").write_text(rewritten, encoding="utf-8")
+
+    module_source = resolve_unet_module_source_file(source_dir)
+    if not module_source:
+        return None
+
+    unet_dir = override_dir / "unet"
+    unet_dir.mkdir(parents=True, exist_ok=True)
+    (unet_dir / "__init__.py").write_text("", encoding="utf-8")
+    shutil.copyfile(module_source, override_dir / "modules.py")
+    shutil.copyfile(module_source, unet_dir / "modules.py")
+    (unet_dir / "unet_modules.py").write_text(
+        "from .modules import *\n",
+        encoding="utf-8",
+    )
+
+    patch_details["model_index_patched"] = "override"
+    log_line(
+        "custom pipeline override enabled for unet module mismatch: "
+        f"{expected_unet_module} -> {configured_unet_module}"
+    )
+    return override_dir
+
+
+def apply_multiview_custom_pipeline_override(
+    custom_pipeline_override_dir: Optional[Path],
+) -> Optional[Callable[[], None]]:
+    if not custom_pipeline_override_dir:
+        return None
+    import hy3dgen.texgen.utils.multiview_utils as multiview_utils  # noqa: WPS433
+
+    original_file = getattr(multiview_utils, "__file__", None)
+    runtime_utils_dir = custom_pipeline_override_dir.parent / "utils"
+    runtime_utils_dir.mkdir(parents=True, exist_ok=True)
+    multiview_utils.__file__ = str((runtime_utils_dir / "multiview_utils.py").resolve())
+    log_line(f"multiview custom pipeline path: {custom_pipeline_override_dir}")
+
+    def restore() -> None:
+        if original_file is not None:
+            multiview_utils.__file__ = original_file
+        log_line("multiview custom pipeline override disabled")
+
+    return restore
+
+
+def resolve_pipeline_unet_class_name(paint_pipeline: Any) -> str:
+    try:
+        multiview_pipeline = paint_pipeline.models["multiview_model"].pipeline
+        unet = multiview_pipeline.unet
+    except Exception as exc:  # noqa: BLE001
+        return f"unavailable ({exc})"
+    return f"{unet.__class__.__module__}.{unet.__class__.__name__}"
+
+
 def export_result_mesh(result_mesh: Any, output_glb_path: str) -> None:
     if hasattr(result_mesh, "export"):
         result_mesh.export(output_glb_path)
@@ -153,6 +329,9 @@ def export_result_mesh(result_mesh: Any, output_glb_path: str) -> None:
 
 def run_texgen(image_path: str, mesh_path: str, output_glb_path: str) -> Dict[str, str]:
     prepend_module_roots()
+    if not os.environ.get("KMP_DUPLICATE_LIB_OK", "").strip():
+        os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
+        log_line("KMP_DUPLICATE_LIB_OK set to TRUE (workaround)")
 
     import torch  # noqa: WPS433
 
@@ -165,10 +344,36 @@ def run_texgen(image_path: str, mesh_path: str, output_glb_path: str) -> Dict[st
     from PIL import Image  # noqa: WPS433
     import trimesh  # noqa: WPS433
     log_line("paint pipeline import OK")
+    log_line(
+        "paint pipeline class: "
+        f"{Hunyuan3DPaintPipeline.__module__}.{Hunyuan3DPaintPipeline.__name__}"
+    )
 
     model_subfolder = resolve_model_subfolder()
     model_path = resolve_local_model_root(model_subfolder)
     log_line(f"paint model path: {model_path}")
+    model_subfolder_dir = (model_path / model_subfolder).resolve()
+    custom_pipeline_file = resolve_custom_pipeline_file(Hunyuan3DPaintPipeline)
+    expected_unet_module = resolve_expected_unet_module_path(
+        custom_pipeline_file=custom_pipeline_file,
+        model_subfolder_dir=model_subfolder_dir,
+    )
+    if custom_pipeline_file:
+        log_line(f"paint custom pipeline file: {custom_pipeline_file}")
+    if expected_unet_module:
+        log_line(f"expected unet module: {expected_unet_module}")
+    model_index_patch = patch_model_index_unet_module(
+        model_subfolder_dir=model_subfolder_dir,
+        expected_unet_module=expected_unet_module,
+    )
+    custom_pipeline_override_dir = prepare_custom_pipeline_override(
+        custom_pipeline_file=custom_pipeline_file,
+        patch_details=model_index_patch,
+        output_glb_path=output_glb_path,
+    )
+    restore_multiview_override = apply_multiview_custom_pipeline_override(
+        custom_pipeline_override_dir=custom_pipeline_override_dir,
+    )
 
     from_pretrained_signature = inspect.signature(
         Hunyuan3DPaintPipeline.from_pretrained
@@ -187,21 +392,27 @@ def run_texgen(image_path: str, mesh_path: str, output_glb_path: str) -> Dict[st
         loader_kwargs["local_files_only"] = True
 
     try:
-        pipeline = Hunyuan3DPaintPipeline.from_pretrained(
-            str(model_path),
-            **loader_kwargs,
-        )
-    except TypeError:
-        if not local_files_only_used:
-            raise
-        local_files_only_used = False
-        log_line("local_files_only usado: no (unsupported by paint pipeline)")
-        pipeline = Hunyuan3DPaintPipeline.from_pretrained(
-            str(model_path),
-            subfolder=model_subfolder,
-        )
+        try:
+            pipeline = Hunyuan3DPaintPipeline.from_pretrained(
+                str(model_path),
+                **loader_kwargs,
+            )
+        except TypeError:
+            if not local_files_only_used:
+                raise
+            local_files_only_used = False
+            log_line("local_files_only usado: no (unsupported by paint pipeline)")
+            pipeline = Hunyuan3DPaintPipeline.from_pretrained(
+                str(model_path),
+                subfolder=model_subfolder,
+            )
+    finally:
+        if restore_multiview_override:
+            restore_multiview_override()
 
     log_line("paint pipeline init OK")
+    resolved_unet_class = resolve_pipeline_unet_class_name(pipeline)
+    log_line(f"unet class resolved: {resolved_unet_class}")
     if os.environ.get("HUNYUAN_TEXGEN_CPU_OFFLOAD", "").strip().lower() in (
         "1",
         "true",
@@ -220,6 +431,10 @@ def run_texgen(image_path: str, mesh_path: str, output_glb_path: str) -> Dict[st
         "model_path": str(model_path),
         "model_subfolder": model_subfolder,
         "local_files_only_used": "yes" if local_files_only_used else "no",
+        "expected_unet_module": model_index_patch["expected_unet_module"],
+        "configured_unet_module": model_index_patch["configured_unet_module"],
+        "model_index_patched": model_index_patch["model_index_patched"],
+        "resolved_unet_class": resolved_unet_class,
     }
 
 
@@ -298,6 +513,10 @@ def main() -> int:
         result["model_path"] = details["model_path"]
         result["model_subfolder"] = details["model_subfolder"]
         result["local_files_only_used"] = details["local_files_only_used"]
+        result["expected_unet_module"] = details["expected_unet_module"]
+        result["configured_unet_module"] = details["configured_unet_module"]
+        result["model_index_patched"] = details["model_index_patched"]
+        result["resolved_unet_class"] = details["resolved_unet_class"]
         write_metadata(metadata_path, result)
         print(json.dumps(result, ensure_ascii=False))
         return 0
