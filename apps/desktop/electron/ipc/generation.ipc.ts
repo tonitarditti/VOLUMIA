@@ -560,7 +560,12 @@ function sanitizeProjectId(projectId: string) {
 }
 
 function isPreset(value: unknown): value is GenerationPreset {
-  return value === "fast" || value === "balanced" || value === "quality";
+  return (
+    value === "fast" ||
+    value === "balanced" ||
+    value === "high" ||
+    value === "quality"
+  );
 }
 
 function isGenerationPipeline(value: unknown): value is GenerationPipeline {
@@ -1087,7 +1092,7 @@ function resolveSampleImagePath(scriptPath?: string) {
 }
 
 function mapPresetToQuality(preset: GenerationPreset): "fast" | "balanced" | "high" {
-  if (preset === "quality") {
+  if (preset === "quality" || preset === "high") {
     return "high";
   }
   return preset;

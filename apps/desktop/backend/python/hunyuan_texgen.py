@@ -8,17 +8,40 @@ import sys
 import time
 import traceback
 from pathlib import Path
+from contextlib import nullcontext
 from typing import Any, Callable, Dict, Optional
 
 
 DEFAULT_MODEL_ID = "tencent/Hunyuan3D-2"
 DEFAULT_MODEL_SUBFOLDER = "hunyuan3d-paint-v2-0-turbo"
-DEFAULT_RENDER_SIZE = 1024
-DEFAULT_TEXTURE_SIZE = 1024
+DEFAULT_RENDER_SIZE = 2048
+DEFAULT_TEXTURE_SIZE = 2048
+DEFAULT_VIEWS = 12
+DEFAULT_STEPS = 20
 DEFAULT_LOCAL_MODEL_ROOTS = [
     r"E:\AI\Hunyuan3D_models",
     r"E:\AI\Hunyuan3D-2",
 ]
+PRESET_CONFIGS: Dict[str, Dict[str, int]] = {
+    "fast": {
+        "texture_size": 1024,
+        "render_size": 1024,
+        "views": 8,
+        "steps": 15,
+    },
+    "balanced": {
+        "texture_size": 2048,
+        "render_size": 2048,
+        "views": 12,
+        "steps": 20,
+    },
+    "high": {
+        "texture_size": 4096,
+        "render_size": 4096,
+        "views": 20,
+        "steps": 30,
+    },
+}
 
 
 def log_line(message: str) -> None:
@@ -85,16 +108,41 @@ def parse_positive_int_env(name: str, fallback: int) -> int:
     return parsed if parsed > 0 else fallback
 
 
-def resolve_texgen_sizes() -> tuple[int, int]:
+def normalize_preset(raw_preset: str) -> str:
+    normalized = raw_preset.strip().lower()
+    if normalized == "quality":
+        return "high"
+    if normalized not in PRESET_CONFIGS:
+        return "balanced"
+    return normalized
+
+
+def resolve_texgen_runtime_config(raw_preset: str) -> Dict[str, int | str]:
+    preset = normalize_preset(raw_preset)
+    base = PRESET_CONFIGS[preset]
     render_size = parse_positive_int_env(
         "HUNYUAN_TEXGEN_RENDER_SIZE",
-        DEFAULT_RENDER_SIZE,
+        int(base["render_size"]),
     )
     texture_size = parse_positive_int_env(
         "HUNYUAN_TEXGEN_TEXTURE_SIZE",
-        render_size if render_size > 0 else DEFAULT_TEXTURE_SIZE,
+        int(base["texture_size"]),
     )
-    return render_size, texture_size
+    views = parse_positive_int_env(
+        "HUNYUAN_TEXGEN_VIEWS",
+        int(base["views"]),
+    )
+    steps = parse_positive_int_env(
+        "HUNYUAN_TEXGEN_STEPS",
+        int(base["steps"]),
+    )
+    return {
+        "preset": preset,
+        "render_size": render_size,
+        "texture_size": texture_size,
+        "views": views,
+        "steps": steps,
+    }
 
 
 def build_model_root_candidates() -> list[str]:
@@ -379,6 +427,126 @@ def apply_texgen_sizes(paint_pipeline: Any, render_size: int, texture_size: int)
         renderer.bake_unreliable_kernel_size = max(1, int((2 / 512) * max_dim))
 
 
+def build_camera_rig(view_count: int) -> tuple[list[int], list[int], list[float]]:
+    views = max(1, int(view_count))
+    if views <= 12:
+        step = 360.0 / float(views)
+        azims = [int(round((index * step) % 360)) for index in range(views)]
+        elevs = [0 for _ in range(views)]
+        weights = [1.0 if index == 0 else 0.7 for index in range(views)]
+        return elevs, azims, weights
+
+    horizon_count = min(12, views)
+    remaining = max(0, views - horizon_count)
+    top_count = remaining // 2
+    bottom_count = remaining - top_count
+
+    horizon_step = 360.0 / float(horizon_count)
+    horizon_azims = [
+        int(round((index * horizon_step) % 360)) for index in range(horizon_count)
+    ]
+
+    top_step = 360.0 / float(max(1, top_count))
+    top_azims = [int(round((index * top_step) % 360)) for index in range(top_count)]
+
+    bottom_step = 360.0 / float(max(1, bottom_count))
+    bottom_azims = [
+        int(round((index * bottom_step) % 360)) for index in range(bottom_count)
+    ]
+
+    elevs = [0 for _ in horizon_azims]
+    elevs.extend([90 for _ in top_azims])
+    elevs.extend([-90 for _ in bottom_azims])
+
+    azims = horizon_azims + top_azims + bottom_azims
+    weights = [1.0 if index == 0 else 0.7 for index in range(len(horizon_azims))]
+    weights.extend([0.25 for _ in top_azims])
+    weights.extend([0.25 for _ in bottom_azims])
+    return elevs, azims, weights
+
+
+def apply_texgen_views(paint_pipeline: Any, view_count: int) -> None:
+    if not hasattr(paint_pipeline, "config"):
+        return
+    camera_elevs, camera_azims, camera_weights = build_camera_rig(view_count)
+    paint_pipeline.config.candidate_camera_elevs = camera_elevs
+    paint_pipeline.config.candidate_camera_azims = camera_azims
+    paint_pipeline.config.candidate_view_weights = camera_weights
+
+
+def patch_pipeline_steps(target_pipeline: Any, steps: int, label: str) -> bool:
+    if target_pipeline is None:
+        return False
+
+    pipeline_cls = target_pipeline.__class__
+    original_call = getattr(pipeline_cls, "__call__", None)
+    if not callable(original_call):
+        return False
+
+    if getattr(pipeline_cls, "_volumia_steps_patched", False):
+        setattr(pipeline_cls, "_volumia_num_inference_steps", int(steps))
+        return True
+
+    setattr(pipeline_cls, "_volumia_num_inference_steps", int(steps))
+
+    def patched_call(self: Any, *args: Any, **kwargs: Any) -> Any:
+        forced_steps = int(
+            getattr(self.__class__, "_volumia_num_inference_steps", int(steps))
+        )
+        kwargs["num_inference_steps"] = forced_steps
+        return original_call(self, *args, **kwargs)
+
+    setattr(pipeline_cls, "__call__", patched_call)
+    setattr(pipeline_cls, "_volumia_steps_patched", True)
+    log_line(f"patched num_inference_steps for {label}: {steps}")
+    return True
+
+
+def apply_texgen_steps(paint_pipeline: Any, steps: int) -> Dict[str, bool]:
+    delight_pipeline = getattr(
+        paint_pipeline.models.get("delight_model"),
+        "pipeline",
+        None,
+    )
+    multiview_pipeline = getattr(
+        paint_pipeline.models.get("multiview_model"),
+        "pipeline",
+        None,
+    )
+    return {
+        "delight": patch_pipeline_steps(
+            delight_pipeline,
+            steps,
+            "delight pipeline",
+        ),
+        "multiview": patch_pipeline_steps(
+            multiview_pipeline,
+            steps,
+            "multiview pipeline",
+        ),
+    }
+
+
+def enable_xformers_if_available(paint_pipeline: Any) -> Dict[str, str]:
+    statuses: Dict[str, str] = {}
+    for model_name in ("delight_model", "multiview_model"):
+        model = paint_pipeline.models.get(model_name)
+        pipeline_obj = getattr(model, "pipeline", None)
+        if pipeline_obj is None:
+            statuses[model_name] = "pipeline-missing"
+            continue
+        method = getattr(pipeline_obj, "enable_xformers_memory_efficient_attention", None)
+        if not callable(method):
+            statuses[model_name] = "not-supported"
+            continue
+        try:
+            method()
+            statuses[model_name] = "enabled"
+        except Exception as exc:  # noqa: BLE001
+            statuses[model_name] = f"failed:{exc}"
+    return statuses
+
+
 def export_result_mesh(result_mesh: Any, output_glb_path: str) -> None:
     if hasattr(result_mesh, "export"):
         result_mesh.export(output_glb_path)
@@ -397,8 +565,10 @@ def run_texgen(
     mesh_path: str,
     output_glb_path: str,
     timeout_ms: int,
+    preset: str,
     repo_root: Optional[str],
 ) -> Dict[str, Any]:
+    log_line("texgen started")
     env_model_path = os.environ.get("HUNYUAN_TEXGEN_MODEL_PATH", "").strip()
     log_line(f"env model path: {env_model_path or '<empty>'}")
     if not env_model_path:
@@ -431,8 +601,17 @@ def run_texgen(
     pipeline_class = (
         f"{Hunyuan3DPaintPipeline.__module__}.{Hunyuan3DPaintPipeline.__name__}"
     )
+    runtime_config = resolve_texgen_runtime_config(preset)
+    resolved_preset = str(runtime_config["preset"])
     log_line("paint pipeline import OK")
     log_line(f"paint pipeline class: {pipeline_class}")
+    log_line(
+        "texgen preset resolved: "
+        f"{resolved_preset} "
+        f"(render_size={runtime_config['render_size']} "
+        f"texture_size={runtime_config['texture_size']} "
+        f"views={runtime_config['views']} steps={runtime_config['steps']})"
+    )
 
     model_subfolder = resolve_model_subfolder()
     model_root = resolve_local_model_root(model_subfolder)
@@ -501,11 +680,29 @@ def run_texgen(
     log_line("paint pipeline init OK")
     resolved_unet_class = resolve_pipeline_unet_class_name(pipeline)
     log_line(f"unet class resolved: {resolved_unet_class}")
-    render_size, texture_size = resolve_texgen_sizes()
+    render_size = int(runtime_config["render_size"])
+    texture_size = int(runtime_config["texture_size"])
+    views = int(runtime_config["views"])
+    steps = int(runtime_config["steps"])
     apply_texgen_sizes(pipeline, render_size, texture_size)
+    apply_texgen_views(pipeline, views)
+    step_patch_status = apply_texgen_steps(pipeline, steps)
+    xformers_status = enable_xformers_if_available(pipeline)
     log_line(
-        "texgen sizes configured: "
-        f"render_size={render_size} texture_size={texture_size}"
+        "texgen runtime configured: "
+        f"render_size={render_size} texture_size={texture_size} "
+        f"views={views} steps={steps} merge_method={getattr(pipeline.config, 'merge_method', 'unknown')}"
+    )
+    log_line(
+        "xformers status: "
+        + ", ".join(f"{name}={status}" for name, status in xformers_status.items())
+    )
+    log_line(
+        "step override status: "
+        + ", ".join(
+            f"{name}={'ok' if status else 'skipped'}"
+            for name, status in step_patch_status.items()
+        )
     )
 
     if os.environ.get("HUNYUAN_TEXGEN_CPU_OFFLOAD", "").strip().lower() in (
@@ -524,16 +721,29 @@ def run_texgen(
     log_line("image load OK")
 
     log_line("texgen inference started")
-    textured_mesh = pipeline(mesh, image=image)
+    use_amp = torch.cuda.is_available()
+    if use_amp:
+        log_line("amp autocast: enabled")
+    else:
+        log_line("amp autocast: skipped (cuda unavailable)")
+    autocast_context = (
+        torch.cuda.amp.autocast(dtype=torch.float16)
+        if use_amp
+        else nullcontext()
+    )
+    with torch.inference_mode(), autocast_context:
+        textured_mesh = pipeline(mesh, image=image)
     log_line("texgen inference finished")
 
     log_line("export started")
     export_result_mesh(textured_mesh, output_glb_path)
     log_line("export finished")
+    log_line("texgen completed")
 
     return {
         "model_root": str(model_root),
         "model_subfolder": model_subfolder,
+        "preset": resolved_preset,
         "pipeline_class": pipeline_class,
         "local_files_only_used": "yes" if local_files_only_used else "no",
         "expected_unet_module": patch_details["expected_unet_module"],
@@ -542,6 +752,11 @@ def run_texgen(
         "resolved_unet_class": resolved_unet_class,
         "render_size": render_size,
         "texture_size": texture_size,
+        "views": views,
+        "steps": steps,
+        "amp_enabled": use_amp,
+        "xformers_status": xformers_status,
+        "step_patch_status": step_patch_status,
         "timeout_ms": timeout_ms,
     }
 
@@ -567,6 +782,11 @@ def parse_args() -> argparse.Namespace:
         "--repo-root",
         default="",
         help="Optional local Hunyuan repo root path",
+    )
+    parser.add_argument(
+        "--preset",
+        default="balanced",
+        help="Texgen preset: fast | balanced | high",
     )
     return parser.parse_args()
 
@@ -604,6 +824,7 @@ def main() -> int:
     metadata_path = output_paths["metadata_path"]
     timeout_ms = max(0, int(args.timeout_ms))
     repo_root = args.repo_root.strip() if isinstance(args.repo_root, str) else ""
+    requested_preset = args.preset.strip() if isinstance(args.preset, str) else "balanced"
 
     result = build_result_payload(
         shape_glb_path=shape_glb_path,
@@ -611,6 +832,16 @@ def main() -> int:
         texture_status="failed",
         error=None,
         timeout_ms=timeout_ms,
+    )
+    initial_runtime_config = resolve_texgen_runtime_config(requested_preset)
+    result.update(
+        {
+            "preset": initial_runtime_config["preset"],
+            "render_size": initial_runtime_config["render_size"],
+            "texture_size": initial_runtime_config["texture_size"],
+            "views": initial_runtime_config["views"],
+            "steps": initial_runtime_config["steps"],
+        }
     )
 
     started_at = time.perf_counter()
@@ -627,6 +858,7 @@ def main() -> int:
             mesh_path=shape_glb_path,
             output_glb_path=textured_glb_path,
             timeout_ms=timeout_ms,
+            preset=requested_preset,
             repo_root=repo_root or None,
         )
 
@@ -647,6 +879,7 @@ def main() -> int:
                 "model_root": details["model_root"],
                 "pipeline_class": details["pipeline_class"],
                 "model_subfolder": details["model_subfolder"],
+                "preset": details["preset"],
                 "local_files_only_used": details["local_files_only_used"],
                 "expected_unet_module": details["expected_unet_module"],
                 "configured_unet_module": details["configured_unet_module"],
@@ -654,6 +887,11 @@ def main() -> int:
                 "resolved_unet_class": details["resolved_unet_class"],
                 "render_size": details["render_size"],
                 "texture_size": details["texture_size"],
+                "views": details["views"],
+                "steps": details["steps"],
+                "amp_enabled": details["amp_enabled"],
+                "xformers_status": details["xformers_status"],
+                "step_patch_status": details["step_patch_status"],
             }
         )
         exit_code = 0

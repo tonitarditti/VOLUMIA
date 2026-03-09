@@ -228,6 +228,7 @@ export type ComfyRunWorkflowPayload = {
   imagePath?: string;
   imageBase64?: string;
   projectId?: string;
+  preset?: GenerationPreset;
 };
 
 export type ComfyRunWorkflowResult = {
@@ -279,6 +280,7 @@ export type ComfySubmitJobPayload = {
   imagePath?: string;
   imageBase64?: string;
   projectId?: string;
+  preset?: GenerationPreset;
 };
 
 export type ComfySubmitJobResult = {
@@ -346,7 +348,7 @@ export type ModelMetadata = {
   lastAssistantSummary: string;
 };
 
-export type GenerationPreset = "fast" | "balanced" | "quality";
+export type GenerationPreset = "fast" | "balanced" | "high" | "quality";
 export type GenerationMode = "auto" | "neural" | "architectural";
 export type GenerationPipeline = "depth_glb" | "gen_skp";
 export type GenerationSkpQuality = "fast" | "high";

@@ -310,7 +310,7 @@ export function ModePanel({
               >
                 <option value="fast">Fast</option>
                 <option value="balanced">Balanced</option>
-                <option value="quality">Quality</option>
+                <option value="high">High</option>
               </select>
             </ControlCard>
 

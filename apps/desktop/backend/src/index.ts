@@ -44,17 +44,17 @@ export async function getBackendStatus(): Promise<BackendStatus> {
   return await instance.getStatus();
 }
 
-export async function runDefaultWorkflow(input?: { imagePath?: string; imageBase64?: string }) {
+export async function runDefaultWorkflow(input?: { imagePath?: string; imageBase64?: string; preset?: "fast" | "balanced" | "high" | "quality" }) {
   const instance = getSupervisor();
   return await instance.runDefaultWorkflow(input);
 }
 
-export async function runWorkflow(workflowName?: string, input?: { imagePath?: string; imageBase64?: string }) {
+export async function runWorkflow(workflowName?: string, input?: { imagePath?: string; imageBase64?: string; preset?: "fast" | "balanced" | "high" | "quality" }) {
   const instance = getSupervisor();
   return await instance.runWorkflow(workflowName, input);
 }
 
-export async function submitWorkflow(workflowName?: string, input?: { imagePath?: string; imageBase64?: string; projectId?: string }) {
+export async function submitWorkflow(workflowName?: string, input?: { imagePath?: string; imageBase64?: string; projectId?: string; preset?: "fast" | "balanced" | "high" | "quality" }) {
   const instance = getSupervisor();
   return await instance.submitWorkflow(workflowName, input);
 }

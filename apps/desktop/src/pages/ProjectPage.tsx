@@ -84,6 +84,18 @@ function formatAutoProfileLabel(profile: AutoProfile) {
   return "AUTO";
 }
 
+function normalizeGenerationPreset(
+  value: GenerationPreset | undefined,
+): GenerationPreset {
+  if (value === "fast" || value === "balanced" || value === "high") {
+    return value;
+  }
+  if (value === "quality") {
+    return "high";
+  }
+  return "balanced";
+}
+
 function resolveDefaultMultiviewPreset(
   profile: AutoProfile | undefined,
 ): MultiviewPreset {
@@ -310,7 +322,7 @@ export function ProjectPage() {
     }
 
     setSelectedImages(projectModelRef.current.sourceImages);
-    setPreset(projectModelRef.current.preset ?? "balanced");
+    setPreset(normalizeGenerationPreset(projectModelRef.current.preset));
     setGenerationStage("idle");
     setGenerationPercent(0);
     setGenerationMessage("Selecciona imagenes para iniciar.");
@@ -542,7 +554,8 @@ export function ProjectPage() {
 
     if (generationJob.status === "result") {
       const pendingRun = pendingGenerationRef.current;
-      const glbPath = generationJob.outputs?.glbPath;
+      const glbPath =
+        generationJob.outputs?.texturedGlbPath ?? generationJob.outputs?.glbPath;
 
       if (!glbPath) {
         handleGenerationError({
@@ -608,6 +621,7 @@ export function ProjectPage() {
           workflowId: DEFAULT_COMFY_WORKFLOW_ID,
           imagePath: payload.imagePath,
           projectId: currentProjectId,
+          preset,
         });
 
         pendingGenerationRef.current = {

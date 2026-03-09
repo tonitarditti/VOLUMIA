@@ -19,7 +19,13 @@ export type GenerationJobStoreState = {
   message?: string;
   startedAt?: number;
   finishedAt?: number;
-  outputs?: { glbPath?: string; previewImages?: string[]; raw?: unknown };
+  outputs?: {
+    glbPath?: string;
+    texturedGlbPath?: string;
+    textureStatus?: "ready" | "failed" | "skipped";
+    previewImages?: string[];
+    raw?: unknown;
+  };
   error?: { code?: string; message: string };
 };
 

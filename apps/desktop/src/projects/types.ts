@@ -14,7 +14,7 @@ export type ModelMetadata = {
   lastAssistantSummary: string;
 };
 
-export type GenerationPreset = "fast" | "balanced" | "quality";
+export type GenerationPreset = "fast" | "balanced" | "high" | "quality";
 export type GenerationMode = "auto" | "neural" | "architectural";
 
 export type ProjectModel = {
@@ -63,7 +63,12 @@ const isChatRole = (value: unknown): value is ChatRole => {
 };
 
 const isGenerationPreset = (value: unknown): value is GenerationPreset => {
-  return value === "fast" || value === "balanced" || value === "quality";
+  return (
+    value === "fast" ||
+    value === "balanced" ||
+    value === "high" ||
+    value === "quality"
+  );
 };
 
 const isGenerationMode = (value: unknown): value is GenerationMode => {

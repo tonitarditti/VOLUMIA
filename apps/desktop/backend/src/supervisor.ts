@@ -175,6 +175,7 @@ export type ImportWorkflowResult = {
 type RunWorkflowInput = {
   imagePath?: string;
   imageBase64?: string;
+  preset?: "fast" | "balanced" | "high" | "quality";
 };
 
 type PreparedWorkflowSubmission = {
@@ -190,6 +191,7 @@ type PreparedWorkflowSubmission = {
 type WorkflowJobRecord = ComfyWorkflowJobStatus & {
   projectId?: string;
   inputImagePath?: string;
+  texgenPreset?: "fast" | "balanced" | "high";
   outputDir: string;
   outputBefore: FileSnapshot[];
   history?: unknown;
@@ -251,6 +253,19 @@ function parsePositiveIntEnv(name: string, fallback: number) {
     return fallback;
   }
   return parsed;
+}
+
+function normalizeTexgenPreset(
+  value: string | undefined,
+): "fast" | "balanced" | "high" {
+  const normalized = (value ?? "").trim().toLowerCase();
+  if (normalized === "fast") {
+    return "fast";
+  }
+  if (normalized === "high" || normalized === "quality") {
+    return "high";
+  }
+  return "balanced";
 }
 
 function toLegacyState(state: ComfySupervisorState): BackendServiceState {
@@ -516,6 +531,7 @@ const PREFERRED_TEXGEN_PYTHON_EXE = "F:\\MINICONDA\\envs\\volumia\\python.exe";
 const DEFAULT_TEXGEN_MODEL_ROOT = "E:\\AI\\Hunyuan3D_models";
 const DEFAULT_HUNYUAN_REPO_ROOT = "E:\\AI\\Hunyuan3D-2";
 const DEFAULT_TEXGEN_TIMEOUT_MS = 20 * 60 * 1_000;
+const DEFAULT_MESH_OPTIMIZE_TIMEOUT_MS = 8 * 60 * 1_000;
 const DEFAULT_WORKFLOW_WAIT_TIMEOUT_MS = 35 * 60 * 1_000;
 
 export class BackendSupervisor {
@@ -1236,10 +1252,25 @@ export class BackendSupervisor {
     return path.join(getBackendRootDir(), "python", "hunyuan_texgen.py");
   }
 
+  private resolveMeshOptimizeScriptPath() {
+    return path.join(
+      getBackendRootDir(),
+      "python",
+      "hunyuan_mesh_optimize.py",
+    );
+  }
+
   private resolveTexgenTimeoutMs() {
     return parsePositiveIntEnv(
       "VOLUMIA_TEXGEN_TIMEOUT_MS",
       DEFAULT_TEXGEN_TIMEOUT_MS,
+    );
+  }
+
+  private resolveMeshOptimizeTimeoutMs() {
+    return parsePositiveIntEnv(
+      "VOLUMIA_MESH_OPTIMIZE_TIMEOUT_MS",
+      DEFAULT_MESH_OPTIMIZE_TIMEOUT_MS,
     );
   }
 
@@ -1363,6 +1394,7 @@ export class BackendSupervisor {
     stageLabel: string,
     timeoutMs: number,
     envOverrides?: Record<string, string>,
+    processName = "texgen",
   ) {
     const runner = this.resolveTexgenRunner(scriptPath, scriptArgs);
     const commandLine = [runner.command, ...runner.args]
@@ -1433,9 +1465,9 @@ export class BackendSupervisor {
       });
 
       this.appendComfyLog(
-        `[${stageLabel}] Launching texgen with ${runner.details}`,
+        `[${stageLabel}] Launching ${processName} with ${runner.details}`,
       );
-      this.appendComfyLog(`[${stageLabel}] texgen command: ${commandLine}`);
+      this.appendComfyLog(`[${stageLabel}] ${processName} command: ${commandLine}`);
     });
   }
 
@@ -1490,18 +1522,132 @@ export class BackendSupervisor {
     const runDir = path.dirname(meshPath);
     const stageLabel = `texgen:${job.promptId}`;
     const logPath = path.join(getLogsDir(), `${stageLabel}.log`);
+    const meshOptimizeLogPath = path.join(
+      getLogsDir(),
+      `${stageLabel}.mesh-optimize.log`,
+    );
+    const fallbackTexturedGlbPath = path.join(runDir, "textured.glb");
+    const scriptMetadataPath = path.join(runDir, "texture-metadata.json");
+    const meshOptimizeScriptPath = this.resolveMeshOptimizeScriptPath();
+    const meshOptimizeTimeoutMs = this.resolveMeshOptimizeTimeoutMs();
+    const meshOptimizeMetadataPath = path.join(
+      runDir,
+      "mesh-optimize-metadata.json",
+    );
+    const meshOptimizeOutputPath = path.join(runDir, "optimized_mesh.obj");
     const dependencies = this.resolveTexgenDependencies();
     const texgenTimeoutMs = this.resolveTexgenTimeoutMs();
     const texgenModelRoot = this.resolveTexgenModelRoot();
     const texgenRepoRoot = this.resolveTexgenRepoRoot(
       dependencies.validModuleRoots,
     );
+    const texgenPreset = normalizeTexgenPreset(job.texgenPreset);
+    let texgenMeshPath = meshPath;
+    let meshOptimizationStatus: "skipped" | "completed" | "failed" = "skipped";
+    let meshOptimizationError: string | null = null;
     const nowIso = new Date().toISOString();
     const inputImagePath = job.inputImagePath?.trim() ?? "";
     this.appendComfyLog(`[${stageLabel}] shape output path: ${meshPath}`);
     this.appendComfyLog(
-      `[${stageLabel}] texgen config: timeout_ms=${texgenTimeoutMs} model_root=${texgenModelRoot} repo_root=${texgenRepoRoot || "<none>"}`,
+      `[${stageLabel}] texgen config: preset=${texgenPreset} timeout_ms=${texgenTimeoutMs} model_root=${texgenModelRoot} repo_root=${texgenRepoRoot || "<none>"} mesh_optimize_timeout_ms=${meshOptimizeTimeoutMs}`,
     );
+
+    if (fs.existsSync(fallbackTexturedGlbPath)) {
+      let cachePromptMatches = true;
+      let cacheStatusAllowsReuse = true;
+      if (fs.existsSync(scriptMetadataPath)) {
+        try {
+          const cachedMetadata = JSON.parse(
+            fs.readFileSync(scriptMetadataPath, "utf8"),
+          ) as Record<string, unknown>;
+          const metadataPromptId =
+            typeof cachedMetadata.promptId === "string"
+              ? cachedMetadata.promptId.trim()
+              : "";
+          const metadataTextureStatus =
+            typeof cachedMetadata.texture_status === "string"
+              ? cachedMetadata.texture_status.trim().toLowerCase()
+              : typeof cachedMetadata.textureStatus === "string"
+                ? cachedMetadata.textureStatus.trim().toLowerCase()
+                : "";
+          if (metadataPromptId.length > 0 && metadataPromptId !== job.promptId) {
+            cachePromptMatches = false;
+          }
+          if (
+            metadataTextureStatus.length > 0 &&
+            metadataTextureStatus !== "completed" &&
+            metadataTextureStatus !== "ready"
+          ) {
+            cacheStatusAllowsReuse = false;
+          }
+        } catch {
+          // No-op by design.
+        }
+      }
+      const cachedValidation = validateTexturedGlb(fallbackTexturedGlbPath);
+      if (cachePromptMatches && cacheStatusAllowsReuse && cachedValidation.ok) {
+        const finalProjectGlbPath = this.promoteTexturedGlbAsLatest(
+          meshPath,
+          fallbackTexturedGlbPath,
+          stageLabel,
+        );
+        const metadataPath = this.writeTextureMetadata(runDir, {
+          createdAt: nowIso,
+          promptId: job.promptId,
+          meshPath,
+          texturedGlbPath: finalProjectGlbPath,
+          textureStatus: "ready",
+          texture_status: "completed",
+          shape_glb_path: meshPath,
+          textured_glb_path: finalProjectGlbPath,
+          error: null,
+          texgen_started_at: null,
+          texgen_ended_at: null,
+          duration_ms: 0,
+          timeout_ms: texgenTimeoutMs,
+          texgen_model_root: texgenModelRoot,
+          texgen_repo_root: texgenRepoRoot || null,
+          texgen_preset: texgenPreset,
+          texgen_cache_hit: true,
+          textureDependencies: dependencies,
+          textureValidation: cachedValidation,
+        });
+        this.appendComfyLog(
+          `[${stageLabel}] texgen cache hit: ${fallbackTexturedGlbPath}`,
+        );
+        this.appendComfyLog(`[${stageLabel}] texgen completed (cache hit)`);
+        this.appendComfyLog(`[${stageLabel}] textured glb path: ${finalProjectGlbPath}`);
+        this.appendComfyLog(`[${stageLabel}] texture_status=completed`);
+        return {
+          glbPath: finalProjectGlbPath,
+          meshPath,
+          texturedGlbPath: finalProjectGlbPath,
+          textureStatus: "ready" as TextureStageStatus,
+          textureErrorLogPath: undefined,
+          textureMetadataPath: metadataPath,
+          textureDependencies: dependencies,
+          textureValidation: cachedValidation,
+        };
+      }
+      if (!cachePromptMatches) {
+        this.appendComfyLog(
+          `[${stageLabel}] texgen cache miss: existing textured.glb belongs to a different promptId`,
+          "warn",
+        );
+      }
+      if (!cacheStatusAllowsReuse) {
+        this.appendComfyLog(
+          `[${stageLabel}] texgen cache miss: previous texture_status is not completed`,
+          "warn",
+        );
+      }
+      if (!cachedValidation.ok) {
+        this.appendComfyLog(
+          `[${stageLabel}] texgen cache miss: cached textured.glb failed validation (${cachedValidation.reason ?? "unknown reason"})`,
+          "warn",
+        );
+      }
+    }
 
     if (!inputImagePath || !fs.existsSync(inputImagePath)) {
       const metadataPath = this.writeTextureMetadata(runDir, {
@@ -1521,6 +1667,7 @@ export class BackendSupervisor {
         timeout_ms: texgenTimeoutMs,
         texgen_model_root: texgenModelRoot,
         texgen_repo_root: texgenRepoRoot || null,
+        texgen_preset: texgenPreset,
         textureDependencies: dependencies,
       });
       this.appendComfyLog(
@@ -1540,6 +1687,141 @@ export class BackendSupervisor {
         textureValidation: undefined,
       };
     }
+
+    if (!fs.existsSync(meshOptimizeScriptPath)) {
+      this.appendComfyLog(
+        `[${stageLabel}] mesh optimize skipped: script not found (${meshOptimizeScriptPath})`,
+        "warn",
+      );
+    } else {
+      const meshOptimizeArgs = [
+        "--mesh",
+        meshPath,
+        "--output",
+        meshOptimizeOutputPath,
+        "--result-json",
+        meshOptimizeMetadataPath,
+        "--decimate-target",
+        "20000",
+        "--quad-target",
+        "8000",
+        "--smooth-iterations",
+        "3",
+      ];
+      const optimizeStartedAtMs = Date.now();
+      const optimizeStartedAtIso = new Date(optimizeStartedAtMs).toISOString();
+      this.appendComfyLog(
+        `[${stageLabel}] mesh optimize started (target_decimate=20000 target_quad=8000 smooth=3)`,
+      );
+      let optimizeProcessResult: {
+        exitCode: number;
+        stdout: string;
+        stderr: string;
+        runnerDetails: string;
+        timedOut: boolean;
+      } | null = null;
+      try {
+        optimizeProcessResult = await this.runTexgenScriptProcess(
+          meshOptimizeScriptPath,
+          meshOptimizeArgs,
+          stageLabel,
+          meshOptimizeTimeoutMs,
+          undefined,
+          "mesh-optimize",
+        );
+      } catch (error) {
+        const reason = `mesh optimize process error: ${errorMessage(error)}`;
+        meshOptimizationStatus = "failed";
+        meshOptimizationError = reason;
+        this.appendComfyLog(`[${stageLabel}] ${reason}`, "warn");
+      }
+
+      if (optimizeProcessResult) {
+        const optimizeEndedAtMs = Date.now();
+        const optimizeEndedAtIso = new Date(optimizeEndedAtMs).toISOString();
+        const optimizeDurationMs = optimizeEndedAtMs - optimizeStartedAtMs;
+        const optimizeLogLines = [
+          `stage=${stageLabel}`,
+          `runner=${optimizeProcessResult.runnerDetails}`,
+          `exit_code=${optimizeProcessResult.exitCode}`,
+          `timed_out=${String(optimizeProcessResult.timedOut)}`,
+          `started_at=${optimizeStartedAtIso}`,
+          `ended_at=${optimizeEndedAtIso}`,
+          `duration_ms=${optimizeDurationMs}`,
+          `timeout_ms=${meshOptimizeTimeoutMs}`,
+          "",
+          "[stdout]",
+          optimizeProcessResult.stdout.trim(),
+          "",
+          "[stderr]",
+          optimizeProcessResult.stderr.trim(),
+          "",
+        ];
+        fs.writeFileSync(
+          meshOptimizeLogPath,
+          `${optimizeLogLines.join("\n")}\n`,
+          "utf8",
+        );
+
+        let optimizeJson: Record<string, unknown> | null = null;
+        if (fs.existsSync(meshOptimizeMetadataPath)) {
+          try {
+            const parsed = JSON.parse(
+              fs.readFileSync(meshOptimizeMetadataPath, "utf8"),
+            ) as unknown;
+            if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+              optimizeJson = parsed as Record<string, unknown>;
+            }
+          } catch {
+            // No-op by design.
+          }
+        }
+
+        const optimizedPathFromJson =
+          typeof optimizeJson?.output_mesh_path === "string"
+            ? optimizeJson.output_mesh_path.trim()
+            : "";
+        const resolvedOptimizedPath =
+          optimizedPathFromJson.length > 0
+            ? path.resolve(optimizedPathFromJson)
+            : meshOptimizeOutputPath;
+        const optimizeCompleted =
+          optimizeProcessResult.exitCode === 0 &&
+          !optimizeProcessResult.timedOut &&
+          fs.existsSync(resolvedOptimizedPath) &&
+          fs.statSync(resolvedOptimizedPath).size > 0;
+
+        if (optimizeCompleted) {
+          meshOptimizationStatus = "completed";
+          texgenMeshPath = resolvedOptimizedPath;
+          const faceCountIn =
+            typeof optimizeJson?.input_face_count === "number"
+              ? optimizeJson.input_face_count
+              : "unknown";
+          const faceCountOut =
+            typeof optimizeJson?.output_face_count === "number"
+              ? optimizeJson.output_face_count
+              : "unknown";
+          this.appendComfyLog(
+            `[${stageLabel}] mesh optimize completed: ${resolvedOptimizedPath} (faces_in=${String(faceCountIn)} faces_out=${String(faceCountOut)})`,
+          );
+        } else {
+          meshOptimizationStatus = "failed";
+          meshOptimizationError =
+            typeof optimizeJson?.error === "string"
+              ? optimizeJson.error
+              : `mesh optimize failed (exit=${optimizeProcessResult.exitCode}, timed_out=${String(optimizeProcessResult.timedOut)})`;
+          this.appendComfyLog(
+            `[${stageLabel}] ${meshOptimizationError}. fallback mesh used: ${meshPath}`,
+            "warn",
+          );
+        }
+      }
+    }
+
+    this.appendComfyLog(
+      `[${stageLabel}] texgen mesh input path: ${texgenMeshPath} (mesh_optimization_status=${meshOptimizationStatus})`,
+    );
 
     if (dependencies.validModuleRoots.length === 0) {
       const reason = `Texgen dependencies missing: ${dependencies.missingPaths.join(" | ")}`;
@@ -1561,6 +1843,7 @@ export class BackendSupervisor {
         timeout_ms: texgenTimeoutMs,
         texgen_model_root: texgenModelRoot,
         texgen_repo_root: texgenRepoRoot || null,
+        texgen_preset: texgenPreset,
         textureDependencies: dependencies,
         textureErrorLogPath: logPath,
       });
@@ -1646,6 +1929,7 @@ export class BackendSupervisor {
         timeout_ms: texgenTimeoutMs,
         texgen_model_root: texgenModelRoot,
         texgen_repo_root: texgenRepoRoot || null,
+        texgen_preset: texgenPreset,
         textureDependencies: dependencies,
         textureErrorLogPath: logPath,
       });
@@ -1685,6 +1969,7 @@ export class BackendSupervisor {
         timeout_ms: texgenTimeoutMs,
         texgen_model_root: texgenModelRoot,
         texgen_repo_root: texgenRepoRoot || null,
+        texgen_preset: texgenPreset,
         textureDependencies: dependencies,
         textureErrorLogPath: logPath,
       });
@@ -1703,17 +1988,17 @@ export class BackendSupervisor {
       };
     }
 
-    const fallbackTexturedGlbPath = path.join(runDir, "textured.glb");
-    const scriptMetadataPath = path.join(runDir, "texture-metadata.json");
     const scriptArgs: string[] = [
       "--mesh",
-      meshPath,
+      texgenMeshPath,
       "--image",
       inputImagePath,
       "--output-dir",
       runDir,
       "--timeout-ms",
       String(texgenTimeoutMs),
+      "--preset",
+      texgenPreset,
     ];
     if (texgenRepoRoot) {
       scriptArgs.push("--repo-root", texgenRepoRoot);
@@ -1723,7 +2008,7 @@ export class BackendSupervisor {
     const texgenStartedAtIso = new Date(texgenStartedAtMs).toISOString();
     this.appendComfyLog(`[${stageLabel}] texgen started`);
     this.appendComfyLog(
-      `[${stageLabel}] texgen started_at=${texgenStartedAtIso} timeout_ms=${texgenTimeoutMs}`,
+      `[${stageLabel}] texgen started_at=${texgenStartedAtIso} preset=${texgenPreset} timeout_ms=${texgenTimeoutMs}`,
     );
     const processResult = await this.runTexgenScriptProcess(
       scriptPath,
@@ -1824,6 +2109,16 @@ export class BackendSupervisor {
         timeout_ms: texgenTimeoutMs,
         texgen_model_root: texgenModelRoot,
         texgen_repo_root: texgenRepoRoot || null,
+        texgen_preset: texgenPreset,
+        mesh_optimization_status: meshOptimizationStatus,
+        mesh_optimization_error: meshOptimizationError,
+        optimized_mesh_path: texgenMeshPath !== meshPath ? texgenMeshPath : null,
+        mesh_optimization_metadata_path: fs.existsSync(meshOptimizeMetadataPath)
+          ? meshOptimizeMetadataPath
+          : null,
+        mesh_optimization_log_path: fs.existsSync(meshOptimizeLogPath)
+          ? meshOptimizeLogPath
+          : null,
         textureDependencies: dependencies,
         textureErrorLogPath: logPath,
         texgenResult: texgenJson,
@@ -1863,6 +2158,16 @@ export class BackendSupervisor {
         timeout_ms: texgenTimeoutMs,
         texgen_model_root: texgenModelRoot,
         texgen_repo_root: texgenRepoRoot || null,
+        texgen_preset: texgenPreset,
+        mesh_optimization_status: meshOptimizationStatus,
+        mesh_optimization_error: meshOptimizationError,
+        optimized_mesh_path: texgenMeshPath !== meshPath ? texgenMeshPath : null,
+        mesh_optimization_metadata_path: fs.existsSync(meshOptimizeMetadataPath)
+          ? meshOptimizeMetadataPath
+          : null,
+        mesh_optimization_log_path: fs.existsSync(meshOptimizeLogPath)
+          ? meshOptimizeLogPath
+          : null,
         textureDependencies: dependencies,
         textureValidation: validation,
         textureErrorLogPath: logPath,
@@ -1905,6 +2210,16 @@ export class BackendSupervisor {
       timeout_ms: texgenTimeoutMs,
       texgen_model_root: texgenModelRoot,
       texgen_repo_root: texgenRepoRoot || null,
+      texgen_preset: texgenPreset,
+      mesh_optimization_status: meshOptimizationStatus,
+      mesh_optimization_error: meshOptimizationError,
+      optimized_mesh_path: texgenMeshPath !== meshPath ? texgenMeshPath : null,
+      mesh_optimization_metadata_path: fs.existsSync(meshOptimizeMetadataPath)
+        ? meshOptimizeMetadataPath
+        : null,
+      mesh_optimization_log_path: fs.existsSync(meshOptimizeLogPath)
+        ? meshOptimizeLogPath
+        : null,
       textureDependencies: dependencies,
       textureValidation: validation,
       textureErrorLogPath: logPath,
@@ -2446,6 +2761,7 @@ export class BackendSupervisor {
       jobId: queue.promptId,
       promptId: queue.promptId,
       projectId: input?.projectId,
+      texgenPreset: normalizeTexgenPreset(input?.preset),
       workflowName: prepared.workflowName,
       workflowPath: prepared.workflowPath,
       state: "QUEUED",

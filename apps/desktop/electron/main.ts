@@ -57,7 +57,7 @@ type BackendRuntimeModule = {
   getComfyLogs: (limit?: number) => Promise<string[]>;
   runWorkflow: (
     workflowName?: string,
-    payload?: { imagePath?: string; imageBase64?: string; projectId?: string }
+    payload?: { imagePath?: string; imageBase64?: string; projectId?: string; preset?: "fast" | "balanced" | "high" | "quality" }
   ) => Promise<{
     promptId: string;
     workflowName: string;
@@ -67,7 +67,7 @@ type BackendRuntimeModule = {
   }>;
   submitWorkflow: (
     workflowName?: string,
-    payload?: { imagePath?: string; imageBase64?: string; projectId?: string }
+    payload?: { imagePath?: string; imageBase64?: string; projectId?: string; preset?: "fast" | "balanced" | "high" | "quality" }
   ) => Promise<ComfySubmitJobResult>;
   getWorkflowJobStatus: (jobId: string) => Promise<ComfyJobStatusResponse>;
   cancelWorkflowJob: (jobId: string) => Promise<void>;
@@ -370,6 +370,7 @@ function registerBackendHandlers() {
         imagePath: payload?.imagePath,
         imageBase64: payload?.imageBase64,
         projectId: payload?.projectId,
+        preset: payload?.preset,
       });
       const comfy = await backend.getComfyStatus();
       return {
@@ -398,6 +399,7 @@ function registerBackendHandlers() {
       imagePath: payload?.imagePath,
       imageBase64: payload?.imageBase64,
       projectId: payload?.projectId,
+      preset: payload?.preset,
     });
   });
 
