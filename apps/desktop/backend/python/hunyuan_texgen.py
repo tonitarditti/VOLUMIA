@@ -9,6 +9,7 @@ import time
 import traceback
 from pathlib import Path
 from contextlib import nullcontext
+from types import MethodType
 from typing import Any, Callable, Dict, Optional
 
 
@@ -547,6 +548,149 @@ def enable_xformers_if_available(paint_pipeline: Any) -> Dict[str, str]:
     return statuses
 
 
+def cast_renderer_value(value: Any, torch_module: Any) -> Any:
+    if torch_module.is_tensor(value):
+        if value.is_floating_point():
+            return value.float()
+        integer_dtypes = tuple(
+            dtype
+            for dtype in (
+                getattr(torch_module, "int8", None),
+                getattr(torch_module, "int16", None),
+                getattr(torch_module, "uint8", None),
+                getattr(torch_module, "uint16", None),
+                getattr(torch_module, "uint32", None),
+            )
+            if dtype is not None
+        )
+        if value.dtype in integer_dtypes:
+            return value.to(dtype=torch_module.int64)
+        return value
+    if isinstance(value, list):
+        return [cast_renderer_value(item, torch_module) for item in value]
+    if isinstance(value, tuple):
+        return tuple(cast_renderer_value(item, torch_module) for item in value)
+    if isinstance(value, dict):
+        return {
+            key: cast_renderer_value(item, torch_module)
+            for key, item in value.items()
+        }
+    return value
+
+
+def get_disabled_autocast_context(torch_module: Any) -> Any:
+    if not torch_module.cuda.is_available():
+        return nullcontext()
+    amp_module = getattr(torch_module, "amp", None)
+    if amp_module is not None and hasattr(amp_module, "autocast"):
+        return amp_module.autocast("cuda", enabled=False)
+    return torch_module.cuda.amp.autocast(enabled=False)
+
+
+def force_renderer_state_float32(renderer: Any, torch_module: Any) -> None:
+    for attr_name in (
+        "vtx_pos",
+        "vtx_uv",
+        "tex",
+        "camera_proj_mat",
+        "vtx_normal",
+        "vtx_normals",
+    ):
+        if not hasattr(renderer, attr_name):
+            continue
+        attr_value = getattr(renderer, attr_name)
+        if torch_module.is_tensor(attr_value) and attr_value.is_floating_point():
+            setattr(renderer, attr_name, attr_value.float())
+
+
+def patch_renderer_method_float32(
+    renderer: Any,
+    method_name: str,
+    torch_module: Any,
+) -> bool:
+    original_method = getattr(renderer, method_name, None)
+    if not callable(original_method):
+        return False
+
+    marker_name = f"_volumia_fp32_patch_{method_name}"
+    if getattr(renderer, marker_name, False):
+        return True
+
+    def patched(self: Any, *args: Any, **kwargs: Any) -> Any:
+        cast_args = tuple(cast_renderer_value(arg, torch_module) for arg in args)
+        cast_kwargs = {
+            key: cast_renderer_value(value, torch_module)
+            for key, value in kwargs.items()
+        }
+        guard = get_disabled_autocast_context(torch_module)
+        with guard:
+            result = original_method(*cast_args, **cast_kwargs)
+        force_renderer_state_float32(self, torch_module)
+        return cast_renderer_value(result, torch_module)
+
+    setattr(renderer, method_name, MethodType(patched, renderer))
+    setattr(renderer, marker_name, True)
+    return True
+
+
+def enforce_renderer_float32_runtime(
+    paint_pipeline: Any,
+    torch_module: Any,
+) -> Dict[str, str]:
+    renderer = getattr(paint_pipeline, "render", None)
+    if renderer is None:
+        return {"renderer": "missing"}
+
+    force_renderer_state_float32(renderer, torch_module)
+    patched = {
+        "load_mesh": patch_renderer_method_float32(
+            renderer,
+            "load_mesh",
+            torch_module,
+        ),
+        "_render": patch_renderer_method_float32(
+            renderer,
+            "_render",
+            torch_module,
+        ),
+        "raster_rasterize": patch_renderer_method_float32(
+            renderer,
+            "raster_rasterize",
+            torch_module,
+        ),
+        "raster_interpolate": patch_renderer_method_float32(
+            renderer,
+            "raster_interpolate",
+            torch_module,
+        ),
+        "render": patch_renderer_method_float32(
+            renderer,
+            "render",
+            torch_module,
+        ),
+        "render_normal": patch_renderer_method_float32(
+            renderer,
+            "render_normal",
+            torch_module,
+        ),
+        "render_position": patch_renderer_method_float32(
+            renderer,
+            "render_position",
+            torch_module,
+        ),
+        "back_project": patch_renderer_method_float32(
+            renderer,
+            "back_project",
+            torch_module,
+        ),
+    }
+    force_renderer_state_float32(renderer, torch_module)
+    return {
+        "renderer": "patched",
+        **{name: ("ok" if status else "missing") for name, status in patched.items()},
+    }
+
+
 def export_result_mesh(result_mesh: Any, output_glb_path: str) -> None:
     if hasattr(result_mesh, "export"):
         result_mesh.export(output_glb_path)
@@ -688,6 +832,10 @@ def run_texgen(
     apply_texgen_views(pipeline, views)
     step_patch_status = apply_texgen_steps(pipeline, steps)
     xformers_status = enable_xformers_if_available(pipeline)
+    renderer_fp32_status = enforce_renderer_float32_runtime(
+        pipeline,
+        torch,
+    )
     log_line(
         "texgen runtime configured: "
         f"render_size={render_size} texture_size={texture_size} "
@@ -703,6 +851,10 @@ def run_texgen(
             f"{name}={'ok' if status else 'skipped'}"
             for name, status in step_patch_status.items()
         )
+    )
+    log_line(
+        "renderer fp32 status: "
+        + ", ".join(f"{name}={status}" for name, status in renderer_fp32_status.items())
     )
 
     if os.environ.get("HUNYUAN_TEXGEN_CPU_OFFLOAD", "").strip().lower() in (
@@ -721,16 +873,9 @@ def run_texgen(
     log_line("image load OK")
 
     log_line("texgen inference started")
-    use_amp = torch.cuda.is_available()
-    if use_amp:
-        log_line("amp autocast: enabled")
-    else:
-        log_line("amp autocast: skipped (cuda unavailable)")
-    autocast_context = (
-        torch.cuda.amp.autocast(dtype=torch.float16)
-        if use_amp
-        else nullcontext()
-    )
+    use_amp = False
+    log_line("amp autocast: disabled for stability (forcing float32 for renderer)")
+    autocast_context = get_disabled_autocast_context(torch)
     with torch.inference_mode(), autocast_context:
         textured_mesh = pipeline(mesh, image=image)
     log_line("texgen inference finished")
@@ -757,6 +902,7 @@ def run_texgen(
         "amp_enabled": use_amp,
         "xformers_status": xformers_status,
         "step_patch_status": step_patch_status,
+        "renderer_fp32_status": renderer_fp32_status,
         "timeout_ms": timeout_ms,
     }
 
@@ -892,6 +1038,7 @@ def main() -> int:
                 "amp_enabled": details["amp_enabled"],
                 "xformers_status": details["xformers_status"],
                 "step_patch_status": details["step_patch_status"],
+                "renderer_fp32_status": details["renderer_fp32_status"],
             }
         )
         exit_code = 0
