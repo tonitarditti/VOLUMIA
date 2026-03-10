@@ -1704,12 +1704,16 @@ export class BackendSupervisor {
         "--target-perc",
         "0.25",
         "--min-face-threshold",
-        "10000",
+        "3000",
+        "--final-target-min-faces",
+        "3000",
+        "--final-target-max-faces",
+        "8000",
       ];
       const optimizeStartedAtMs = Date.now();
       const optimizeStartedAtIso = new Date(optimizeStartedAtMs).toISOString();
       this.appendComfyLog(
-        `[${stageLabel}] mesh optimize started (target_perc=0.25 min_faces=10000)`,
+        `[${stageLabel}] mesh optimize started (target_perc=0.25 min_faces=3000 final_target=3000-8000)`,
       );
       let optimizeProcessResult: {
         exitCode: number;
@@ -1842,8 +1846,40 @@ export class BackendSupervisor {
             typeof optimizeJson?.planar_fallback_used === "boolean"
               ? optimizeJson.planar_fallback_used
               : "unknown";
+          const prismRegionsDetected =
+            typeof optimizeJson?.prism_regions_detected === "number"
+              ? optimizeJson.prism_regions_detected
+              : "unknown";
+          const repeatedSupportsDetected =
+            typeof optimizeJson?.repeated_supports_detected === "number"
+              ? optimizeJson.repeated_supports_detected
+              : "unknown";
+          const reconstructedRegionsCount =
+            typeof optimizeJson?.reconstructed_regions_count === "number"
+              ? optimizeJson.reconstructed_regions_count
+              : typeof optimizeJson?.prism_regions_reconstructed === "number"
+                ? optimizeJson.prism_regions_reconstructed
+                : "unknown";
+          const skippedLowConfidenceCount =
+            typeof optimizeJson?.skipped_low_confidence_regions_count === "number"
+              ? optimizeJson.skipped_low_confidence_regions_count
+              : typeof optimizeJson?.prism_regions_skipped_low_confidence === "number"
+                ? optimizeJson.prism_regions_skipped_low_confidence
+                : "unknown";
+          const finalDecimationApplied =
+            typeof optimizeJson?.final_decimation_applied === "boolean"
+              ? optimizeJson.final_decimation_applied
+              : "unknown";
+          const finalDecimationReason =
+            typeof optimizeJson?.final_decimation_reason === "string"
+              ? optimizeJson.final_decimation_reason
+              : "unknown";
+          const finalTargetFaces =
+            typeof optimizeJson?.final_target_faces === "number"
+              ? optimizeJson.final_target_faces
+              : "unknown";
           this.appendComfyLog(
-            `[${stageLabel}] mesh optimize completed: ${resolvedOptimizedPath} (vertices_in=${String(vertexCountIn)} faces_in=${String(faceCountIn)} vertices_out=${String(vertexCountOut)} faces_out=${String(faceCountOut)} strategy=${decimationStrategy} quad_remesh=${String(quadRemeshApplied)} planar_regions=${String(planarRegionsDetected)} planar_faces_before=${String(planarFacesBefore)} planar_faces_after=${String(planarFacesAfter)} planar_fallback_used=${String(planarFallbackUsed)})`,
+            `[${stageLabel}] mesh optimize completed: ${resolvedOptimizedPath} (vertices_in=${String(vertexCountIn)} faces_in=${String(faceCountIn)} vertices_out=${String(vertexCountOut)} faces_out=${String(faceCountOut)} strategy=${decimationStrategy} quad_remesh=${String(quadRemeshApplied)} planar_regions=${String(planarRegionsDetected)} planar_faces_before=${String(planarFacesBefore)} planar_faces_after=${String(planarFacesAfter)} prism_regions=${String(prismRegionsDetected)} repeated_supports=${String(repeatedSupportsDetected)} reconstructed_regions=${String(reconstructedRegionsCount)} skipped_low_confidence=${String(skippedLowConfidenceCount)} final_decimation_applied=${String(finalDecimationApplied)} final_target_faces=${String(finalTargetFaces)} final_decimation_reason=${String(finalDecimationReason)} planar_fallback_used=${String(planarFallbackUsed)})`,
           );
         } else {
           meshOptimizationStatus = "failed";
