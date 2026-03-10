@@ -533,6 +533,7 @@ const DEFAULT_HUNYUAN_REPO_ROOT = "E:\\AI\\Hunyuan3D-2";
 const DEFAULT_TEXGEN_TIMEOUT_MS = 20 * 60 * 1_000;
 const DEFAULT_MESH_OPTIMIZE_TIMEOUT_MS = 8 * 60 * 1_000;
 const DEFAULT_WORKFLOW_WAIT_TIMEOUT_MS = 35 * 60 * 1_000;
+const DEFAULT_IMAGE_PREPROCESS_TIMEOUT_MS = 3 * 60 * 1_000;
 
 export class BackendSupervisor {
   private readonly processManager = new ProcessManager();
@@ -991,6 +992,181 @@ export class BackendSupervisor {
     return null;
   }
 
+  private resolveSamCheckpointPath() {
+    const envCandidates = [
+      process.env.VOLUMIA_SAM_CHECKPOINT?.trim() ?? "",
+      process.env.SAM_CHECKPOINT_PATH?.trim() ?? "",
+      process.env.HUNYUAN_SAM_CHECKPOINT?.trim() ?? "",
+    ];
+    const defaultCandidates = [
+      path.join(
+        this.config.comfy.comfyDir,
+        "models",
+        "sam",
+        "sam_vit_h_4b8939.pth",
+      ),
+      "E:\\AI\\ComfyUI_VOL\\models\\sam\\sam_vit_h_4b8939.pth",
+    ];
+    for (const candidate of [...envCandidates, ...defaultCandidates]) {
+      if (!candidate) {
+        continue;
+      }
+      const resolved = path.resolve(candidate);
+      if (fs.existsSync(resolved) && fs.statSync(resolved).isFile()) {
+        return resolved;
+      }
+    }
+    return "";
+  }
+
+  private async preprocessWorkflowInputImage(
+    workflowName: string,
+    inputImagePath: string,
+  ) {
+    const scriptPath = this.resolveImagePreprocessScriptPath();
+    if (!fs.existsSync(scriptPath)) {
+      this.appendComfyLog(
+        `[image-preprocess] skipped: script not found (${scriptPath})`,
+        "warn",
+      );
+      return inputImagePath;
+    }
+
+    const preprocessTimeoutMs = this.resolveImagePreprocessTimeoutMs();
+    const uploadsDir = path.join(getOutputsDir(), "uploads", "preprocessed");
+    fs.mkdirSync(uploadsDir, { recursive: true });
+    const runId = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    const outputPath = path.join(uploadsDir, `preprocessed-${runId}.png`);
+    const metadataPath = path.join(uploadsDir, `preprocessed-${runId}.json`);
+    const logPath = path.join(
+      getLogsDir(),
+      `image-preprocess-${runId}.log`,
+    );
+    const stageLabel = `image-preprocess:${runId}`;
+    const samCheckpointPath = this.resolveSamCheckpointPath();
+    const scriptArgs = [
+      "--input",
+      inputImagePath,
+      "--output",
+      outputPath,
+      "--metadata",
+      metadataPath,
+    ];
+    if (samCheckpointPath) {
+      scriptArgs.push("--sam-checkpoint", samCheckpointPath);
+    }
+
+    const startedAtMs = Date.now();
+    const startedAtIso = new Date(startedAtMs).toISOString();
+    this.appendComfyLog(
+      `[${stageLabel}] segmentation started workflow=${workflowName}`,
+    );
+    this.appendComfyLog(
+      `[${stageLabel}] segmentation input path: ${inputImagePath}`,
+    );
+    this.appendComfyLog(
+      `[${stageLabel}] timeout_ms=${preprocessTimeoutMs}`,
+    );
+    if (samCheckpointPath) {
+      this.appendComfyLog(
+        `[${stageLabel}] sam checkpoint: ${samCheckpointPath}`,
+      );
+    } else {
+      this.appendComfyLog(
+        `[${stageLabel}] sam checkpoint not found in defaults/env; script will resolve internally`,
+        "warn",
+      );
+    }
+
+    try {
+      const processResult = await this.runTexgenScriptProcess(
+        scriptPath,
+        scriptArgs,
+        stageLabel,
+        preprocessTimeoutMs,
+        undefined,
+        "image-preprocess",
+      );
+      const endedAtMs = Date.now();
+      const endedAtIso = new Date(endedAtMs).toISOString();
+      const durationMs = endedAtMs - startedAtMs;
+      const logLines = [
+        `stage=${stageLabel}`,
+        `runner=${processResult.runnerDetails}`,
+        `exit_code=${processResult.exitCode}`,
+        `timed_out=${String(processResult.timedOut)}`,
+        `started_at=${startedAtIso}`,
+        `ended_at=${endedAtIso}`,
+        `duration_ms=${durationMs}`,
+        `timeout_ms=${preprocessTimeoutMs}`,
+        "",
+        "[stdout]",
+        processResult.stdout.trim(),
+        "",
+        "[stderr]",
+        processResult.stderr.trim(),
+        "",
+      ];
+      fs.writeFileSync(logPath, `${logLines.join("\n")}\n`, "utf8");
+
+      let metadata: Record<string, unknown> | null = null;
+      if (fs.existsSync(metadataPath)) {
+        try {
+          const parsed = JSON.parse(fs.readFileSync(metadataPath, "utf8")) as unknown;
+          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+            metadata = parsed as Record<string, unknown>;
+          }
+        } catch {
+          metadata = null;
+        }
+      }
+
+      const preprocessStatusRaw =
+        typeof metadata?.preprocess_status === "string"
+          ? metadata.preprocess_status.trim().toLowerCase()
+          : "";
+      const outputImagePathRaw =
+        typeof metadata?.output_image_path === "string"
+          ? metadata.output_image_path.trim()
+          : outputPath;
+      const outputImagePath = path.resolve(outputImagePathRaw);
+      const outputReady =
+        preprocessStatusRaw === "completed" &&
+        processResult.exitCode === 0 &&
+        !processResult.timedOut &&
+        fs.existsSync(outputImagePath) &&
+        fs.statSync(outputImagePath).size > 0;
+
+      this.appendComfyLog(
+        `[${stageLabel}] segmentation completed (exit=${processResult.exitCode}, timed_out=${String(processResult.timedOut)})`,
+      );
+      if (outputReady) {
+        this.appendComfyLog(
+          `[${stageLabel}] preprocessed image path: ${outputImagePath}`,
+        );
+        return outputImagePath;
+      }
+
+      const fallbackReason =
+        typeof metadata?.error === "string"
+          ? metadata.error
+          : `preprocess failed (exit=${processResult.exitCode}, timed_out=${String(processResult.timedOut)})`;
+      this.appendComfyLog(
+        `[${stageLabel}] preprocess fallback used: ${inputImagePath} reason=${fallbackReason}`,
+        "warn",
+      );
+      return inputImagePath;
+    } catch (error) {
+      const reason = `preprocess execution error: ${errorMessage(error)}`;
+      this.appendComfyLog(`[${stageLabel}] ${reason}`, "warn");
+      this.appendComfyLog(
+        `[${stageLabel}] preprocess fallback used: ${inputImagePath} reason=${reason}`,
+        "warn",
+      );
+      return inputImagePath;
+    }
+  }
+
   private discoverTexgenModuleRootsFromPython() {
     const probe = this.runPythonSnippet(
       [
@@ -1252,6 +1428,14 @@ export class BackendSupervisor {
     return path.join(getBackendRootDir(), "python", "hunyuan_texgen.py");
   }
 
+  private resolveImagePreprocessScriptPath() {
+    return path.join(
+      getBackendRootDir(),
+      "python",
+      "preprocess_object_image.py",
+    );
+  }
+
   private resolveMeshOptimizeScriptPath() {
     return path.join(
       getBackendRootDir(),
@@ -1278,6 +1462,13 @@ export class BackendSupervisor {
     return parsePositiveIntEnv(
       "VOLUMIA_WORKFLOW_WAIT_TIMEOUT_MS",
       DEFAULT_WORKFLOW_WAIT_TIMEOUT_MS,
+    );
+  }
+
+  private resolveImagePreprocessTimeoutMs() {
+    return parsePositiveIntEnv(
+      "VOLUMIA_IMAGE_PREPROCESS_TIMEOUT_MS",
+      DEFAULT_IMAGE_PREPROCESS_TIMEOUT_MS,
     );
   }
 
@@ -2474,7 +2665,19 @@ export class BackendSupervisor {
 
     const targetWorkflow = this.resolveWorkflowByName(workflowName);
     let workflowJson = loadWorkflowJson(targetWorkflow.path);
-    const imageInputPath = await this.resolveWorkflowInputImagePath(input);
+    const resolvedInputImagePath = await this.resolveWorkflowInputImagePath(input);
+    let imageInputPath = resolvedInputImagePath;
+    if (resolvedInputImagePath) {
+      imageInputPath = await this.preprocessWorkflowInputImage(
+        targetWorkflow.name,
+        resolvedInputImagePath,
+      );
+      if (imageInputPath !== resolvedInputImagePath) {
+        this.appendComfyLog(
+          `[workflow:${targetWorkflow.name}] using preprocessed input image: ${imageInputPath}`,
+        );
+      }
+    }
     if (imageInputPath) {
       const uploaded = await this.comfyApi.uploadImage(imageInputPath);
       const injected = applyImageInputToWorkflow(
