@@ -1701,17 +1701,15 @@ export class BackendSupervisor {
         meshOptimizeOutputPath,
         "--result-json",
         meshOptimizeMetadataPath,
-        "--decimate-target",
-        "20000",
-        "--quad-target",
-        "8000",
-        "--smooth-iterations",
-        "3",
+        "--target-perc",
+        "0.25",
+        "--min-face-threshold",
+        "10000",
       ];
       const optimizeStartedAtMs = Date.now();
       const optimizeStartedAtIso = new Date(optimizeStartedAtMs).toISOString();
       this.appendComfyLog(
-        `[${stageLabel}] mesh optimize started (target_decimate=20000 target_quad=8000 smooth=3)`,
+        `[${stageLabel}] mesh optimize started (target_perc=0.25 min_faces=10000)`,
       );
       let optimizeProcessResult: {
         exitCode: number;
@@ -1794,16 +1792,42 @@ export class BackendSupervisor {
         if (optimizeCompleted) {
           meshOptimizationStatus = "completed";
           texgenMeshPath = resolvedOptimizedPath;
+          const vertexCountIn =
+            typeof optimizeJson?.input_vertex_count === "number"
+              ? optimizeJson.input_vertex_count
+              : typeof optimizeJson?.original_vertex_count === "number"
+                ? optimizeJson.original_vertex_count
+                : "unknown";
           const faceCountIn =
             typeof optimizeJson?.input_face_count === "number"
               ? optimizeJson.input_face_count
-              : "unknown";
+              : typeof optimizeJson?.original_face_count === "number"
+                ? optimizeJson.original_face_count
+                : "unknown";
+          const vertexCountOut =
+            typeof optimizeJson?.output_vertex_count === "number"
+              ? optimizeJson.output_vertex_count
+              : typeof optimizeJson?.optimized_vertex_count === "number"
+                ? optimizeJson.optimized_vertex_count
+                : "unknown";
           const faceCountOut =
             typeof optimizeJson?.output_face_count === "number"
               ? optimizeJson.output_face_count
+              : typeof optimizeJson?.optimized_face_count === "number"
+                ? optimizeJson.optimized_face_count
+                : "unknown";
+          const quadRemeshApplied =
+            typeof optimizeJson?.quad_remesh_applied === "boolean"
+              ? optimizeJson.quad_remesh_applied
+              : typeof optimizeJson?.quadriflow_used === "boolean"
+                ? optimizeJson.quadriflow_used
+                : "unknown";
+          const decimationStrategy =
+            typeof optimizeJson?.decimation_strategy === "string"
+              ? optimizeJson.decimation_strategy
               : "unknown";
           this.appendComfyLog(
-            `[${stageLabel}] mesh optimize completed: ${resolvedOptimizedPath} (faces_in=${String(faceCountIn)} faces_out=${String(faceCountOut)})`,
+            `[${stageLabel}] mesh optimize completed: ${resolvedOptimizedPath} (vertices_in=${String(vertexCountIn)} faces_in=${String(faceCountIn)} vertices_out=${String(vertexCountOut)} faces_out=${String(faceCountOut)} strategy=${decimationStrategy} quad_remesh=${String(quadRemeshApplied)})`,
           );
         } else {
           meshOptimizationStatus = "failed";

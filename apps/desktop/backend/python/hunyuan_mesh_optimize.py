@@ -1,10 +1,13 @@
 import argparse
 import json
-import os
 import time
 import traceback
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Tuple
+
+
+DEFAULT_TARGET_PERC = 0.25
+DEFAULT_MIN_FACE_THRESHOLD = 10000
 
 
 def log_line(message: str) -> None:
@@ -37,161 +40,216 @@ def apply_filter_with_supported_params(
     return kwargs
 
 
-def resolve_quadriflow_filter_name(meshlab_module: Any) -> Optional[str]:
-    available = set(meshlab_module.filter_list())
-    preferred = [
-        "meshing_quadri_flow",
-        "meshing_quadriflow",
-        "meshing_quadriflow_remeshing",
-        "meshing_quadri_flow_remeshing",
-        "meshing_retopology_quadriflow",
-    ]
-    for candidate in preferred:
-        if candidate in available:
-            return candidate
-    for candidate in available:
-        lowered = candidate.lower()
-        if "quadriflow" in lowered or "quadri_flow" in lowered:
-            return candidate
-    return None
+def append_filter(
+    applied_filters: list[Dict[str, Any]],
+    name: str,
+    params: Dict[str, Any],
+) -> None:
+    applied_filters.append({"name": name, "params": params})
+
+
+def apply_post_decimation_cleanup(
+    mesh_set: Any,
+    applied_filters: list[Dict[str, Any]],
+) -> None:
+    mesh_set.apply_filter("meshing_remove_duplicate_vertices")
+    append_filter(applied_filters, "meshing_remove_duplicate_vertices", {})
+    mesh_set.apply_filter("meshing_remove_duplicate_faces")
+    append_filter(applied_filters, "meshing_remove_duplicate_faces", {})
+    mesh_set.apply_filter("meshing_remove_null_faces")
+    append_filter(applied_filters, "meshing_remove_null_faces", {})
+    mesh_set.apply_filter("compute_normal_per_face")
+    append_filter(applied_filters, "compute_normal_per_face", {})
+    mesh_set.apply_filter("compute_normal_per_vertex")
+    append_filter(applied_filters, "compute_normal_per_vertex", {})
+
+
+def apply_decimation_pass(
+    mesh_set: Any,
+    applied_filters: list[Dict[str, Any]],
+    *,
+    targetperc: float | None = None,
+    targetfacenum: int | None = None,
+) -> Dict[str, Any]:
+    desired_params: Dict[str, Any] = {
+        "preservenormal": True,
+        "preservetopology": True,
+        "preserveboundary": True,
+        "planarquadric": True,
+        "qualitythr": 0.3,
+        "autoclean": True,
+    }
+    if targetperc is not None:
+        desired_params["targetperc"] = float(targetperc)
+    if targetfacenum is not None and int(targetfacenum) > 0:
+        desired_params["targetfacenum"] = int(targetfacenum)
+
+    used_params = apply_filter_with_supported_params(
+        mesh_set,
+        "meshing_decimation_quadric_edge_collapse",
+        desired_params,
+    )
+    append_filter(
+        applied_filters,
+        "meshing_decimation_quadric_edge_collapse",
+        used_params,
+    )
+    return used_params
 
 
 def run_optimization(
     input_mesh_path: Path,
     output_mesh_path: Path,
-    decimate_target: int,
-    quad_target: int,
-    smooth_iterations: int,
+    target_perc: float,
+    min_face_threshold: int,
 ) -> Dict[str, Any]:
     import pymeshlab  # noqa: WPS433
 
     mesh_set = pymeshlab.MeshSet()
     mesh_set.load_new_mesh(str(input_mesh_path))
 
-    input_vertex_count, input_face_count = mesh_stats(mesh_set)
+    original_vertex_count, original_face_count = mesh_stats(mesh_set)
     log_line(
         "mesh loaded: "
-        f"vertices={input_vertex_count} faces={input_face_count}"
+        f"vertices={original_vertex_count} faces={original_face_count}"
     )
 
     applied_filters: list[Dict[str, Any]] = []
+    decimation_attempts: list[Dict[str, Any]] = []
 
-    # 1) Quadric edge collapse decimation.
-    decimation_params = apply_filter_with_supported_params(
-        mesh_set,
-        "meshing_decimation_quadric_edge_collapse",
-        {
-            "targetfacenum": int(decimate_target),
-            "preservenormal": True,
-            "preservetopology": True,
-            "planarquadric": True,
-        },
-    )
-    applied_filters.append(
-        {
-            "name": "meshing_decimation_quadric_edge_collapse",
-            "params": decimation_params,
-        }
-    )
+    decimation_strategy = "skipped_low_source_face_count"
+    target_perc_used: float | None = None
 
-    # 2) Quad remeshing (QuadriFlow if available, fallback otherwise).
-    quadriflow_filter = resolve_quadriflow_filter_name(pymeshlab)
-    quadriflow_used = False
-    if quadriflow_filter:
-        quadriflow_params = apply_filter_with_supported_params(
+    if original_face_count > min_face_threshold:
+        # Pass 1: requested conservative decimation strategy.
+        pass1_params = apply_decimation_pass(
             mesh_set,
-            quadriflow_filter,
-            {
-                "targetfacenum": int(quad_target),
-                "preserve_boundary": True,
-                "preserveboundary": True,
-                "adaptive_scale": True,
-                "adaptivescale": True,
-            },
+            applied_filters,
+            targetperc=target_perc,
         )
-        applied_filters.append(
+        _, pass1_face_count = mesh_stats(mesh_set)
+        decimation_attempts.append(
             {
-                "name": quadriflow_filter,
-                "params": quadriflow_params,
+                "name": "targetperc_primary",
+                "params": pass1_params,
+                "face_count": pass1_face_count,
             }
         )
-        quadriflow_used = True
-    else:
-        # Fallback path when QuadriFlow plugin is missing in current PyMeshLab build.
-        mesh_set.apply_filter("meshing_tri_to_quad_dominant")
-        applied_filters.append(
-            {
-                "name": "meshing_tri_to_quad_dominant",
-                "params": {},
-            }
-        )
-        fallback_decimation_params = apply_filter_with_supported_params(
-            mesh_set,
-            "meshing_decimation_quadric_edge_collapse",
-            {
-                "targetfacenum": int(quad_target),
-                "preservenormal": True,
-                "preservetopology": True,
-                "planarquadric": True,
-            },
-        )
-        applied_filters.append(
-            {
-                "name": "meshing_decimation_quadric_edge_collapse",
-                "params": fallback_decimation_params,
-            }
-        )
+        decimation_strategy = "targetperc_primary"
+        target_perc_used = float(pass1_params.get("targetperc", target_perc))
 
-    # 3) Mild Laplacian smoothing.
-    smoothing_params = apply_filter_with_supported_params(
-        mesh_set,
-        "apply_coord_laplacian_smoothing",
-        {
-            "stepsmoothnum": int(smooth_iterations),
-        },
-    )
-    applied_filters.append(
-        {
-            "name": "apply_coord_laplacian_smoothing",
-            "params": smoothing_params,
-        }
-    )
+        if pass1_face_count < min_face_threshold:
+            # Pass 2: less aggressive percent fallback.
+            log_line(
+                "decimation below threshold, retrying with less aggressive targetperc: "
+                f"faces={pass1_face_count} threshold={min_face_threshold}"
+            )
+            less_aggressive_target_perc = max(
+                float(target_perc),
+                min(
+                    0.95,
+                    (float(min_face_threshold) / float(original_face_count)) + 0.05,
+                ),
+            )
+            mesh_set = pymeshlab.MeshSet()
+            mesh_set.load_new_mesh(str(input_mesh_path))
+            applied_filters = []
+            pass2_params = apply_decimation_pass(
+                mesh_set,
+                applied_filters,
+                targetperc=less_aggressive_target_perc,
+            )
+            _, pass2_face_count = mesh_stats(mesh_set)
+            decimation_attempts.append(
+                {
+                    "name": "targetperc_fallback",
+                    "params": pass2_params,
+                    "face_count": pass2_face_count,
+                }
+            )
+            decimation_strategy = "targetperc_fallback"
+            target_perc_used = float(
+                pass2_params.get("targetperc", less_aggressive_target_perc)
+            )
 
-    # 4) Mesh cleanup.
-    mesh_set.apply_filter("meshing_remove_duplicate_vertices")
-    applied_filters.append({"name": "meshing_remove_duplicate_vertices", "params": {}})
-    mesh_set.apply_filter("meshing_remove_duplicate_faces")
-    applied_filters.append({"name": "meshing_remove_duplicate_faces", "params": {}})
-    mesh_set.apply_filter("meshing_remove_null_faces")
-    applied_filters.append({"name": "meshing_remove_null_faces", "params": {}})
-    mesh_set.apply_filter("meshing_remove_unreferenced_vertices")
-    applied_filters.append(
-        {"name": "meshing_remove_unreferenced_vertices", "params": {}}
-    )
+            if pass2_face_count < min_face_threshold:
+                # Pass 3: enforce an explicit floor target by face count.
+                log_line(
+                    "fallback targetperc still below threshold, retrying with targetfacenum floor: "
+                    f"faces={pass2_face_count} threshold={min_face_threshold}"
+                )
+                mesh_set = pymeshlab.MeshSet()
+                mesh_set.load_new_mesh(str(input_mesh_path))
+                applied_filters = []
+                pass3_params = apply_decimation_pass(
+                    mesh_set,
+                    applied_filters,
+                    targetfacenum=min_face_threshold,
+                )
+                _, pass3_face_count = mesh_stats(mesh_set)
+                decimation_attempts.append(
+                    {
+                        "name": "targetfacenum_floor",
+                        "params": pass3_params,
+                        "face_count": pass3_face_count,
+                    }
+                )
+                decimation_strategy = "targetfacenum_floor"
+                target_perc_used = None
 
-    # 5) Recompute normals.
-    mesh_set.apply_filter("compute_normal_per_face")
-    applied_filters.append({"name": "compute_normal_per_face", "params": {}})
-    mesh_set.apply_filter("compute_normal_per_vertex")
-    applied_filters.append({"name": "compute_normal_per_vertex", "params": {}})
+                if pass3_face_count < min_face_threshold:
+                    # Final fallback: keep original mesh to preserve shape.
+                    log_line(
+                        "face floor still not met, reverting to original mesh for safety: "
+                        f"faces={pass3_face_count} threshold={min_face_threshold}"
+                    )
+                    mesh_set = pymeshlab.MeshSet()
+                    mesh_set.load_new_mesh(str(input_mesh_path))
+                    applied_filters = []
+                    decimation_strategy = "reverted_original_mesh"
 
+    # Required post-decimation cleanup only.
+    apply_post_decimation_cleanup(mesh_set, applied_filters)
+
+    optimized_vertex_count, optimized_face_count = mesh_stats(mesh_set)
     output_mesh_path.parent.mkdir(parents=True, exist_ok=True)
     mesh_set.save_current_mesh(str(output_mesh_path))
 
-    output_vertex_count, output_face_count = mesh_stats(mesh_set)
+    reduction_ratio = (
+        0.0
+        if original_face_count <= 0
+        else (1.0 - (optimized_face_count / float(original_face_count)))
+    )
     log_line(
         "mesh optimized: "
-        f"vertices={output_vertex_count} faces={output_face_count}"
+        f"vertices={optimized_vertex_count} faces={optimized_face_count}"
+    )
+    log_line(
+        "mesh optimization summary: "
+        f"original_vertices={original_vertex_count} original_faces={original_face_count} "
+        f"optimized_vertices={optimized_vertex_count} optimized_faces={optimized_face_count} "
+        f"face_reduction={reduction_ratio:.4f} strategy={decimation_strategy} "
+        f"path={output_mesh_path}"
     )
 
     return {
-        "quadriflow_filter": quadriflow_filter,
-        "quadriflow_used": quadriflow_used,
+        "decimation_strategy": decimation_strategy,
+        "target_perc_requested": float(target_perc),
+        "target_perc_used": target_perc_used,
+        "min_face_threshold": int(min_face_threshold),
+        "decimation_attempts": decimation_attempts,
         "applied_filters": applied_filters,
-        "input_vertex_count": input_vertex_count,
-        "input_face_count": input_face_count,
-        "output_vertex_count": output_vertex_count,
-        "output_face_count": output_face_count,
+        "original_vertex_count": original_vertex_count,
+        "original_face_count": original_face_count,
+        "optimized_vertex_count": optimized_vertex_count,
+        "optimized_face_count": optimized_face_count,
+        "face_reduction_ratio": reduction_ratio,
+        # Backward-compatible aliases used by existing backend parsing.
+        "input_vertex_count": original_vertex_count,
+        "input_face_count": original_face_count,
+        "output_vertex_count": optimized_vertex_count,
+        "output_face_count": optimized_face_count,
+        "quad_remesh_applied": False,
     }
 
 
@@ -207,22 +265,16 @@ def parse_args() -> argparse.Namespace:
         help="Optimization metadata JSON output path",
     )
     parser.add_argument(
-        "--decimate-target",
-        type=int,
-        default=20000,
-        help="Target face count for quadric decimation stage",
+        "--target-perc",
+        type=float,
+        default=DEFAULT_TARGET_PERC,
+        help="Quadric decimation target percentage (0-1 range).",
     )
     parser.add_argument(
-        "--quad-target",
+        "--min-face-threshold",
         type=int,
-        default=8000,
-        help="Target face count for quad remeshing stage",
-    )
-    parser.add_argument(
-        "--smooth-iterations",
-        type=int,
-        default=3,
-        help="Laplacian smoothing iterations",
+        default=DEFAULT_MIN_FACE_THRESHOLD,
+        help="Minimum face count floor after decimation fallback.",
     )
     return parser.parse_args()
 
@@ -232,14 +284,15 @@ def main() -> int:
     mesh_path = Path(args.mesh).expanduser().resolve()
     output_path = Path(args.output).expanduser().resolve()
     result_json_path = Path(args.result_json).expanduser().resolve()
+    target_perc = max(0.01, min(0.99, float(args.target_perc)))
+    min_face_threshold = max(8000, int(args.min_face_threshold))
 
     result: Dict[str, Any] = {
         "status": "failed",
         "input_mesh_path": str(mesh_path),
         "output_mesh_path": str(output_path),
-        "decimate_target": int(args.decimate_target),
-        "quad_target": int(args.quad_target),
-        "smooth_iterations": int(args.smooth_iterations),
+        "target_perc": target_perc,
+        "min_face_threshold": min_face_threshold,
         "error": None,
         "traceback": None,
         "duration_ms": None,
@@ -254,9 +307,8 @@ def main() -> int:
         details = run_optimization(
             input_mesh_path=mesh_path,
             output_mesh_path=output_path,
-            decimate_target=int(args.decimate_target),
-            quad_target=int(args.quad_target),
-            smooth_iterations=int(args.smooth_iterations),
+            target_perc=target_perc,
+            min_face_threshold=min_face_threshold,
         )
 
         if not output_path.is_file() or output_path.stat().st_size <= 0:
