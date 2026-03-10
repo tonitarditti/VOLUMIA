@@ -1826,8 +1826,24 @@ export class BackendSupervisor {
             typeof optimizeJson?.decimation_strategy === "string"
               ? optimizeJson.decimation_strategy
               : "unknown";
+          const planarRegionsDetected =
+            typeof optimizeJson?.planar_regions_detected === "number"
+              ? optimizeJson.planar_regions_detected
+              : "unknown";
+          const planarFacesBefore =
+            typeof optimizeJson?.planar_faces_before === "number"
+              ? optimizeJson.planar_faces_before
+              : "unknown";
+          const planarFacesAfter =
+            typeof optimizeJson?.planar_faces_after === "number"
+              ? optimizeJson.planar_faces_after
+              : "unknown";
+          const planarFallbackUsed =
+            typeof optimizeJson?.planar_fallback_used === "boolean"
+              ? optimizeJson.planar_fallback_used
+              : "unknown";
           this.appendComfyLog(
-            `[${stageLabel}] mesh optimize completed: ${resolvedOptimizedPath} (vertices_in=${String(vertexCountIn)} faces_in=${String(faceCountIn)} vertices_out=${String(vertexCountOut)} faces_out=${String(faceCountOut)} strategy=${decimationStrategy} quad_remesh=${String(quadRemeshApplied)})`,
+            `[${stageLabel}] mesh optimize completed: ${resolvedOptimizedPath} (vertices_in=${String(vertexCountIn)} faces_in=${String(faceCountIn)} vertices_out=${String(vertexCountOut)} faces_out=${String(faceCountOut)} strategy=${decimationStrategy} quad_remesh=${String(quadRemeshApplied)} planar_regions=${String(planarRegionsDetected)} planar_faces_before=${String(planarFacesBefore)} planar_faces_after=${String(planarFacesAfter)} planar_fallback_used=${String(planarFallbackUsed)})`,
           );
         } else {
           meshOptimizationStatus = "failed";
