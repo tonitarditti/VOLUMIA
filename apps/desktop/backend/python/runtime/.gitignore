@@ -1,0 +1,10 @@
+*
+!.gitignore
+!jobs/
+!logs/
+!projects/
+!temp/
+!jobs/.gitkeep
+!logs/.gitkeep
+!projects/.gitkeep
+!temp/.gitkeep

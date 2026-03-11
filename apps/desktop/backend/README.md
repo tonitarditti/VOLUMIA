@@ -65,6 +65,10 @@ En Dashboard:
 - `Start` / `Stop` para controlar el supervisor.
 - `Run workflow (test)` para encolar el workflow activo.
 
+## Migracion backend unificado
+
+- Checklist operativa de Fase 1: `docs/VOLUMIA_UNIFIED_BACKEND_PHASE1_CHECKLIST.md`
+
 ## Workflows en repo
 
 - Fuente principal soportada: `apps/desktop/electron/generation/comfyui-workflows/`
