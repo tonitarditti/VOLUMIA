@@ -49,11 +49,7 @@ COMFY_BASE_URL = os.environ.get("VOLUMIA_COMFY_BASE_URL", f"http://{COMFY_HOST}:
 
 def _resolve_default_comfy_dir() -> Path:
     candidates = [
-        r"C:\AI\ComfyUI_VOL",
-        r"E:\AI\ComfyUI_VOL",
-        r"E:\ComfyUI_VOL",
-        r"C:\ComfyUI",
-        r"E:\ComfyUI",
+        r"E:\AI\ComfyUI_VOL"
     ]
     for raw in candidates:
         candidate = Path(raw).expanduser().resolve()
