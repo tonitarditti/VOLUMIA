@@ -24,6 +24,7 @@ import { processPendingCacheClearOnStart, registerSystemPreferencesHandlers } fr
 import { registerSystemPythonHandlers } from "./ipc/system-python.ipc";
 import { registerWindowControlHandlers } from "./ipc/window-controls.ipc";
 import { registerWindowSettingsHandlers } from "./ipc/window-settings.ipc";
+import { UnifiedBackendClient } from "./unified-backend";
 import { createWindowStateController } from "./window-state";
 
 const isDev = !app.isPackaged;
@@ -33,6 +34,8 @@ let mainWindow: BrowserWindow | null = null;
 let windowStateController: ReturnType<typeof createWindowStateController> | null = null;
 let disposeSystemPreferencesHandlers: (() => void) | null = null;
 let backendModule: BackendRuntimeModule | null = null;
+const unifiedBackend = new UnifiedBackendClient();
+const useUnifiedBackend = process.env.USE_UNIFIED_BACKEND !== "0";
 
 type BackendRuntimeModule = {
   initBackend: () => Promise<unknown>;
@@ -165,8 +168,11 @@ function defaultComfyStatus(message: string): ComfyStatusResponse {
 
 async function getBackendStatusSafe() {
   try {
-    const backend = loadBackendModule();
-    return await backend.getBackendStatus();
+    if (useUnifiedBackend) {
+      return await unifiedBackend.getBackendStatus();
+    }
+    const legacy = loadBackendModule();
+    return await legacy.getBackendStatus();
   } catch (error) {
     const message = toErrorMessage(error);
     return defaultBackendStatus(message);
@@ -175,8 +181,11 @@ async function getBackendStatusSafe() {
 
 async function getComfyStatusSafe() {
   try {
-    const backend = loadBackendModule();
-    return await backend.getComfyStatus();
+    if (useUnifiedBackend) {
+      return await unifiedBackend.getComfyStatus();
+    }
+    const legacy = loadBackendModule();
+    return await legacy.getComfyStatus();
   } catch (error) {
     const message = toErrorMessage(error);
     return defaultComfyStatus(message);
@@ -185,9 +194,13 @@ async function getComfyStatusSafe() {
 
 async function startBackendSafe() {
   try {
-    const backend = loadBackendModule();
-    await backend.initBackend();
-    const status = await backend.startBackend("dev");
+    const status = useUnifiedBackend
+      ? await unifiedBackend.startBackend()
+      : await (async () => {
+          const legacy = loadBackendModule();
+          await legacy.initBackend();
+          return await legacy.startBackend("dev");
+        })();
     console.log("[VOLUMIA][backend] startBackend(dev):", status.comfy.message);
   } catch (error) {
     console.warn("[VOLUMIA][backend] startBackend(dev) failed:", toErrorMessage(error));
@@ -196,8 +209,12 @@ async function startBackendSafe() {
 
 async function stopBackendSafe() {
   try {
-    const backend = loadBackendModule();
-    await backend.stopBackend();
+    if (useUnifiedBackend) {
+      await unifiedBackend.stopBackend();
+      return;
+    }
+    const legacy = loadBackendModule();
+    await legacy.stopBackend();
   } catch {
     // No-op by design.
   }
@@ -264,9 +281,16 @@ function registerBackendHandlers() {
     IPC_CHANNELS.backendRunDefault,
     async (_event, payload: BackendRunDefaultPayload | undefined): Promise<BackendRunDefaultResult> => {
       try {
-        const backend = loadBackendModule();
-        const runResult = await backend.runDefaultWorkflow(payload);
-        const status = await backend.getBackendStatus();
+        const runResult = useUnifiedBackend
+          ? await unifiedBackend.runWorkflow({
+              imagePath: payload?.imagePath,
+              imageBase64: payload?.imageBase64,
+            })
+          : await (async () => {
+              const legacy = loadBackendModule();
+              return await legacy.runDefaultWorkflow(payload);
+            })();
+        const status = await getBackendStatusSafe();
         return {
           ok: true,
           promptId: runResult.promptId,
@@ -337,6 +361,9 @@ function registerBackendHandlers() {
 
   ipcMain.handle(IPC_CHANNELS.comfyStart, async () => {
     try {
+      if (useUnifiedBackend) {
+        return await unifiedBackend.startComfy();
+      }
       const backend = loadBackendModule();
       return await backend.startComfy();
     } catch (error) {
@@ -346,6 +373,9 @@ function registerBackendHandlers() {
 
   ipcMain.handle(IPC_CHANNELS.comfyStop, async () => {
     try {
+      if (useUnifiedBackend) {
+        return await unifiedBackend.stopComfy();
+      }
       const backend = loadBackendModule();
       return await backend.stopComfy();
     } catch (error) {
@@ -355,8 +385,11 @@ function registerBackendHandlers() {
 
   ipcMain.handle(IPC_CHANNELS.comfyLogs, async (_event, payload?: { limit?: number }) => {
     try {
-      const backend = loadBackendModule();
       const limit = typeof payload?.limit === "number" ? payload.limit : undefined;
+      if (useUnifiedBackend) {
+        return await unifiedBackend.getComfyLogs(limit);
+      }
+      const backend = loadBackendModule();
       return await backend.getComfyLogs(limit);
     } catch (error) {
       return [toErrorMessage(error)];
@@ -365,14 +398,24 @@ function registerBackendHandlers() {
 
   ipcMain.handle(IPC_CHANNELS.comfyRunWorkflow, async (_event, payload: ComfyRunWorkflowPayload | undefined): Promise<ComfyRunWorkflowResult> => {
     try {
-      const backend = loadBackendModule();
-      const runResult = await backend.runWorkflow(payload?.workflowId, {
-        imagePath: payload?.imagePath,
-        imageBase64: payload?.imageBase64,
-        projectId: payload?.projectId,
-        preset: payload?.preset,
-      });
-      const comfy = await backend.getComfyStatus();
+      const runResult = useUnifiedBackend
+        ? await unifiedBackend.runWorkflow({
+            workflowId: payload?.workflowId,
+            imagePath: payload?.imagePath,
+            imageBase64: payload?.imageBase64,
+            projectId: payload?.projectId,
+            preset: payload?.preset,
+          })
+        : await (async () => {
+            const backend = loadBackendModule();
+            return await backend.runWorkflow(payload?.workflowId, {
+              imagePath: payload?.imagePath,
+              imageBase64: payload?.imageBase64,
+              projectId: payload?.projectId,
+              preset: payload?.preset,
+            });
+          })();
+      const comfy = await getComfyStatusSafe();
       return {
         ok: true,
         promptId: runResult.promptId,
@@ -394,6 +437,15 @@ function registerBackendHandlers() {
   });
 
   ipcMain.handle(IPC_CHANNELS.comfySubmitJob, async (_event, payload: ComfySubmitJobPayload | undefined): Promise<ComfySubmitJobResult> => {
+    if (useUnifiedBackend) {
+      return await unifiedBackend.submitWorkflow({
+        workflowId: payload?.workflowId,
+        imagePath: payload?.imagePath,
+        imageBase64: payload?.imageBase64,
+        projectId: payload?.projectId,
+        preset: payload?.preset,
+      });
+    }
     const backend = loadBackendModule();
     return await backend.submitWorkflow(payload?.workflowId, {
       imagePath: payload?.imagePath,
@@ -407,12 +459,19 @@ function registerBackendHandlers() {
     if (!payload?.jobId) {
       throw new Error("Missing ComfyUI jobId.");
     }
+    if (useUnifiedBackend) {
+      return await unifiedBackend.getWorkflowJobStatus(payload.jobId);
+    }
     const backend = loadBackendModule();
     return await backend.getWorkflowJobStatus(payload.jobId);
   });
 
   ipcMain.handle(IPC_CHANNELS.comfyCancelJob, async (_event, payload: { jobId?: string } | undefined): Promise<void> => {
     if (!payload?.jobId) {
+      return;
+    }
+    if (useUnifiedBackend) {
+      await unifiedBackend.cancelWorkflowJob(payload.jobId);
       return;
     }
     const backend = loadBackendModule();
@@ -423,12 +482,18 @@ function registerBackendHandlers() {
     if (!payload?.jobId) {
       return {};
     }
+    if (useUnifiedBackend) {
+      return await unifiedBackend.resolveWorkflowJobOutputs(payload.jobId);
+    }
     const backend = loadBackendModule();
     return await backend.resolveWorkflowJobOutputs(payload.jobId);
   });
 
   ipcMain.handle(IPC_CHANNELS.comfyGetConfig, async (): Promise<ComfyConfigResponse> => {
     try {
+      if (useUnifiedBackend) {
+        return await unifiedBackend.getComfyConfig();
+      }
       const backend = loadBackendModule();
       return await backend.getComfyConfig();
     } catch (error) {
@@ -448,6 +513,9 @@ function registerBackendHandlers() {
   });
 
   ipcMain.handle(IPC_CHANNELS.comfySaveConfig, async (_event, patch: ComfyConfigPatch | undefined): Promise<ComfyConfigResponse> => {
+    if (useUnifiedBackend) {
+      return await unifiedBackend.saveComfyConfig(patch ?? {});
+    }
     const backend = loadBackendModule();
     const saved = await backend.saveComfyConfig(patch ?? {});
     return saved;

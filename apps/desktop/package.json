@@ -26,10 +26,12 @@
     "files": [
       "dist/**/*",
       "electron-dist/**/*",
+      "backend/python/**/*",
       "package.json"
     ],
     "asarUnpack": [
-      "python/**/*"
+      "python/**/*",
+      "backend/python/**/*"
     ]
   },
   "dependencies": {

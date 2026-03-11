@@ -1,7 +1,7 @@
-import { desktopApi } from "@/electron/desktopApi";
+import { backendClient } from "@/services/backendClient";
 import type { JobOutputs, JobStatus, SubmitWorkflowParams } from "./comfyuiTypes";
 
-function toJobStatus(raw: Awaited<ReturnType<typeof desktopApi.getComfyJobStatus>>): JobStatus {
+function toJobStatus(raw: Awaited<ReturnType<typeof backendClient.getJobStatus>>): JobStatus {
   return {
     jobId: raw.jobId,
     promptId: raw.promptId,
@@ -20,35 +20,35 @@ function toJobStatus(raw: Awaited<ReturnType<typeof desktopApi.getComfyJobStatus
 
 export const comfyuiClient = {
   async getStatus() {
-    return await desktopApi.getComfyStatus();
+    return await backendClient.getComfyStatus();
   },
 
   async start() {
-    return await desktopApi.startComfy();
+    return await backendClient.startComfy();
   },
 
   async stop() {
-    return await desktopApi.stopComfy();
+    return await backendClient.stopComfy();
   },
 
   async getConfig() {
-    return await desktopApi.getComfyConfig();
+    return await backendClient.getComfyConfig();
   },
 
   async submitWorkflow(params: SubmitWorkflowParams) {
-    return await desktopApi.submitComfyJob(params);
+    return await backendClient.createReconstructJob(params);
   },
 
   async getJobStatus(jobId: string): Promise<JobStatus> {
-    const raw = await desktopApi.getComfyJobStatus(jobId);
+    const raw = await backendClient.getJobStatus(jobId);
     return toJobStatus(raw);
   },
 
   async cancelJob(jobId: string) {
-    await desktopApi.cancelComfyJob(jobId);
+    await backendClient.cancelJob(jobId);
   },
 
   async resolveOutputs(jobId: string): Promise<JobOutputs> {
-    return await desktopApi.resolveComfyOutputs(jobId);
+    return await backendClient.resolveOutputs(jobId);
   },
 };

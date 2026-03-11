@@ -12,6 +12,7 @@ import { useProjects } from "@/projects/context";
 import { selectProjectById } from "@/projects/selectors";
 import type { GenerationPreset, ProjectModel } from "@/projects/types";
 import { desktopApi, hasDesktopBridge } from "@/electron/desktopApi";
+import { backendClient } from "@/services/backendClient";
 import { Badge, type BadgeTone } from "@/ui/primitives";
 import { TopBar } from "@/ui/shell";
 import {
@@ -270,7 +271,7 @@ export function ProjectPage() {
   const [viewportScreenshotSignal, setViewportScreenshotSignal] = useState(0);
   const [isReferenceDropActive, setIsReferenceDropActive] = useState(false);
   const [comfyStatus, setComfyStatus] = useState<Awaited<
-    ReturnType<typeof desktopApi.getComfyStatus>
+    ReturnType<typeof backendClient.getComfyStatus>
   > | null>(null);
   const [engineMessage, setEngineMessage] = useState("Checking AI engine...");
   const [isRestartingEngine, setIsRestartingEngine] = useState(false);
@@ -408,7 +409,7 @@ export function ProjectPage() {
 
     const readEngineStatus = async () => {
       try {
-        const status = await desktopApi.getComfyStatus();
+        const status = await backendClient.getComfyStatus();
         if (!active) {
           return;
         }
@@ -824,9 +825,9 @@ export function ProjectPage() {
     setIsRestartingEngine(true);
     try {
       if (comfyStatus?.running) {
-        await desktopApi.stopComfy();
+        await backendClient.stopComfy();
       }
-      const nextStatus = await desktopApi.startComfy();
+      const nextStatus = await backendClient.startComfy();
       setComfyStatus(nextStatus);
       setEngineMessage(nextStatus.lastError ?? nextStatus.message);
     } catch (error) {

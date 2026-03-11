@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { desktopApi, hasDesktopBridge } from "@/electron/desktopApi";
+import { backendClient } from "@/services/backendClient";
 import type {
   BackendStatusResponse,
   ComfyStatusResponse,
@@ -161,8 +162,8 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
 
     try {
       const [status, comfy] = await Promise.all([
-        desktopApi.getBackendStatus(),
-        desktopApi.getComfyStatus(),
+        backendClient.startBackend(),
+        backendClient.getComfyStatus(),
       ]);
       setBackendStatus(status);
       setComfyStatus(comfy);
@@ -191,8 +192,8 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
     const run = async () => {
       try {
         const [status, comfy] = await Promise.all([
-          desktopApi.getBackendStatus(),
-          desktopApi.getComfyStatus(),
+          backendClient.startBackend(),
+          backendClient.getComfyStatus(),
         ]);
         if (!active) {
           return;
@@ -233,7 +234,7 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
 
     setRunningWorkflowTest(true);
     try {
-      const result = await desktopApi.runComfyWorkflow({
+      const result = await backendClient.runComfyWorkflow({
         imagePath: workflowImagePath.trim() || undefined,
       });
       setComfyStatus(result.comfy);
@@ -279,7 +280,7 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
 
     setStartingComfy(true);
     try {
-      const comfy = await desktopApi.startComfy();
+      const comfy = await backendClient.startComfy();
       setComfyStatus(comfy);
       setBackendMessage(
         comfy.running
@@ -303,7 +304,7 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
 
     setStoppingComfy(true);
     try {
-      const comfy = await desktopApi.stopComfy();
+      const comfy = await backendClient.stopComfy();
       setComfyStatus(comfy);
       setBackendMessage(
         comfy.running
@@ -329,9 +330,9 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
     setStoppingComfy(true);
     try {
       if (comfyStatus?.running) {
-        await desktopApi.stopComfy();
+        await backendClient.stopComfy();
       }
-      const comfy = await desktopApi.startComfy();
+      const comfy = await backendClient.startComfy();
       setComfyStatus(comfy);
       setBackendMessage(
         comfy.running
