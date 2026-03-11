@@ -8,8 +8,7 @@ def _env_bool(name: str, default: bool) -> bool:
     raw = os.environ.get(name)
     if raw is None:
         return default
-    value = raw.strip().lower()
-    return value in {"1", "true", "yes", "on"}
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _env_int(name: str, default: int) -> int:
@@ -37,7 +36,7 @@ HOST = os.environ.get("VOLUMIA_BACKEND_HOST", "127.0.0.1")
 PORT = _env_int("VOLUMIA_BACKEND_PORT", 9360)
 
 USE_UNIFIED_BACKEND = _env_bool("USE_UNIFIED_BACKEND", True)
-USE_INTERNAL_HUNYUAN_PIPELINE = _env_bool("USE_INTERNAL_HUNYUAN_PIPELINE", False)
+USE_INTERNAL_HUNYUAN_PIPELINE = _env_bool("USE_INTERNAL_HUNYUAN_PIPELINE", True)
 USE_COMFY_ADAPTER = _env_bool("USE_COMFY_ADAPTER", True)
 ENABLE_MODEL_AUTO_UNLOAD = _env_bool("ENABLE_MODEL_AUTO_UNLOAD", False)
 ENABLE_GPU_JOB_SERIALIZATION = _env_bool("ENABLE_GPU_JOB_SERIALIZATION", True)
@@ -49,18 +48,25 @@ COMFY_BASE_URL = os.environ.get("VOLUMIA_COMFY_BASE_URL", f"http://{COMFY_HOST}:
 
 def _resolve_default_comfy_dir() -> Path:
     candidates = [
-        r"E:\AI\ComfyUI_VOL"
+        r"E:\AI\ComfyUI_VOL",
     ]
     for raw in candidates:
         candidate = Path(raw).expanduser().resolve()
         if (candidate / "main.py").is_file():
             return candidate
-    return Path(candidates[0]).expanduser().resolve()
+    raise FileNotFoundError(
+        "ComfyUI directory not found. Set VOLUMIA_COMFY_DIR to a valid folder containing main.py."
+    )
 
 
 _env_comfy_dir = os.environ.get("VOLUMIA_COMFY_DIR", "").strip()
-COMFY_DIR = (Path(_env_comfy_dir).expanduser().resolve() if _env_comfy_dir else _resolve_default_comfy_dir())
-COMFY_PYTHON_EXE = os.environ.get("VOLUMIA_COMFY_PYTHON_EXE", "").strip()
+COMFY_DIR = Path(_env_comfy_dir).expanduser().resolve() if _env_comfy_dir else _resolve_default_comfy_dir()
+
+DEFAULT_COMFY_PYTHON_EXE = Path(r"F:\MINICONDA\envs\volumia\python.exe")
+COMFY_PYTHON_EXE = Path(
+    os.environ.get("VOLUMIA_COMFY_PYTHON_EXE", str(DEFAULT_COMFY_PYTHON_EXE)).strip()
+).expanduser().resolve()
+
 COMFY_STARTUP_TIMEOUT_MS = _env_int("VOLUMIA_COMFY_STARTUP_TIMEOUT_MS", 120_000)
 COMFY_WORKFLOW_TIMEOUT_MS = _env_int("VOLUMIA_COMFY_WORKFLOW_TIMEOUT_MS", 15 * 60 * 1000)
 
