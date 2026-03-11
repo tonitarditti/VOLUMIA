@@ -688,39 +688,62 @@ function applyModelVisualSettings(
         });
       }
 
+      const source = material as THREE.Material & {
+        color?: THREE.Color;
+        map?: THREE.Texture | null;
+        normalMap?: THREE.Texture | null;
+        roughnessMap?: THREE.Texture | null;
+        metalnessMap?: THREE.Texture | null;
+        aoMap?: THREE.Texture | null;
+        emissive?: THREE.Color;
+        emissiveMap?: THREE.Texture | null;
+        roughness?: number;
+        metalness?: number;
+        opacity?: number;
+        transparent?: boolean;
+        side?: THREE.Side;
+      };
       const materialName = (material.name ?? "").trim().toLowerCase();
       const isDefaultMaterial =
         materialName === "" || materialName === "default";
-      if (!isDefaultMaterial) {
-        return material;
+      const hasTextureMaps = Boolean(
+        source.map ||
+          source.normalMap ||
+          source.roughnessMap ||
+          source.metalnessMap ||
+          source.aoMap,
+      );
+      const baseColor =
+        source.color instanceof THREE.Color
+          ? source.color.clone()
+          : new THREE.Color(options.fallbackMaterialColor);
+      if (!hasTextureMaps && isDefaultMaterial) {
+        baseColor.set(options.fallbackMaterialColor);
       }
 
-      if (
-        material instanceof THREE.MeshStandardMaterial ||
-        material instanceof THREE.MeshPhysicalMaterial
-      ) {
-        const hasTextureMaps = Boolean(
-          material.map ||
-          material.normalMap ||
-          material.roughnessMap ||
-          material.metalnessMap ||
-          material.aoMap,
-        );
-        if (!hasTextureMaps) {
-          material.color.set(options.fallbackMaterialColor);
-          material.roughness = 0.62;
-          material.metalness = 0.08;
-        }
-        return material;
-      }
-
-      const fallback = new THREE.MeshStandardMaterial({
-        color: options.fallbackMaterialColor,
-        roughness: 0.62,
-        metalness: 0.08,
+      const standard = new THREE.MeshStandardMaterial({
+        name: material.name || "default",
+        color: baseColor,
+        map: source.map ?? null,
+        normalMap: source.normalMap ?? null,
+        roughnessMap: source.roughnessMap ?? null,
+        metalnessMap: source.metalnessMap ?? null,
+        aoMap: source.aoMap ?? null,
+        emissive: source.emissive ?? new THREE.Color(0x000000),
+        emissiveMap: source.emissiveMap ?? null,
+        roughness:
+          typeof source.roughness === "number" ? source.roughness : 0.62,
+        metalness:
+          typeof source.metalness === "number" ? source.metalness : 0.08,
+        transparent: source.transparent === true,
+        opacity: typeof source.opacity === "number" ? source.opacity : 1,
+        side:
+          typeof source.side === "number" ? source.side : THREE.FrontSide,
       });
-      fallback.name = material.name || "default";
-      return fallback;
+      if (standard.map) {
+        normalizeTextureColorSpace(standard.map);
+      }
+      return standard;
     });
 
     if (Array.isArray(child.material)) {
@@ -735,10 +758,7 @@ function applyModelVisualSettings(
       }
       stats.totalMaterials += 1;
 
-      if (
-        material instanceof THREE.MeshStandardMaterial ||
-        material instanceof THREE.MeshPhysicalMaterial
-      ) {
+      if (material instanceof THREE.MeshStandardMaterial) {
         material.envMapIntensity = options.envMapIntensity;
       }
 

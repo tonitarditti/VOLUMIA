@@ -53,6 +53,9 @@ export const backendClient = {
     referenceImages: string[];
     preset?: "fast" | "balanced" | "high" | "quality";
     timeoutMs?: number;
+    targetTriangleCount?: number;
+    textureAtlasSize?: number;
+    allowMeshOnlyFallback?: boolean;
   }) {
     await this.startBackend();
     return await requestJson<{ jobId: string; status: string }>("/jobs/texture", {
@@ -63,6 +66,9 @@ export const backendClient = {
         referenceImages: payload.referenceImages,
         preset: payload.preset ?? "balanced",
         timeoutMs: payload.timeoutMs ?? 0,
+        targetTriangleCount: payload.targetTriangleCount,
+        textureAtlasSize: payload.textureAtlasSize,
+        allowMeshOnlyFallback: payload.allowMeshOnlyFallback,
       }),
     });
   },
@@ -108,4 +114,3 @@ export const backendClient = {
     return await desktopApi.saveComfyConfig(patch);
   },
 };
-

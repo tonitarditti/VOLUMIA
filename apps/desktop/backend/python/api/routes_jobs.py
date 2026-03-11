@@ -21,6 +21,9 @@ class TextureJobRequest(BaseModel):
     preset: str = "balanced"
     timeout_ms: int | None = Field(default=None, alias="timeoutMs")
     repo_root: str | None = Field(default=None, alias="repoRoot")
+    target_triangle_count: int | None = Field(default=None, alias="targetTriangleCount")
+    texture_atlas_size: int | None = Field(default=None, alias="textureAtlasSize")
+    allow_mesh_only_fallback: bool | None = Field(default=None, alias="allowMeshOnlyFallback")
 
 
 class ReconstructJobRequest(BaseModel):
