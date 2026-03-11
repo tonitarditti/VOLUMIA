@@ -46,7 +46,16 @@ PRESET_CONFIGS: Dict[str, Dict[str, int]] = {
 
 
 def log_line(message: str) -> None:
-    print(f"[hunyuan_texgen] {message}", flush=True)
+    text = f"[hunyuan_texgen] {message}"
+    try:
+        print(text, flush=True)
+    except OSError:
+        # Some detached Windows runtimes can expose invalid stdout handles.
+        try:
+            sys.stderr.write(f"{text}\n")
+            sys.stderr.flush()
+        except Exception:
+            return
 
 
 def ensure_dir(dir_path: str) -> None:

@@ -45,10 +45,27 @@ ENABLE_GPU_JOB_SERIALIZATION = _env_bool("ENABLE_GPU_JOB_SERIALIZATION", True)
 COMFY_HOST = os.environ.get("VOLUMIA_COMFY_HOST", "127.0.0.1")
 COMFY_PORT = _env_int("VOLUMIA_COMFY_PORT", 8188)
 COMFY_BASE_URL = os.environ.get("VOLUMIA_COMFY_BASE_URL", f"http://{COMFY_HOST}:{COMFY_PORT}").rstrip("/")
-COMFY_DIR = Path(os.environ.get("VOLUMIA_COMFY_DIR", r"C:\AI\ComfyUI_VOL")).resolve()
+
+
+def _resolve_default_comfy_dir() -> Path:
+    candidates = [
+        r"C:\AI\ComfyUI_VOL",
+        r"E:\AI\ComfyUI_VOL",
+        r"E:\ComfyUI_VOL",
+        r"C:\ComfyUI",
+        r"E:\ComfyUI",
+    ]
+    for raw in candidates:
+        candidate = Path(raw).expanduser().resolve()
+        if (candidate / "main.py").is_file():
+            return candidate
+    return Path(candidates[0]).expanduser().resolve()
+
+
+_env_comfy_dir = os.environ.get("VOLUMIA_COMFY_DIR", "").strip()
+COMFY_DIR = (Path(_env_comfy_dir).expanduser().resolve() if _env_comfy_dir else _resolve_default_comfy_dir())
 COMFY_PYTHON_EXE = os.environ.get("VOLUMIA_COMFY_PYTHON_EXE", "").strip()
 COMFY_STARTUP_TIMEOUT_MS = _env_int("VOLUMIA_COMFY_STARTUP_TIMEOUT_MS", 120_000)
 COMFY_WORKFLOW_TIMEOUT_MS = _env_int("VOLUMIA_COMFY_WORKFLOW_TIMEOUT_MS", 15 * 60 * 1000)
 
 GPU_HEAVY_JOB_TYPES = {"reconstruct", "texture"}
-
