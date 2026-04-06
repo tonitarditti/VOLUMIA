@@ -19,8 +19,8 @@ const iconByVariant: Record<LogoIconVariant, string> = {
 
 const emphasisShadow: Record<LogoEmphasis, string | undefined> = {
   none: undefined,
-  soft: "drop-shadow(0 8px 20px rgba(45, 123, 255, 0.24))",
-  glow: "drop-shadow(0 0 24px rgba(116, 238, 255, 0.34)) drop-shadow(0 12px 30px rgba(140, 99, 255, 0.3))",
+  soft: "drop-shadow(0 8px 20px rgba(10, 132, 255, 0.24))",
+  glow: "drop-shadow(0 0 24px rgba(0, 212, 255, 0.34)) drop-shadow(0 12px 30px rgba(108, 77, 255, 0.3))",
 };
 
 export function LogoIcon({
@@ -53,3 +53,4 @@ export function LogoIcon({
     </span>
   );
 }
+

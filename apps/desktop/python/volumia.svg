@@ -1,22 +1,64 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="980" height="260" viewBox="0 0 980 260" fill="none">
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none">
   <defs>
-    <linearGradient id="wordmarkEdgeLight" x1="84" y1="40" x2="154" y2="184" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#66E8FF"/>
-      <stop offset="0.55" stop-color="#2AAEFF"/>
-      <stop offset="1" stop-color="#315DFF"/>
+    <linearGradient id="vSolid" x1="324" y1="248" x2="564" y2="742" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7C8DB9"/>
+      <stop offset="0.42" stop-color="#35466A"/>
+      <stop offset="1" stop-color="#0A122B"/>
     </linearGradient>
-    <linearGradient id="wordmarkMeshLight" x1="132" y1="52" x2="178" y2="196" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#82ECFF"/>
-      <stop offset="1" stop-color="#8D63FF"/>
+    <linearGradient id="edgeCyan" x1="310" y1="248" x2="560" y2="742" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#00D4FF"/>
+      <stop offset="0.58" stop-color="#3AC8FF"/>
+      <stop offset="1" stop-color="#0A84FF"/>
     </linearGradient>
+    <linearGradient id="meshStroke" x1="552" y1="280" x2="822" y2="760" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#8EF3FF"/>
+      <stop offset="0.62" stop-color="#46CBFF"/>
+      <stop offset="1" stop-color="#9B70FF"/>
+    </linearGradient>
+    <linearGradient id="meshFill" x1="596" y1="292" x2="692" y2="758" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#8EF3FF" stop-opacity="0.32"/>
+      <stop offset="0.5" stop-color="#58D7FF" stop-opacity="0.2"/>
+      <stop offset="1" stop-color="#6C4DFF" stop-opacity="0.28"/>
+    </linearGradient>
+    <clipPath id="meshClip">
+      <path d="M546 624C646 538 746 466 812 286C714 304 654 368 590 456C560 496 544 548 526 620C572 680 616 730 664 764C646 712 604 668 546 624Z"/>
+    </clipPath>
+    <filter id="softGlow" x="270" y="210" width="590" height="610" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="10" result="blur"/>
+      <feBlend in="SourceGraphic" in2="blur" mode="screen"/>
+    </filter>
   </defs>
 
-  <rect x="22" y="20" width="216" height="216" rx="44" fill="#F1F5FE"/>
-  <path d="M82 62H128L154 182H124L82 62Z" fill="#26365E"/>
-  <path d="M82 62L154 182" stroke="url(#wordmarkEdgeLight)" stroke-width="3.5"/>
-  <path d="M156 182C184 156 210 130 226 62C198 70 178 84 162 106C154 118 149 130 144 180C156 196 168 210 182 224C176 206 168 194 156 182Z" fill="#2C3E66"/>
-  <path d="M156 182C184 156 210 130 226 62C198 70 178 84 162 106C154 118 149 130 144 180C156 196 168 210 182 224C176 206 168 194 156 182Z" stroke="url(#wordmarkMeshLight)" stroke-width="2.5"/>
+  <g filter="url(#softGlow)">
+    <path d="M318 248H478L558 624H470L318 248Z" fill="url(#vSolid)"/>
+    <path d="M318 248L558 624" stroke="url(#edgeCyan)" stroke-width="6"/>
 
-  <text x="286" y="136" font-family="Aptos, 'Segoe UI Variable Text', 'Segoe UI', sans-serif" font-size="78" letter-spacing="0.18em" font-weight="600" fill="#0A1022">VOLUMIA</text>
-  <text x="288" y="178" font-family="Aptos, 'Segoe UI Variable Text', 'Segoe UI', sans-serif" font-size="16" letter-spacing="0.24em" font-weight="600" fill="#627193">SPATIAL INTELLIGENCE</text>
+    <path d="M546 624C646 538 746 466 812 286C714 304 654 368 590 456C560 496 544 548 526 620C572 680 616 730 664 764C646 712 604 668 546 624Z" fill="url(#meshFill)"/>
+
+    <g clip-path="url(#meshClip)" stroke="url(#meshStroke)" stroke-width="2.4" stroke-linecap="round" opacity="0.9">
+      <path d="M520 620C584 660 636 708 672 768"/>
+      <path d="M530 596C604 644 666 700 710 764"/>
+      <path d="M542 572C622 622 690 686 740 758"/>
+      <path d="M556 546C640 602 712 670 768 750"/>
+      <path d="M570 518C662 578 740 650 796 740"/>
+      <path d="M586 488C682 554 756 634 818 728"/>
+      <path d="M602 456C700 526 774 612 828 700"/>
+      <path d="M616 424C710 500 782 590 830 672"/>
+      <path d="M628 392C716 474 786 562 828 638"/>
+      <path d="M638 358C720 446 788 530 822 602"/>
+      <path d="M646 324C724 416 788 498 812 560"/>
+
+      <path d="M534 646C590 588 638 532 678 462C718 390 744 332 766 292"/>
+      <path d="M550 670C604 608 652 548 690 478C728 408 752 344 768 298"/>
+      <path d="M568 692C620 630 664 568 700 498C736 426 758 358 768 308"/>
+      <path d="M586 712C634 650 674 590 708 518C742 448 762 374 766 320"/>
+      <path d="M606 730C648 668 686 610 718 540C748 474 766 394 764 334"/>
+      <path d="M626 744C662 686 698 630 726 564C752 500 768 420 760 346"/>
+      <path d="M644 756C674 700 708 646 734 586C758 528 772 446 752 360"/>
+    </g>
+
+    <path d="M478 248L558 624" stroke="#E5ECFF" stroke-opacity="0.76" stroke-width="4"/>
+    <path d="M558 624L664 764" stroke="#6C4DFF" stroke-opacity="0.8" stroke-width="4"/>
+  </g>
 </svg>
+

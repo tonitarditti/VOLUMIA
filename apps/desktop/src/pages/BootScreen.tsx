@@ -468,44 +468,38 @@ export function BootScreen() {
         className="absolute inset-0"
         style={{ backgroundImage: "var(--boot-glow)" }}
       />
-      <div className="relative flex w-full max-w-xl flex-col items-center gap-10 rounded-[32px] border border-[var(--border)] bg-[var(--surface-2)] px-10 py-14 shadow-[var(--shadow-panel)]">
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0"
+        style={{
+          background:
+            "radial-gradient(circle at 50% 34%, color-mix(in srgb, var(--accent-2) 12%, transparent), transparent 44%)",
+        }}
+      />
+
+      <div className="relative flex w-full max-w-[560px] flex-col items-center">
         <SplashLogo
-          size={72}
+          size={114}
           variant={resolvedTheme === "dark" ? "dark" : "light"}
           glow
+          showWordmark={false}
         />
 
-        <div className="w-full max-w-[360px] space-y-3">
-          {steps.map((step) => (
-            <div key={step.id} className="flex items-center gap-3">
-              <div className="grid h-4 w-4 place-items-center">
-                {step.error ? (
-                  <div className="h-2.5 w-2.5 rounded-full bg-[var(--danger)]" />
-                ) : step.done ? (
-                  <div className="h-2.5 w-2.5 rounded-full bg-[var(--success)]" />
-                ) : (
-                  <div
-                    className={`h-2.5 w-2.5 rounded-full ${step.active ? "bg-[var(--accent)]" : "bg-[var(--border)]"}`}
-                  />
-                )}
-              </div>
-              <p
-                className={`text-[13px] ${step.error ? "text-[var(--danger)]" : step.active ? "text-[var(--text)]" : "text-[var(--text-muted)]"}`}
-              >
-                {step.text}
-              </p>
-            </div>
-          ))}
-        </div>
+        <p className="mt-6 text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--text-faint)]">
+          VOLUMIA
+        </p>
+        <p className="mt-2 text-[10px] uppercase tracking-[0.18em] text-[var(--text-faint)]">
+          Spatial Intelligence Engine
+        </p>
 
-        <div className="w-full max-w-[360px]">
-          <div className="h-1.5 overflow-hidden rounded-full bg-[var(--surface-1)]">
+        <div className="mt-10 w-full max-w-[360px]">
+          <div className="h-px overflow-hidden bg-[color:color-mix(in_srgb,var(--border)_72%,transparent)]">
             <div
-              className="h-full rounded-full bg-[linear-gradient(90deg,var(--accent),var(--accent-2))]"
+              className="h-full bg-[linear-gradient(90deg,var(--accent),var(--accent-2))]"
               style={{ width: `${clamp(displayedProgress, 0, 100)}%` }}
             />
           </div>
-          <div className="mt-2 flex items-center justify-between text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--text-faint)]">
+          <div className="mt-2 flex items-center justify-between text-[9px] font-semibold uppercase tracking-[0.12em] text-[var(--text-faint)]">
             <span>
               {boot.error
                 ? `error - ${STARTUP_STAGE_SPEC[boot.stage].label}`
@@ -513,16 +507,40 @@ export function BootScreen() {
             </span>
             <span>{Math.floor(clamp(displayedProgress, 0, 100))}%</span>
           </div>
-          <p className="mt-3 text-[12px] leading-5 text-[var(--text-muted)]">
-            {boot.detail}
-          </p>
-          {boot.error ? (
-            <p className="mt-3 text-[12px] leading-5 text-[var(--danger)]">
-              Startup stopped. Open diagnostics from Dashboard once engine is
-              reachable.
-            </p>
-          ) : null}
         </div>
+
+        <div className="mt-6 w-full max-w-[360px] space-y-1.5 opacity-75">
+          {steps.map((step) => (
+            <div key={step.id} className="flex items-center gap-2.5">
+              <div className="grid h-3.5 w-3.5 place-items-center">
+                {step.error ? (
+                  <div className="h-1.5 w-1.5 rounded-full bg-[var(--danger)]" />
+                ) : step.done ? (
+                  <div className="h-1.5 w-1.5 rounded-full bg-[var(--success)]" />
+                ) : (
+                  <div
+                    className={`h-1.5 w-1.5 rounded-full ${step.active ? "bg-[var(--accent)]" : "bg-[var(--border)]"}`}
+                  />
+                )}
+              </div>
+              <p
+                className={`text-[11px] ${step.error ? "text-[var(--danger)]" : step.active ? "text-[var(--text-muted)]" : "text-[var(--text-faint)]"}`}
+              >
+                {step.text}
+              </p>
+            </div>
+          ))}
+        </div>
+
+        <p className="mt-5 max-w-[360px] text-center text-[11px] leading-5 text-[var(--text-muted)]">
+          {boot.detail}
+        </p>
+        {boot.error ? (
+          <p className="mt-2 max-w-[360px] text-center text-[11px] leading-5 text-[var(--danger)]">
+            Startup stopped. Open diagnostics from Dashboard once engine is
+            reachable.
+          </p>
+        ) : null}
       </div>
     </div>
   );

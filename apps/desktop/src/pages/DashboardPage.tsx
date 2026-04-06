@@ -355,13 +355,13 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
   return (
     <div className="grid h-full min-h-0 w-full grid-cols-[minmax(0,1fr)_260px] gap-0 overflow-hidden">
       <div className="min-h-0 overflow-y-auto px-8 py-7">
-        <section className="rounded-[24px] border border-[var(--border)] bg-[var(--surface-2)] p-6 shadow-[var(--shadow-panel)]">
+        <section className="px-1 pb-1">
           <div className="flex flex-wrap items-start justify-between gap-5">
             <div className="max-w-3xl">
               <LogoPrimary
-                size={24}
+                size={30}
                 variant={resolvedTheme === "dark" ? "dark" : "light"}
-                className="mb-4"
+                className="mb-5"
               />
               <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--text-faint)]">
                 {t("dashboard.workspace")}
@@ -394,7 +394,7 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
             </div>
           </div>
 
-          <div className="mt-6 grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+          <div className="mt-7 grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
             <div className="rounded-[20px] border border-[var(--border)] bg-[var(--surface-1)] p-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>

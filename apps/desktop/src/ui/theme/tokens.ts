@@ -107,17 +107,17 @@ export type ThemeTokens = {
 };
 
 export const brandPalette = {
-  neuralBlue: "#2D7BFF",
-  digitalCyan: "#74EEFF",
-  deepLearningViolet: "#8C63FF",
-  graphiteBlack: "#070B19",
-  technicalGrey: "#7C88A6",
+  neuralBlue: "#0A84FF",
+  digitalCyan: "#00D4FF",
+  deepLearningViolet: "#6C4DFF",
+  graphiteBlack: "#0B0D12",
+  technicalGrey: "#8A9199",
 } as const;
 
 const sharedTokens = {
   accentPrimary: brandPalette.neuralBlue,
   accentPrimaryHover: "#4A92FF",
-  accentPrimarySoft: "rgba(45, 123, 255, 0.18)",
+  accentPrimarySoft: "rgba(10, 132, 255, 0.18)",
   accentContrast: "#F1F6FF",
   statusReady: brandPalette.digitalCyan,
   statusBusy: brandPalette.deepLearningViolet,
@@ -280,17 +280,17 @@ export const themeTokens: Record<Theme, ThemeTokens> = {
     success: sharedTokens.statusReady,
     warning: sharedTokens.statusBusy,
     danger: sharedTokens.statusError,
-    successBg: "rgba(116, 238, 255, 0.18)",
-    warningBg: "rgba(140, 99, 255, 0.18)",
+    successBg: "rgba(0, 212, 255, 0.18)",
+    warningBg: "rgba(108, 77, 255, 0.18)",
     dangerBg: "rgba(211, 106, 154, 0.18)",
     badgeNeutralBorder: "rgba(194, 205, 221, 0.18)",
     badgeNeutralBg: "rgba(194, 205, 221, 0.08)",
     badgeNeutralText: "rgba(197, 210, 230, 0.82)",
-    badgeSuccessBorder: "rgba(116, 238, 255, 0.3)",
-    badgeSuccessBg: "rgba(116, 238, 255, 0.16)",
+    badgeSuccessBorder: "rgba(0, 212, 255, 0.3)",
+    badgeSuccessBg: "rgba(0, 212, 255, 0.16)",
     badgeSuccessText: "#8FF3FF",
-    badgeWarningBorder: "rgba(140, 99, 255, 0.3)",
-    badgeWarningBg: "rgba(140, 99, 255, 0.16)",
+    badgeWarningBorder: "rgba(108, 77, 255, 0.3)",
+    badgeWarningBg: "rgba(108, 77, 255, 0.16)",
     badgeWarningText: "#C3B1FF",
     badgeDangerBorder: "rgba(211, 106, 154, 0.28)",
     badgeDangerBg: "rgba(211, 106, 154, 0.16)",
@@ -298,7 +298,7 @@ export const themeTokens: Record<Theme, ThemeTokens> = {
     shadow: "0 10px 28px rgba(0, 0, 0, 0.38)",
     shadowPanel:
       "0 20px 56px rgba(0, 0, 0, 0.42), 0 2px 10px rgba(0, 0, 0, 0.24)",
-    focusRing: "rgba(116, 238, 255, 0.44)",
+    focusRing: "rgba(0, 212, 255, 0.44)",
     glassBg: "rgba(14, 20, 37, 0.72)",
     glassBgStrong: "rgba(16, 24, 45, 0.86)",
     glassBorder: "rgba(124, 136, 166, 0.24)",
@@ -329,11 +329,11 @@ export const themeTokens: Record<Theme, ThemeTokens> = {
     space24: sharedTokens.space24,
     space32: sharedTokens.space32,
     bodyBackgroundImage:
-      "radial-gradient(circle at 12% -8%, rgba(116, 238, 255, 0.14), transparent 50%), radial-gradient(circle at 92% 0%, rgba(140, 99, 255, 0.12), transparent 44%), linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0)), var(--bg)",
+      "radial-gradient(circle at 12% -8%, rgba(0, 212, 255, 0.14), transparent 50%), radial-gradient(circle at 92% 0%, rgba(108, 77, 255, 0.12), transparent 44%), linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0)), var(--bg)",
     appSceneBackground:
-      "radial-gradient(circle at 12% -8%, rgba(116, 238, 255, 0.16), transparent 46%), radial-gradient(circle at 92% 0%, rgba(140, 99, 255, 0.14), transparent 40%), linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0)), var(--bg)",
+      "radial-gradient(circle at 12% -8%, rgba(0, 212, 255, 0.16), transparent 46%), radial-gradient(circle at 92% 0%, rgba(108, 77, 255, 0.14), transparent 40%), linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(255, 255, 255, 0)), var(--bg)",
     bootGlow:
-      "radial-gradient(circle at 50% 38%, rgba(116, 238, 255, 0.2), transparent 33%), radial-gradient(circle at 64% 54%, rgba(140, 99, 255, 0.18), transparent 42%)",
+      "radial-gradient(circle at 50% 38%, rgba(0, 212, 255, 0.2), transparent 33%), radial-gradient(circle at 64% 54%, rgba(108, 77, 255, 0.18), transparent 42%)",
     projectPreviewGradient:
       "linear-gradient(132deg, #060A17 0%, #0A274C 52%, #2A2261 100%)",
     projectPreviewOverlay:
@@ -360,3 +360,5 @@ export const themeTokens: Record<Theme, ThemeTokens> = {
     scrollbarThumb: "rgba(171, 187, 208, 0.28)",
   },
 };
+
+

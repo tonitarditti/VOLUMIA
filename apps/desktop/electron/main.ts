@@ -263,7 +263,7 @@ function createMainWindow() {
     minHeight: 760,
     frame: false,
     titleBarStyle: "hidden",
-    backgroundColor: "#070B19",
+    backgroundColor: "#0B0D12",
     icon: iconPath,
     webPreferences: {
       preload: preloadPath,

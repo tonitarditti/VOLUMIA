@@ -7,6 +7,7 @@ export type SplashLogoProps = {
   size?: number;
   variant?: SplashLogoVariant;
   glow?: boolean;
+  showWordmark?: boolean;
   className?: string;
 };
 
@@ -14,6 +15,7 @@ export function SplashLogo({
   size = 80,
   variant = "dark",
   glow = true,
+  showWordmark = true,
   className = "",
 }: SplashLogoProps) {
   const iconVariant = variant === "mono" ? "mono" : "brand";
@@ -26,7 +28,7 @@ export function SplashLogo({
         emphasis={glow ? "glow" : "soft"}
         title="VOLUMIA"
       />
-      <BrandWordmark size={24} variant={variant} />
+      {showWordmark ? <BrandWordmark size={24} variant={variant} /> : null}
     </div>
   );
 }

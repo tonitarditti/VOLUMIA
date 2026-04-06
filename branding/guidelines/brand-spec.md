@@ -35,6 +35,8 @@ The icon language is a 3D **V**:
 - Use `volumia-logo-horizontal-light.svg` on light surfaces.
 - Use monochrome logo when color is constrained.
 - Icon-only usage: navigation rails, compact badges, app icon assets.
+- In-app UI branding should use transparent logo assets (no square tile/background behind the mark).
+- Square/tile version is reserved for OS/app icon packaging contexts.
 
 ## Asset Paths
 - `branding/logo/volumia-icon-final.svg`
@@ -48,3 +50,4 @@ The icon language is a 3D **V**:
 - For full release parity across all targets, also generate:
   - `icon.ico` (Windows)
   - `icon.icns` (macOS)
+
