@@ -28,6 +28,10 @@ function tryGetElectronUserDataDir(): string | null {
 }
 
 function resolveFallbackUserDataDir() {
+  const runtimeRoot = process.env.VOLUMIA_RUNTIME_DIR?.trim();
+  if (runtimeRoot) {
+    return path.join(runtimeRoot, "userData");
+  }
   const appData = process.env.APPDATA?.trim();
   if (appData) {
     return appData;
@@ -62,8 +66,11 @@ export function getUserDataRoot() {
   }
 
   const baseUserDataDir = resolveBaseUserDataDir();
-  const root = path.join(baseUserDataDir, "volumia");
+  const root = baseUserDataDir;
   ensureDir(root);
+  ensureDir(path.join(root, "config"));
+  ensureDir(path.join(root, "state"));
+  ensureDir(path.join(root, "projects"));
   ensureDir(path.join(root, "models"));
   ensureDir(path.join(root, "workflows"));
   ensureDir(path.join(root, "outputs"));

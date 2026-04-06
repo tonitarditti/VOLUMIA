@@ -155,12 +155,15 @@ function getGenerationLogFilePath() {
   }
 
   try {
-    const logDir = path.join(app.getPath("userData"), "logs");
+    const logDir = app.getPath("logs");
     fs.mkdirSync(logDir, { recursive: true });
     generationLogFilePath = path.join(logDir, "generation.log");
     return generationLogFilePath;
   } catch {
-    generationLogFilePath = path.join(process.cwd(), "generation.log");
+    const runtimeRoot = process.env.VOLUMIA_RUNTIME_DIR?.trim() || "F:\\VOLUMIA_RUNTIME";
+    const fallbackLogDir = path.join(runtimeRoot, "logs");
+    fs.mkdirSync(fallbackLogDir, { recursive: true });
+    generationLogFilePath = path.join(fallbackLogDir, "generation.log");
     return generationLogFilePath;
   }
 }
@@ -529,14 +532,15 @@ function runPython(
 }
 
 function ensureAssetsDir() {
-  const assetsDir = path.join(app.getPath("userData"), "project-assets");
+  const runtimeRoot = process.env.VOLUMIA_RUNTIME_DIR?.trim() || "F:\\VOLUMIA_RUNTIME";
+  const assetsDir = path.join(runtimeRoot, "backend", "exports", "project-assets");
   fs.mkdirSync(assetsDir, { recursive: true });
   return assetsDir;
 }
 
 function ensureProjectAssetsDir(projectId: string) {
   const safeProjectId = sanitizeProjectId(projectId);
-  const projectAssetsDir = path.join(app.getPath("userData"), "project-assets", safeProjectId);
+  const projectAssetsDir = path.join(ensureAssetsDir(), safeProjectId);
   fs.mkdirSync(projectAssetsDir, { recursive: true });
   return projectAssetsDir;
 }
@@ -2255,7 +2259,7 @@ export function registerGenerationHandlers(getWindow: WindowGetter) {
   });
 
   ipcMain.handle("gen:open-output-folder", async (_event, payload: { glbPath?: string } | undefined) => {
-    const fallbackPath = path.join(app.getPath("userData"), "project-assets");
+    const fallbackPath = ensureAssetsDir();
     const targetPath = payload?.glbPath ? resolve(payload.glbPath) : fallbackPath;
     let folderPath = targetPath;
     try {

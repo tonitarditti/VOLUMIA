@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,7 +10,7 @@ from adapters.hunyuan_adapter import HunyuanAdapter
 from api.routes_health import router as health_router
 from api.routes_jobs import router as jobs_router
 from api.routes_projects import router as projects_router
-from config import BACKEND_VERSION, HOST, PORT, RUNTIME_DIR, RUNTIME_JOBS_DIR, RUNTIME_LOGS_DIR, RUNTIME_PROJECTS_DIR, RUNTIME_TEMP_DIR
+from config import ALL_RUNTIME_DIRS, BACKEND_VERSION, HOST, PORT, runtime_paths_payload
 from core.app_state import AppState
 from core.gpu_manager import GPUManager
 from core.job_manager import JobManager
@@ -17,18 +18,23 @@ from core.model_manager import ModelManager
 from core.process_registry import ProcessRegistry
 from services.output_service import OutputService
 
+logger = logging.getLogger("volumia.backend")
+if not logger.handlers:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s - %(message)s")
+
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
 def _ensure_runtime_dirs() -> None:
-    for directory in (RUNTIME_DIR, RUNTIME_LOGS_DIR, RUNTIME_TEMP_DIR, RUNTIME_JOBS_DIR, RUNTIME_PROJECTS_DIR):
+    for directory in ALL_RUNTIME_DIRS:
         directory.mkdir(parents=True, exist_ok=True)
 
 
 def create_app() -> FastAPI:
     _ensure_runtime_dirs()
+    logger.info("[startup] runtime paths: %s", runtime_paths_payload())
     app = FastAPI(
         title="VOLUMIA Unified Backend",
         version=BACKEND_VERSION,

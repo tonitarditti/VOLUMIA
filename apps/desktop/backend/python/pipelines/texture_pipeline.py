@@ -161,11 +161,12 @@ def run_texture_job(job_payload: dict[str, Any], app_state: Any, job_id: str, ca
     if not source_mesh.is_file():
         raise FileNotFoundError(f"Mesh file not found: {source_mesh}")
 
-    output_dir = output_service.get_job_output_dir(job_id)
-    prepared_mesh_path = output_dir / "prepared_mesh.glb"
-    final_glb_path = output_dir / "textured.glb"
-    maps_dir = output_dir / "textures"
-    metadata_path = output_dir / "texture-metadata.json"
+    job_dir = output_service.get_job_output_dir(job_id)
+    temp_dir = output_service.get_temp_job_dir(job_id)
+    maps_dir = output_service.get_texture_job_dir(job_id)
+    prepared_mesh_path = output_service.get_mesh_output_path(job_id, "prepared_mesh.glb")
+    final_glb_path = output_service.get_export_output_path(job_id, "textured.glb")
+    metadata_path = job_dir / "texture-metadata.json"
 
     if cancel_event.is_set():
         raise JobCancelledError("Cancelled before mesh cleanup.")
@@ -216,7 +217,7 @@ def run_texture_job(job_payload: dict[str, Any], app_state: Any, job_id: str, ca
                 hunyuan_result = hunyuan_adapter.generate_texture(
                     mesh_path=str(prepared_mesh_path),
                     reference_images=reference_images,
-                    output_glb_path=str(output_dir / "hunyuan_textured.glb"),
+                    output_glb_path=str(temp_dir / "hunyuan_textured.glb"),
                     timeout_ms=timeout_ms,
                     preset=preset,
                     repo_root=str(job_payload.get("repoRoot") or "").strip() or None,
@@ -240,7 +241,7 @@ def run_texture_job(job_payload: dict[str, Any], app_state: Any, job_id: str, ca
                 hunyuan_result = _run_legacy_hunyuan(
                     mesh_path=str(prepared_mesh_path),
                     reference_images=reference_images,
-                    output_dir=output_dir,
+                    output_dir=temp_dir,
                     preset=preset,
                     timeout_ms=timeout_ms,
                 )

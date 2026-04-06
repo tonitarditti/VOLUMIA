@@ -1,6 +1,5 @@
 import { spawn, type ChildProcess } from "child_process";
 import fs from "fs";
-import os from "os";
 import path from "path";
 import {
   type BackendStatusResponse,
@@ -13,6 +12,7 @@ import {
   type ComfySubmitJobPayload,
   type ComfySubmitJobResult,
 } from "./channels";
+import { ensureRuntimeLayout, resolveRuntimePaths, type RuntimePaths } from "./runtime-paths";
 
 type BackendHealth = {
   ok: boolean;
@@ -83,6 +83,7 @@ export class UnifiedBackendClient {
   private readonly host: string;
   private readonly port: number;
   private readonly baseUrl: string;
+  private readonly runtimePaths: RuntimePaths;
   private backendProcess: ChildProcess | null = null;
   private startupInFlight: Promise<void> | null = null;
 
@@ -90,6 +91,7 @@ export class UnifiedBackendClient {
     this.host = process.env.VOLUMIA_BACKEND_HOST ?? "127.0.0.1";
     this.port = Number.parseInt(process.env.VOLUMIA_BACKEND_PORT ?? "9360", 10) || 9360;
     this.baseUrl = `http://${this.host}:${this.port}`;
+    this.runtimePaths = ensureRuntimeLayout(resolveRuntimePaths());
   }
 
   async initBackend() {
@@ -200,6 +202,8 @@ export class UnifiedBackendClient {
 
   async getComfyLogs(limit = 200): Promise<string[]> {
     const candidates = [
+      path.join(this.runtimePaths.logs, "comfyui.log"),
+      // Legacy compatibility fallbacks.
       path.resolve(process.cwd(), "backend", "python", "runtime", "logs", "comfyui.log"),
       path.resolve(__dirname, "..", "backend", "python", "runtime", "logs", "comfyui.log"),
     ];
@@ -410,6 +414,7 @@ export class UnifiedBackendClient {
         ...process.env,
         VOLUMIA_BACKEND_HOST: this.host,
         VOLUMIA_BACKEND_PORT: String(this.port),
+        VOLUMIA_RUNTIME_DIR: this.runtimePaths.root,
       },
     });
     child.stdout?.on("data", (chunk) => {
@@ -472,7 +477,9 @@ export class UnifiedBackendClient {
     if (!imageBase64 || imageBase64.trim().length === 0) {
       throw new Error("Either imagePath or imageBase64 is required.");
     }
-    const outputPath = path.join(os.tmpdir(), `volumia-unified-${Date.now()}.png`);
+    const tempDir = this.runtimePaths.backendTemp;
+    fs.mkdirSync(tempDir, { recursive: true });
+    const outputPath = path.join(tempDir, `volumia-unified-${Date.now()}.png`);
     const normalized = imageBase64.replace(/^data:image\/\w+;base64,/i, "").trim();
     const buffer = Buffer.from(normalized, "base64");
     fs.writeFileSync(outputPath, buffer);

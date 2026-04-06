@@ -24,11 +24,29 @@ import { processPendingCacheClearOnStart, registerSystemPreferencesHandlers } fr
 import { registerSystemPythonHandlers } from "./ipc/system-python.ipc";
 import { registerWindowControlHandlers } from "./ipc/window-controls.ipc";
 import { registerWindowSettingsHandlers } from "./ipc/window-settings.ipc";
+import { ensureRuntimeLayout, resolveRuntimePaths } from "./runtime-paths";
 import { UnifiedBackendClient } from "./unified-backend";
 import { createWindowStateController } from "./window-state";
 
 const isDev = !app.isPackaged;
 const devServerUrl = process.env.VITE_DEV_SERVER_URL ?? "http://127.0.0.1:5173";
+const runtimePaths = ensureRuntimeLayout(resolveRuntimePaths());
+
+function configureRuntimePaths() {
+  process.env.VOLUMIA_RUNTIME_DIR = runtimePaths.root;
+  process.env.VOLUMIA_RUNTIME_USERDATA_DIR = runtimePaths.userData;
+  process.env.VOLUMIA_RUNTIME_SESSION_DIR = runtimePaths.sessionData;
+  process.env.VOLUMIA_RUNTIME_BACKEND_DIR = runtimePaths.backend;
+  process.env.VOLUMIA_RUNTIME_LOGS_DIR = runtimePaths.logs;
+  process.env.VOLUMIA_RUNTIME_CRASH_DIR = runtimePaths.crashDumps;
+
+  app.setPath("userData", runtimePaths.userData);
+  app.setPath("sessionData", runtimePaths.sessionData);
+  app.setPath("crashDumps", runtimePaths.crashDumps);
+  app.setAppLogsPath(runtimePaths.logs);
+}
+
+configureRuntimePaths();
 
 let mainWindow: BrowserWindow | null = null;
 let windowStateController: ReturnType<typeof createWindowStateController> | null = null;
@@ -523,9 +541,12 @@ function registerBackendHandlers() {
 }
 
 app.whenReady().then(() => {
-  if (process.env.NODE_ENV === "development") {
-    console.log("UserData path:", app.getPath("userData"));
-  }
+  console.log("[VOLUMIA][runtime] root:", runtimePaths.root);
+  console.log("[VOLUMIA][runtime] userData:", app.getPath("userData"));
+  console.log("[VOLUMIA][runtime] sessionData:", app.getPath("sessionData"));
+  console.log("[VOLUMIA][runtime] crashDumps:", app.getPath("crashDumps"));
+  console.log("[VOLUMIA][runtime] logs:", app.getPath("logs"));
+  console.log("[VOLUMIA][runtime] backend:", runtimePaths.backend);
 
   processPendingCacheClearOnStart();
 

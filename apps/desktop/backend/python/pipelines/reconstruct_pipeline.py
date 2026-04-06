@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import shutil
+from pathlib import Path
 from threading import Event
 from typing import Any
 
@@ -63,6 +65,28 @@ def run_reconstruct_job(job_payload: dict[str, Any], app_state: Any, job_id: str
         "workflowName": result.get("workflowName"),
         **(result.get("output") or {}),
     }
+
+    # Keep a runtime-local export copy even when Comfy writes elsewhere.
+    exported_glb_path: str | None = None
+    for candidate_key in ("texturedGlbPath", "glbPath", "meshPath"):
+        raw_candidate = str(output_payload.get(candidate_key) or "").strip()
+        if not raw_candidate:
+            continue
+        source = Path(raw_candidate).expanduser().resolve()
+        if not source.is_file():
+            continue
+        try:
+            destination = output_service.get_export_output_path(job_id, f"reconstruct_{source.name}")
+            shutil.copyfile(source, destination)
+            exported_glb_path = str(destination)
+            break
+        except Exception:
+            continue
+    if exported_glb_path:
+        output_payload["glbPath"] = exported_glb_path
+        output_payload["meshPath"] = exported_glb_path
+        output_payload["texturedGlbPath"] = exported_glb_path
+
     if project_id:
         output_service.register_output(project_id, job_id, output_payload)
 
@@ -74,4 +98,3 @@ def run_reconstruct_job(job_payload: dict[str, Any], app_state: Any, job_id: str
         message="Saving reconstruct outputs.",
     )
     return output_payload
-
