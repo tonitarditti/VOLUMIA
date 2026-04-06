@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="780" height="220" viewBox="0 0 780 220" fill="none">
+  <defs>
+    <linearGradient id="logo-dark-right-fill" x1="132" y1="30" x2="190" y2="172" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#00D4FF"/>
+      <stop offset="1" stop-color="#6C4DFF"/>
+    </linearGradient>
+  </defs>
+  <path d="M56 30H102L118 172H84L56 30Z" fill="#0A84FF"/>
+  <path d="M132 30H178L150 172H118L132 30Z" fill="url(#logo-dark-right-fill)" fill-opacity="0.92"/>
+  <path d="M102 30L118 172" stroke="#4BB8FF" stroke-opacity="0.76" stroke-width="3"/>
+  <path d="M164 30L146 172" stroke="#A1EFFF" stroke-opacity="0.58" stroke-width="2.6"/>
+  <path d="M150 30L134 172" stroke="#C5B9FF" stroke-opacity="0.46" stroke-width="2.2"/>
+
+  <text x="228" y="118" font-family="Aptos, 'Segoe UI Variable Text', 'Segoe UI', sans-serif" font-size="72" letter-spacing="0.18em" font-weight="600" fill="#EAF2FF">VOLUMIA</text>
+  <text x="230" y="155" font-family="Aptos, 'Segoe UI Variable Text', 'Segoe UI', sans-serif" font-size="16" letter-spacing="0.24em" font-weight="600" fill="#8A9199">SPATIAL INTELLIGENCE</text>
+</svg>

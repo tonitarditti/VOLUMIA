@@ -6,10 +6,11 @@ import {
 } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAppCommands } from "@/app/AppCommandsContext";
+import { LogoPrimary } from "@/components/branding";
 import { desktopApi, hasDesktopBridge } from "@/electron/desktopApi";
 import { useProjects } from "@/projects/context";
 import { selectActiveProject } from "@/projects/selectors";
-import { BrandMark } from "./BrandMark";
+import { useSettings } from "@/volumia/settings/context";
 
 type ShellTopBarProps = {
   eyebrow: string;
@@ -77,6 +78,7 @@ export function TopBar({
   statusSlot,
   rightSlot,
 }: ShellTopBarProps) {
+  const { resolvedTheme } = useSettings();
   const navigate = useNavigate();
   const location = useLocation();
   const { state } = useProjects();
@@ -250,12 +252,12 @@ export function TopBar({
         <button
           type="button"
           onClick={() => navigate("/dashboard")}
-          className="no-drag flex items-center gap-2 rounded-[var(--radius-md)] px-2 py-1.5 transition-colors hover:bg-[var(--accent-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+          className="no-drag flex items-center gap-2 rounded-[var(--radius-md)] px-2 py-1 transition-colors hover:bg-[var(--accent-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
         >
-          <BrandMark size={18} />
-          <span className="text-[10px] font-semibold tracking-[0.18em] text-[var(--text)]">
-            VOLUMIA
-          </span>
+          <LogoPrimary
+            size={22}
+            variant={resolvedTheme === "dark" ? "dark" : "light"}
+          />
         </button>
         <div className="hidden h-4 w-px bg-[var(--panel-border)] min-[1160px]:block" />
         <div

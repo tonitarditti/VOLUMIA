@@ -20,6 +20,13 @@
   "build": {
     "appId": "com.volumia.desktop",
     "productName": "Volumia",
+    "icon": "public/assets/branding/icon.png",
+    "win": {
+      "icon": "public/assets/branding/icon.png"
+    },
+    "linux": {
+      "icon": "public/assets/branding/icon.png"
+    },
     "directories": {
       "output": "release"
     },

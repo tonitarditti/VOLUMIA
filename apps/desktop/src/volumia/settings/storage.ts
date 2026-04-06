@@ -18,7 +18,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   languageMode: "system",
   language: "es",
   themeMode: "manual",
-  theme: "light",
+  theme: "dark",
   colorway: "neutral",
   studioProfile: "neutral",
   timeTheme: { ...DEFAULT_TIME_THEME },

@@ -22,11 +22,11 @@
       }
 
       body {
-        color: #1e1b17;
+        color: #e6edf8;
         background:
-          radial-gradient(60rem 35rem at 10% 0%, rgba(208, 188, 158, 0.2), transparent 65%),
-          radial-gradient(60rem 35rem at 100% 20%, rgba(140, 118, 92, 0.18), transparent 60%),
-          #e9e2d8;
+          radial-gradient(60rem 35rem at 10% 0%, rgba(0, 212, 255, 0.18), transparent 65%),
+          radial-gradient(60rem 35rem at 100% 20%, rgba(108, 77, 255, 0.2), transparent 60%),
+          #0b0d12;
         padding: 20px;
       }
 
@@ -47,29 +47,29 @@
       }
 
       .frame.light {
-        --bg: #efe7dc;
-        --bg-2: #e8dfd3;
-        --surface: rgba(255, 251, 246, 0.56);
-        --surface-strong: rgba(255, 251, 246, 0.74);
-        --line: rgba(74, 62, 50, 0.14);
-        --text: #2f2720;
-        --muted: rgba(47, 39, 32, 0.64);
-        --bronze: #7a6550;
-        --viewport-a: #e9dfd2;
-        --viewport-b: #d8ccbe;
+        --bg: #f2f6fd;
+        --bg-2: #e8effb;
+        --surface: rgba(255, 255, 255, 0.62);
+        --surface-strong: rgba(255, 255, 255, 0.82);
+        --line: rgba(37, 52, 73, 0.14);
+        --text: #101722;
+        --muted: rgba(37, 52, 73, 0.62);
+        --bronze: #0a84ff;
+        --viewport-a: #dfe9f7;
+        --viewport-b: #c7d5ea;
       }
 
       .frame.dark {
-        --bg: #16130f;
-        --bg-2: #1f1913;
+        --bg: #0b0d12;
+        --bg-2: #131a25;
         --surface: rgba(255, 255, 255, 0.05);
         --surface-strong: rgba(255, 255, 255, 0.08);
-        --line: rgba(255, 255, 255, 0.11);
-        --text: #efe7db;
-        --muted: rgba(239, 231, 219, 0.66);
-        --bronze: #b39674;
-        --viewport-a: #2c241c;
-        --viewport-b: #19150f;
+        --line: rgba(182, 196, 216, 0.18);
+        --text: #e6edf8;
+        --muted: rgba(176, 191, 210, 0.74);
+        --bronze: #0a84ff;
+        --viewport-a: #0f1926;
+        --viewport-b: #0b1018;
       }
 
       .app {
@@ -101,9 +101,11 @@
       .logo {
         width: 26px;
         height: 26px;
-        border-radius: 7px;
-        border: 1px solid var(--line);
-        background: linear-gradient(135deg, var(--bronze), rgba(255, 255, 255, 0.35));
+        border-radius: 6px;
+        background-image: url("./assets/logo.svg");
+        background-size: contain;
+        background-repeat: no-repeat;
+        background-position: center;
       }
 
       .brand h1 {

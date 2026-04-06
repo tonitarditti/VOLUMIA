@@ -246,6 +246,11 @@ function createMainWindow() {
   const cwdPreloadPath = path.join(process.cwd(), "electron-dist", "preload.js");
   const fallbackPreloadPath = path.join(__dirname, "preload.js");
   const preloadPath = existsSync(cwdPreloadPath) ? cwdPreloadPath : fallbackPreloadPath;
+  const iconPathCandidates = [
+    path.resolve(process.cwd(), "public", "assets", "branding", "icon.png"),
+    path.resolve(__dirname, "../dist/assets/branding/icon.png"),
+  ];
+  const iconPath = iconPathCandidates.find((candidate) => existsSync(candidate));
   const launchBounds = windowStateController.getLaunchBounds();
 
   const windowInstance = new BrowserWindow({
@@ -258,7 +263,8 @@ function createMainWindow() {
     minHeight: 760,
     frame: false,
     titleBarStyle: "hidden",
-    backgroundColor: "#0f1113",
+    backgroundColor: "#0B0D12",
+    icon: iconPath,
     webPreferences: {
       preload: preloadPath,
       contextIsolation: true,

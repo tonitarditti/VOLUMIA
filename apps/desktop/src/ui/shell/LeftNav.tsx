@@ -1,4 +1,5 @@
 import { NavLink } from "react-router-dom";
+import { LogoIcon } from "@/components/branding";
 
 export type ShellNavItem = {
   id: string;
@@ -65,6 +66,11 @@ type LeftNavProps = {
 export function LeftNav({ sections, footerItems = [], className = "" }: LeftNavProps) {
   return (
     <aside className={`flex w-16 shrink-0 flex-col border-r border-[var(--border)] bg-[var(--shell-panel)] ${className}`}>
+      <div className="px-2 pt-3">
+        <div className="flex h-10 items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--surface-2)]">
+          <LogoIcon size={16} variant="brand" />
+        </div>
+      </div>
       <div className="flex flex-1 flex-col gap-3 px-2 py-3">
         {sections.map((section) => (
           <div key={section.id} className="space-y-1 rounded-xl border border-[var(--border)] bg-[var(--surface-2)] p-1">

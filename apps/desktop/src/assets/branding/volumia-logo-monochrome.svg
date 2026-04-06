@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="780" height="220" viewBox="0 0 780 220" fill="none">
+  <path d="M56 30H102L118 172H84L56 30Z" fill="#FFFFFF"/>
+  <path d="M132 30H178L150 172H118L132 30Z" fill="#FFFFFF" fill-opacity="0.88"/>
+  <path d="M102 30L118 172" stroke="#FFFFFF" stroke-opacity="0.64" stroke-width="3"/>
+  <path d="M164 30L146 172" stroke="#FFFFFF" stroke-opacity="0.44" stroke-width="2.6"/>
+  <path d="M150 30L134 172" stroke="#FFFFFF" stroke-opacity="0.3" stroke-width="2.2"/>
+
+  <text x="228" y="118" font-family="Aptos, 'Segoe UI Variable Text', 'Segoe UI', sans-serif" font-size="72" letter-spacing="0.18em" font-weight="600" fill="#FFFFFF">VOLUMIA</text>
+  <text x="230" y="155" font-family="Aptos, 'Segoe UI Variable Text', 'Segoe UI', sans-serif" font-size="16" letter-spacing="0.24em" font-weight="600" fill="#FFFFFF" fill-opacity="0.72">SPATIAL INTELLIGENCE</text>
+</svg>

@@ -4,8 +4,9 @@ import type {
   BackendStatusResponse,
   ComfyStatusResponse,
 } from "@/electron/channels";
+import { SplashLogo } from "@/components/branding";
 import { desktopApi, hasDesktopBridge } from "@/electron/desktopApi";
-import { BrandMark } from "@/ui/shell";
+import { useSettings } from "@/volumia/settings/context";
 
 type StartupStage =
   | "initializing_shell"
@@ -136,6 +137,7 @@ function summarizeNodeAndModelStage(backend: BackendStatusResponse) {
 }
 
 export function BootScreen() {
+  const { resolvedTheme } = useSettings();
   const navigate = useNavigate();
   const [boot, setBoot] = useState<BootState>(INITIAL_BOOT_STATE);
   const [displayedProgress, setDisplayedProgress] = useState(0);
@@ -467,17 +469,11 @@ export function BootScreen() {
         style={{ backgroundImage: "var(--boot-glow)" }}
       />
       <div className="relative flex w-full max-w-xl flex-col items-center gap-10 rounded-[32px] border border-[var(--border)] bg-[var(--surface-2)] px-10 py-14 shadow-[var(--shadow-panel)]">
-        <div className="flex flex-col items-center gap-5 text-center">
-          <BrandMark size={72} />
-          <div>
-            <h1 className="text-[26px] font-light tracking-[0.28em] text-[var(--text)]">
-              VOLUMIA
-            </h1>
-            <p className="mt-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--text-faint)]">
-              3D Architectural Intelligence
-            </p>
-          </div>
-        </div>
+        <SplashLogo
+          size={72}
+          variant={resolvedTheme === "dark" ? "dark" : "light"}
+          glow
+        />
 
         <div className="w-full max-w-[360px] space-y-3">
           {steps.map((step) => (
