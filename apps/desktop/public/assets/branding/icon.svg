@@ -1,31 +1,72 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none">
   <defs>
-    <linearGradient id="v-right-fill" x1="592" y1="168" x2="836" y2="760" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#00D4FF"/>
-      <stop offset="1" stop-color="#6C4DFF"/>
+    <radialGradient id="bgGlow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(536 540) rotate(94) scale(422)">
+      <stop offset="0" stop-color="#1A2342"/>
+      <stop offset="1" stop-color="#0B1024"/>
+    </radialGradient>
+    <linearGradient id="vSolid" x1="316" y1="248" x2="560" y2="742" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7586B4"/>
+      <stop offset="0.38" stop-color="#364466"/>
+      <stop offset="1" stop-color="#0C1228"/>
     </linearGradient>
-    <linearGradient id="v-right-stroke" x1="560" y1="202" x2="830" y2="734" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#77EAFF"/>
-      <stop offset="1" stop-color="#B8A9FF"/>
+    <linearGradient id="edgeCyan" x1="300" y1="250" x2="556" y2="744" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7CF4FF"/>
+      <stop offset="0.55" stop-color="#32C8FF"/>
+      <stop offset="1" stop-color="#2D7BFF"/>
     </linearGradient>
-    <clipPath id="v-right-clip">
-      <path d="M572 168H756L650 742H512L572 168Z"/>
+    <linearGradient id="meshFill" x1="610" y1="264" x2="670" y2="760" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#8AF5FF" stop-opacity="0.36"/>
+      <stop offset="0.45" stop-color="#56DFFF" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#9B69FF" stop-opacity="0.3"/>
+    </linearGradient>
+    <linearGradient id="meshStroke" x1="550" y1="272" x2="782" y2="754" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#92F7FF"/>
+      <stop offset="0.62" stop-color="#43C9FF"/>
+      <stop offset="1" stop-color="#A169FF"/>
+    </linearGradient>
+    <clipPath id="meshClip">
+      <path d="M538 624C642 538 742 462 816 272C718 290 656 354 590 442C560 482 542 542 522 620C570 684 614 736 664 770C644 710 600 666 538 624Z"/>
     </clipPath>
+    <filter id="softGlow" x="220" y="180" width="620" height="660" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="10" result="blur"/>
+      <feBlend in="SourceGraphic" in2="blur" mode="screen"/>
+    </filter>
   </defs>
 
-  <path d="M268 168H452L512 742H374L268 168Z" fill="#0A84FF"/>
-  <path d="M572 168H756L650 742H512L572 168Z" fill="url(#v-right-fill)" fill-opacity="0.9"/>
+  <rect x="160" y="160" width="704" height="704" rx="128" fill="url(#bgGlow)"/>
 
-  <g clip-path="url(#v-right-clip)" stroke="url(#v-right-stroke)" stroke-width="20" stroke-linecap="round" stroke-linejoin="round" opacity="0.88">
-    <path d="M542 212L728 212"/>
-    <path d="M532 290L714 338"/>
-    <path d="M520 378L698 456"/>
-    <path d="M510 468L684 566"/>
-    <path d="M500 564L668 668"/>
-    <path d="M492 660L654 746"/>
-    <path d="M724 212L648 742"/>
-    <path d="M670 212L602 742"/>
+  <g filter="url(#softGlow)">
+    <path d="M308 250H472L552 624H464L308 250Z" fill="url(#vSolid)"/>
+    <path d="M308 250L552 624" stroke="url(#edgeCyan)" stroke-width="6"/>
+
+    <path d="M556 624C654 538 748 466 816 272C718 290 656 354 590 442C560 482 542 542 522 620C570 684 614 736 664 770C644 710 602 668 556 624Z" fill="url(#meshFill)"/>
+
+    <g clip-path="url(#meshClip)" stroke="url(#meshStroke)" stroke-width="2.4" stroke-linecap="round" opacity="0.9">
+      <path d="M516 620C582 662 636 710 674 774"/>
+      <path d="M526 596C602 646 664 702 712 770"/>
+      <path d="M538 572C620 624 688 688 742 760"/>
+      <path d="M552 548C640 606 714 674 772 752"/>
+      <path d="M568 520C662 582 740 654 802 744"/>
+      <path d="M584 492C680 560 758 638 826 734"/>
+      <path d="M600 462C694 536 772 620 838 710"/>
+      <path d="M614 430C704 510 780 596 842 680"/>
+      <path d="M628 396C712 482 786 568 842 650"/>
+      <path d="M640 360C718 454 790 540 838 616"/>
+      <path d="M648 326C722 424 792 506 828 576"/>
+      <path d="M656 296C726 396 790 470 816 536"/>
+
+      <path d="M530 646C586 588 636 532 676 460C718 384 746 326 768 278"/>
+      <path d="M546 670C602 608 650 548 688 476C726 404 752 338 770 286"/>
+      <path d="M564 692C616 630 662 570 698 498C734 426 758 354 772 294"/>
+      <path d="M584 712C632 650 674 590 708 518C742 446 764 372 772 304"/>
+      <path d="M604 730C646 668 686 608 718 538C750 468 770 390 772 316"/>
+      <path d="M624 746C660 686 698 626 726 560C754 492 772 414 770 328"/>
+      <path d="M644 760C674 702 710 646 738 582C762 522 778 444 766 340"/>
+    </g>
+
+    <path d="M472 250L552 624" stroke="#E8EDFF" stroke-opacity="0.75" stroke-width="4"/>
+    <path d="M552 624L664 770" stroke="#9B69FF" stroke-opacity="0.8" stroke-width="4"/>
   </g>
 
-  <path d="M452 168L512 742" stroke="#4BB8FF" stroke-opacity="0.7" stroke-width="12"/>
+  <ellipse cx="552" cy="756" rx="112" ry="24" fill="#2557E9" fill-opacity="0.35"/>
 </svg>

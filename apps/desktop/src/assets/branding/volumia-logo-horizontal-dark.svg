@@ -1,16 +1,22 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="780" height="220" viewBox="0 0 780 220" fill="none">
+<svg xmlns="http://www.w3.org/2000/svg" width="980" height="260" viewBox="0 0 980 260" fill="none">
   <defs>
-    <linearGradient id="logo-dark-right-fill" x1="132" y1="30" x2="190" y2="172" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#00D4FF"/>
-      <stop offset="1" stop-color="#6C4DFF"/>
+    <linearGradient id="wordmarkEdge" x1="84" y1="40" x2="154" y2="184" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#7CF4FF"/>
+      <stop offset="0.55" stop-color="#32C8FF"/>
+      <stop offset="1" stop-color="#2D7BFF"/>
+    </linearGradient>
+    <linearGradient id="wordmarkMesh" x1="132" y1="52" x2="178" y2="196" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#8AF5FF"/>
+      <stop offset="1" stop-color="#9B69FF"/>
     </linearGradient>
   </defs>
-  <path d="M56 30H102L118 172H84L56 30Z" fill="#0A84FF"/>
-  <path d="M132 30H178L150 172H118L132 30Z" fill="url(#logo-dark-right-fill)" fill-opacity="0.92"/>
-  <path d="M102 30L118 172" stroke="#4BB8FF" stroke-opacity="0.76" stroke-width="3"/>
-  <path d="M164 30L146 172" stroke="#A1EFFF" stroke-opacity="0.58" stroke-width="2.6"/>
-  <path d="M150 30L134 172" stroke="#C5B9FF" stroke-opacity="0.46" stroke-width="2.2"/>
 
-  <text x="228" y="118" font-family="Aptos, 'Segoe UI Variable Text', 'Segoe UI', sans-serif" font-size="72" letter-spacing="0.18em" font-weight="600" fill="#EAF2FF">VOLUMIA</text>
-  <text x="230" y="155" font-family="Aptos, 'Segoe UI Variable Text', 'Segoe UI', sans-serif" font-size="16" letter-spacing="0.24em" font-weight="600" fill="#8A9199">SPATIAL INTELLIGENCE</text>
+  <rect x="22" y="20" width="216" height="216" rx="44" fill="#0B1024"/>
+  <path d="M82 62H128L154 182H124L82 62Z" fill="#18233F"/>
+  <path d="M82 62L154 182" stroke="url(#wordmarkEdge)" stroke-width="3.5"/>
+  <path d="M156 182C184 156 210 130 226 62C198 70 178 84 162 106C154 118 149 130 144 180C156 196 168 210 182 224C176 206 168 194 156 182Z" fill="#18233F"/>
+  <path d="M156 182C184 156 210 130 226 62C198 70 178 84 162 106C154 118 149 130 144 180C156 196 168 210 182 224C176 206 168 194 156 182Z" stroke="url(#wordmarkMesh)" stroke-width="2.5"/>
+
+  <text x="286" y="136" font-family="Aptos, 'Segoe UI Variable Text', 'Segoe UI', sans-serif" font-size="78" letter-spacing="0.18em" font-weight="600" fill="#EAF1FF">VOLUMIA</text>
+  <text x="288" y="178" font-family="Aptos, 'Segoe UI Variable Text', 'Segoe UI', sans-serif" font-size="16" letter-spacing="0.24em" font-weight="600" fill="#7C88A6">SPATIAL INTELLIGENCE</text>
 </svg>

@@ -2,43 +2,43 @@
   "brand": "VOLUMIA",
   "version": "2.0.0",
   "palette": {
-    "neuralBlue": "#0A84FF",
-    "digitalCyan": "#00D4FF",
-    "deepLearningViolet": "#6C4DFF",
-    "graphiteBlack": "#0B0D12",
-    "technicalGrey": "#8A9199"
+    "neuralBlue": "#2D7BFF",
+    "digitalCyan": "#74EEFF",
+    "deepLearningViolet": "#8C63FF",
+    "graphiteBlack": "#070B19",
+    "technicalGrey": "#7C88A6"
   },
   "semantic": {
-    "backgroundDark": "#0B0D12",
-    "surfaceDark": "#10141C",
-    "surfaceDarkElevated": "#192230",
-    "textPrimaryDark": "#E6EDF8",
-    "textSecondaryDark": "rgba(216, 225, 239, 0.72)",
-    "textTechnical": "#8A9199",
-    "accentPrimary": "#0A84FF",
-    "accentSecondary": "#00D4FF",
-    "accentGenerative": "#6C4DFF",
-    "focusRing": "rgba(10, 132, 255, 0.5)",
-    "statusError": "#D6687A"
+    "backgroundDark": "#070B19",
+    "surfaceDark": "#0C1121",
+    "surfaceDarkElevated": "#15203A",
+    "textPrimaryDark": "#EAF1FF",
+    "textSecondaryDark": "rgba(216, 227, 248, 0.74)",
+    "textTechnical": "#7C88A6",
+    "accentPrimary": "#2D7BFF",
+    "accentSecondary": "#74EEFF",
+    "accentGenerative": "#8C63FF",
+    "focusRing": "rgba(116, 238, 255, 0.44)",
+    "statusError": "#D36A9A"
   },
   "scales": {
     "blue": {
-      "100": "#DDEEFF",
-      "200": "#B8DBFF",
-      "300": "#8AC2FF",
-      "400": "#5AA8FF",
-      "500": "#0A84FF",
-      "600": "#0072E0",
-      "700": "#005CB6"
+      "100": "#E2ECFF",
+      "200": "#C3D6FF",
+      "300": "#9EB9FF",
+      "400": "#6D98FF",
+      "500": "#2D7BFF",
+      "600": "#1B67E6",
+      "700": "#1452BC"
     },
     "grey": {
-      "100": "#E7EBF0",
-      "200": "#C7CFD9",
-      "300": "#AAB4C2",
-      "400": "#8A9199",
-      "500": "#6A7280",
-      "600": "#4C5562",
-      "700": "#2E3541"
+      "100": "#E4E9F3",
+      "200": "#C4CEE1",
+      "300": "#A3B0C9",
+      "400": "#7C88A6",
+      "500": "#616D89",
+      "600": "#46516A",
+      "700": "#2D3547"
     }
   }
 }

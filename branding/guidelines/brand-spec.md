@@ -10,6 +10,7 @@ VOLUMIA visual identity is built for premium architectural software:
 The icon language is a 3D **V**:
 - left side: solid geometric mass (architectural certainty)
 - right side: parametric mesh surface (generative intelligence)
+- reference direction: `selected-logo-reference.png` (dark navy tile + cyan/violet light mesh)
 
 ## Visual Direction
 - sober, technical, premium
@@ -27,6 +28,7 @@ The icon language is a 3D **V**:
    - Deep Learning Violet for generative emphasis and secondary accent
 4. Keep glow only for splash/hero/loading/generation highlights.
 5. Maintain clean spacing and architectural alignment.
+6. Preserve the icon silhouette from the approved reference (no shape substitutions).
 
 ## Logo Usage
 - Preferred app header logo: `volumia-logo-horizontal-dark.svg` on dark surfaces.
