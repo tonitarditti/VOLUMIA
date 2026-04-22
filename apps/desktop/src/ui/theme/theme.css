@@ -159,7 +159,7 @@ body,
 }
 
 body {
-  font-family: "Aptos", "Segoe UI Variable Text", "Segoe UI", sans-serif;
+  font-family: Inter, Geist, "SF Pro Display", "SF Pro Text", system-ui, sans-serif;
   background-color: var(--app-bg);
   background-image: var(--app-background-image);
   transition:

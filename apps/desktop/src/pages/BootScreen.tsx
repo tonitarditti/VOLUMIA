@@ -4,9 +4,8 @@ import type {
   BackendStatusResponse,
   ComfyStatusResponse,
 } from "@/electron/channels";
-import { SplashLogo } from "@/components/branding";
+import { BrandLogo } from "@/components/branding";
 import { desktopApi, hasDesktopBridge } from "@/electron/desktopApi";
-import { useSettings } from "@/volumia/settings/context";
 
 type StartupStage =
   | "initializing_shell"
@@ -137,7 +136,6 @@ function summarizeNodeAndModelStage(backend: BackendStatusResponse) {
 }
 
 export function BootScreen() {
-  const { resolvedTheme } = useSettings();
   const navigate = useNavigate();
   const [boot, setBoot] = useState<BootState>(INITIAL_BOOT_STATE);
   const [displayedProgress, setDisplayedProgress] = useState(0);
@@ -478,17 +476,8 @@ export function BootScreen() {
       />
 
       <div className="relative flex w-full max-w-[560px] flex-col items-center">
-        <SplashLogo
-          size={114}
-          variant={resolvedTheme === "dark" ? "dark" : "light"}
-          glow
-          showWordmark={false}
-        />
-
-        <p className="mt-6 text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--text-faint)]">
-          VOLUMIA
-        </p>
-        <p className="mt-2 text-[10px] uppercase tracking-[0.18em] text-[var(--text-faint)]">
+        <BrandLogo size={28} emphasis="glow" label="VOLUMIA" />
+        <p className="mt-3 text-[10px] uppercase tracking-[0.18em] text-[var(--text-faint)]">
           Spatial Intelligence Engine
         </p>
 

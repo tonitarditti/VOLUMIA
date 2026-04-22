@@ -6,11 +6,10 @@ import {
 } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useAppCommands } from "@/app/AppCommandsContext";
-import { LogoPrimary } from "@/components/branding";
+import { BrandLogo } from "@/components/branding";
 import { desktopApi, hasDesktopBridge } from "@/electron/desktopApi";
 import { useProjects } from "@/projects/context";
 import { selectActiveProject } from "@/projects/selectors";
-import { useSettings } from "@/volumia/settings/context";
 
 type ShellTopBarProps = {
   eyebrow: string;
@@ -78,7 +77,6 @@ export function TopBar({
   statusSlot,
   rightSlot,
 }: ShellTopBarProps) {
-  const { resolvedTheme } = useSettings();
   const navigate = useNavigate();
   const location = useLocation();
   const { state } = useProjects();
@@ -91,7 +89,7 @@ export function TopBar({
     resetAllData,
   } = useAppCommands();
   const canUseDesktopBridge = hasDesktopBridge();
-  const barHeightClass = "h-11 min-h-[44px]";
+  const barHeightClass = "h-12 min-h-[48px]";
   const activeProject = selectActiveProject(state);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const menuRegionRef = useRef<HTMLDivElement | null>(null);
@@ -246,20 +244,16 @@ export function TopBar({
 
   return (
     <header
-      className={`drag-region relative z-30 flex shrink-0 items-center justify-between border-b border-[var(--panel-border)] bg-[var(--shell-topbar)] px-2.5 ${barHeightClass}`}
+      className={`drag-region relative z-30 flex shrink-0 items-center justify-between border-b border-[var(--panel-border)] bg-[var(--shell-topbar)] px-3 ${barHeightClass}`}
     >
-      <div className="flex min-w-0 items-center gap-2.5">
+      <div className="flex min-w-0 items-center gap-3">
         <button
           type="button"
           onClick={() => navigate("/dashboard")}
-          className="no-drag flex items-center gap-2 rounded-[var(--radius-md)] px-2 py-1 transition-colors hover:bg-[var(--accent-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
+          className="no-drag flex items-center rounded-[var(--radius-md)] px-1.5 py-1 transition-colors hover:bg-[var(--accent-soft)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ring)]"
         >
-          <LogoPrimary
-            size={22}
-            variant={resolvedTheme === "dark" ? "dark" : "light"}
-          />
+          <BrandLogo size={16} label="VOLUMIA" />
         </button>
-        <div className="hidden h-4 w-px bg-[var(--panel-border)] min-[1160px]:block" />
         <div
           ref={menuRegionRef}
           className="hidden min-[1160px]:flex min-[1160px]:items-center min-[1160px]:gap-1"

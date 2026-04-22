@@ -1,5 +1,5 @@
 import type { WheelEventHandler } from "react";
-import { LogoIcon } from "@/components/branding";
+import { BrandLogo } from "@/components/branding";
 import { workspaceModeDefinitions, type WorkspaceMode } from "./modes";
 
 type ModeSelectorProps = {
@@ -37,7 +37,7 @@ export function ModeSelector({
       onWheelCapture={onWheelCapture}
     >
       <div className="flex h-10 w-10 items-center justify-center rounded-[12px] border border-[var(--workspace-divider)] bg-[var(--workspace-surface)] text-[var(--workspace-text)]">
-        <LogoIcon size={16} variant="mono" />
+        <BrandLogo size={16} showText={false} label="VOLUMIA" />
       </div>
 
       <div className="mt-2 flex w-full flex-1 flex-col items-center gap-1.5 overflow-y-auto">

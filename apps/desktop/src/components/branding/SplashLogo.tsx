@@ -1,5 +1,4 @@
-import { BrandWordmark } from "./BrandWordmark";
-import { LogoIcon } from "./LogoIcon";
+import { BrandLogo } from "./BrandLogo";
 
 type SplashLogoVariant = "dark" | "light" | "mono";
 
@@ -18,17 +17,15 @@ export function SplashLogo({
   showWordmark = true,
   className = "",
 }: SplashLogoProps) {
-  const iconVariant = variant === "mono" ? "mono" : "brand";
-
   return (
     <div className={`flex flex-col items-center gap-5 text-center ${className}`.trim()}>
-      <LogoIcon
-        size={size}
-        variant={iconVariant}
+      <BrandLogo
+        size={showWordmark ? Math.max(24, Math.round(size * 0.26)) : size}
+        showText={showWordmark}
+        tone={variant === "mono" ? "inverse" : "default"}
         emphasis={glow ? "glow" : "soft"}
-        title="VOLUMIA"
+        label="VOLUMIA"
       />
-      {showWordmark ? <BrandWordmark size={24} variant={variant} /> : null}
     </div>
   );
 }

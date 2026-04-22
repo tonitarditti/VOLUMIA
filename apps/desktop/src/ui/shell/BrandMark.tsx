@@ -1,4 +1,4 @@
-import { LogoIcon } from "@/components/branding";
+import { BrandLogo } from "@/components/branding";
 
 type BrandMarkProps = {
   size?: number;
@@ -10,9 +10,9 @@ export function BrandMark({
   accentClassName = "",
 }: BrandMarkProps) {
   return (
-    <LogoIcon
+    <BrandLogo
       size={size}
-      variant="brand"
+      showText={false}
       className={accentClassName}
       emphasis="none"
     />

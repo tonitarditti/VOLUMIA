@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { NavLink, useLocation } from "react-router-dom";
-import { LogoPrimary } from "@/components/branding";
+import { BrandLogo } from "@/components/branding";
 import { desktopApi } from "@/electron/desktopApi";
 import { IconButton } from "@/ui/IconButton";
 import { useT } from "@/volumia/i18n/useT";
@@ -8,7 +8,7 @@ import { useSettings } from "@/volumia/settings/context";
 
 export function TopBar() {
   const { t } = useT();
-  const { settings, resolvedTheme } = useSettings();
+  const { settings } = useSettings();
   const canUseDesktopBridge =
     typeof window !== "undefined" && Boolean(window.volumia);
   const location = useLocation();
@@ -43,10 +43,7 @@ export function TopBar() {
   return (
     <header className={headerClass}>
       <div className="flex min-w-0 items-center gap-3">
-        <LogoPrimary
-          size={20}
-          variant={resolvedTheme === "dark" ? "dark" : "light"}
-        />
+        <BrandLogo size={16} label="VOLUMIA" />
         <div className={dividerClass} />
         <h1 className="truncate text-sm font-normal tracking-[0.04em] text-[var(--text)]">
           {pageTitle}

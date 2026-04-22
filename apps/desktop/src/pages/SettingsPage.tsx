@@ -5,7 +5,6 @@ import type {
   PythonCandidate,
   PythonProbeResult,
 } from "@/electron/channels";
-import { LogoPrimary } from "@/components/branding";
 import { Button, Card, Select, TextField, Toggle } from "@/ui/primitives";
 import { useT } from "@/volumia/i18n/useT";
 import { useSettings } from "@/volumia/settings/context";
@@ -74,7 +73,6 @@ export function SettingsPage({
     setTheme,
     setColorway,
     setStudioProfile,
-    setTimeTheme,
     setGlassStyle,
     setReduceMotion,
     setWindowMode,
@@ -505,11 +503,6 @@ export function SettingsPage({
     <div className="h-full w-full overflow-y-auto">
       <div className="mx-auto grid max-w-5xl grid-cols-1 gap-7 px-8 py-10 lg:grid-cols-2">
         <Card padding="md" className="h-full">
-          <LogoPrimary
-            size={24}
-            variant={resolvedTheme === "dark" ? "dark" : "light"}
-            className="mb-4"
-          />
           <p className="text-[10px] tracking-[0.12em] text-[var(--text-muted)]">
             {t("settings.workspace")}
           </p>

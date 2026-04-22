@@ -1,5 +1,5 @@
 import { NavLink } from "react-router-dom";
-import { LogoIcon } from "@/components/branding";
+import { BrandLogo } from "@/components/branding";
 import { useT } from "@/volumia/i18n/useT";
 import { useSettings } from "@/volumia/settings/context";
 
@@ -65,7 +65,7 @@ export function Sidebar({
           className={({ isActive }) => navItemClass(isActive)}
         >
           <span className={iconClass}>
-            <LogoIcon size={12} variant="brand" />
+            <BrandLogo size={12} showText={false} label="VOLUMIA" />
           </span>
           {t("nav.dashboard")}
         </NavLink>

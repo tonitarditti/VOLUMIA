@@ -19,8 +19,6 @@ import {
   TextField,
 } from "@/ui/primitives";
 import { useT } from "@/volumia/i18n/useT";
-import { useSettings } from "@/volumia/settings/context";
-import { LogoPrimary } from "@/components/branding";
 
 type DashboardPageProps = {
   onImport: () => Promise<void>;
@@ -86,7 +84,6 @@ function statusTone(comfyStatus: ComfyStatusResponse | null) {
 
 export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
   const { t, language } = useT();
-  const { resolvedTheme } = useSettings();
   const navigate = useNavigate();
   const {
     state,
@@ -358,11 +355,6 @@ export function DashboardPage({ onImport, onExport }: DashboardPageProps) {
         <section className="px-1 pb-1">
           <div className="flex flex-wrap items-start justify-between gap-5">
             <div className="max-w-3xl">
-              <LogoPrimary
-                size={30}
-                variant={resolvedTheme === "dark" ? "dark" : "light"}
-                className="mb-5"
-              />
               <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--text-faint)]">
                 {t("dashboard.workspace")}
               </p>

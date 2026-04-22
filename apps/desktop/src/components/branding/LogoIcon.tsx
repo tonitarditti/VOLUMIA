@@ -1,5 +1,4 @@
-import iconBrand from "@/assets/branding/volumia-icon-final-1024.png";
-import iconMono from "@/assets/branding/volumia-icon-mono.svg";
+import { BrandLogo } from "./BrandLogo";
 
 type LogoIconVariant = "brand" | "mono";
 type LogoEmphasis = "none" | "soft" | "glow";
@@ -12,17 +11,6 @@ export type LogoIconProps = {
   title?: string;
 };
 
-const iconByVariant: Record<LogoIconVariant, string> = {
-  brand: iconBrand,
-  mono: iconMono,
-};
-
-const emphasisShadow: Record<LogoEmphasis, string | undefined> = {
-  none: undefined,
-  soft: "drop-shadow(0 8px 20px rgba(10, 132, 255, 0.24))",
-  glow: "drop-shadow(0 0 24px rgba(0, 212, 255, 0.34)) drop-shadow(0 12px 30px rgba(108, 77, 255, 0.3))",
-};
-
 export function LogoIcon({
   size = 28,
   variant = "brand",
@@ -30,27 +18,14 @@ export function LogoIcon({
   className = "",
   title,
 }: LogoIconProps) {
-  const resolvedSize = typeof size === "number" ? `${size}px` : size;
-
   return (
-    <span
-      className={`inline-flex shrink-0 items-center justify-center ${className}`.trim()}
-      style={{
-        width: resolvedSize,
-        height: resolvedSize,
-        filter: emphasisShadow[emphasis],
-      }}
-      aria-hidden={title ? undefined : true}
-      role={title ? "img" : undefined}
-      aria-label={title}
-    >
-      <img
-        src={iconByVariant[variant]}
-        alt={title ?? ""}
-        className="h-full w-full object-contain"
-        draggable={false}
-      />
-    </span>
+    <BrandLogo
+      size={typeof size === "number" ? size : 28}
+      showText={false}
+      emphasis={emphasis}
+      className={className}
+      label={title}
+      tone={variant === "mono" ? "muted" : "default"}
+    />
   );
 }
-
