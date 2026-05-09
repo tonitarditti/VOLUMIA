@@ -22,7 +22,30 @@ export type GenerationJobStoreState = {
   outputs?: {
     glbPath?: string;
     texturedGlbPath?: string;
-    textureStatus?: "ready" | "failed" | "skipped";
+    textureStatus?:
+      | "pending"
+      | "running"
+      | "success"
+      | "skipped_invalid_mesh"
+      | "skipped_invalid_image"
+      | "stalled"
+      | "timed_out"
+      | "runtime_error"
+      | "process_start_failed"
+      | "no_output_generated"
+      | "invalid_output"
+      | "fallback_geometry_only";
+    textureMessage?: string;
+    textureValidation?: {
+      ok: boolean;
+      hasMaterials: boolean;
+      hasImages: boolean;
+      hasTextures: boolean;
+      hasMaterialTextureBinding: boolean;
+      reason?: string;
+      fileSizeBytes?: number;
+      sameAsSourceMesh?: boolean;
+    };
     previewImages?: string[];
     raw?: unknown;
   };

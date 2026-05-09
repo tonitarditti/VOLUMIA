@@ -248,7 +248,20 @@ export type ComfyJobOutputs = {
   glbPath?: string;
   meshPath?: string;
   texturedGlbPath?: string;
-  textureStatus?: "ready" | "failed" | "skipped";
+  textureStatus?:
+    | "pending"
+    | "running"
+    | "success"
+    | "skipped_invalid_mesh"
+    | "skipped_invalid_image"
+    | "stalled"
+    | "timed_out"
+    | "runtime_error"
+    | "process_start_failed"
+    | "no_output_generated"
+    | "invalid_output"
+    | "fallback_geometry_only";
+  textureMessage?: string;
   textureErrorLogPath?: string;
   textureMetadataPath?: string;
   textureDependencies?: {
@@ -264,6 +277,71 @@ export type ComfyJobOutputs = {
     hasImages: boolean;
     hasTextures: boolean;
     hasMaterialTextureBinding: boolean;
+    reason?: string;
+    fileSizeBytes?: number;
+    sameAsSourceMesh?: boolean;
+  };
+  textureAttempts?: Array<{
+    attempt: number;
+    preset: "fast" | "balanced" | "high";
+    status:
+      | "success"
+      | "skipped_invalid_mesh"
+      | "skipped_invalid_image"
+      | "stalled"
+      | "timed_out"
+      | "runtime_error"
+      | "process_start_failed"
+      | "no_output_generated"
+      | "invalid_output";
+    startedAt: string;
+    endedAt: string;
+    durationMs: number;
+    hardTimeoutMs: number;
+    stallTimeoutMs: number;
+    outputGraceMs: number;
+    exitCode: number;
+    timedOut: boolean;
+    stalled: boolean;
+    retryScheduled: boolean;
+    reason: string;
+    stdoutTail: string[];
+    stderrTail: string[];
+    outputPath?: string;
+    metadataPath?: string;
+  }>;
+  textureMeshValidation?: {
+    ok: boolean;
+    meshPath: string;
+    format: "obj" | "glb" | "gltf" | "unknown";
+    fileSizeBytes: number;
+    readable: boolean;
+    vertexCount: number;
+    faceCount: number;
+    componentCount: number | null;
+    hasNormals: boolean;
+    normalsRegenerable: boolean;
+    flatnessRatio: number | null;
+    bounds: {
+      min: [number, number, number];
+      max: [number, number, number];
+      size: [number, number, number];
+      diagonal: number;
+      volume: number;
+    } | null;
+    warnings: string[];
+    reason?: string;
+  };
+  textureImageValidation?: {
+    ok: boolean;
+    imagePath: string;
+    format: "png" | "jpeg" | "webp" | "gif" | "bmp" | "unknown";
+    fileSizeBytes: number;
+    readable: boolean;
+    width: number;
+    height: number;
+    hasAlpha: boolean | null;
+    warnings: string[];
     reason?: string;
   };
   previewImages?: string[];

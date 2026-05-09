@@ -160,7 +160,9 @@ function getGenerationLogFilePath() {
     generationLogFilePath = path.join(logDir, "generation.log");
     return generationLogFilePath;
   } catch {
-    const runtimeRoot = process.env.VOLUMIA_RUNTIME_DIR?.trim() || "F:\\VOLUMIA_RUNTIME";
+    const runtimeRoot =
+      process.env.VOLUMIA_RUNTIME_DIR?.trim() ||
+      "E:\\VOLUMIA_DATA\\volumia";
     const fallbackLogDir = path.join(runtimeRoot, "logs");
     fs.mkdirSync(fallbackLogDir, { recursive: true });
     generationLogFilePath = path.join(fallbackLogDir, "generation.log");
@@ -532,7 +534,9 @@ function runPython(
 }
 
 function ensureAssetsDir() {
-  const runtimeRoot = process.env.VOLUMIA_RUNTIME_DIR?.trim() || "F:\\VOLUMIA_RUNTIME";
+  const runtimeRoot =
+    process.env.VOLUMIA_RUNTIME_DIR?.trim() ||
+    "E:\\VOLUMIA_DATA\\volumia";
   const assetsDir = path.join(runtimeRoot, "backend", "exports", "project-assets");
   fs.mkdirSync(assetsDir, { recursive: true });
   return assetsDir;

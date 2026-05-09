@@ -23,7 +23,7 @@ def _env_int(name: str, default: int) -> int:
 
 BASE_DIR = Path(__file__).resolve().parent
 
-RUNTIME_DIR = Path(os.environ.get("VOLUMIA_RUNTIME_DIR", r"F:\VOLUMIA_RUNTIME")).expanduser().resolve()
+RUNTIME_DIR = Path(os.environ.get("VOLUMIA_RUNTIME_DIR", r"E:\VOLUMIA_DATA\volumia")).expanduser().resolve()
 RUNTIME_USERDATA_DIR = RUNTIME_DIR / "userData"
 RUNTIME_SESSION_DIR = RUNTIME_DIR / "sessionData"
 RUNTIME_BACKEND_DIR = RUNTIME_DIR / "backend"

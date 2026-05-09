@@ -1,5 +1,4 @@
 import fs from "fs";
-import os from "os";
 import path from "path";
 
 type ElectronAppLike = {
@@ -8,6 +7,7 @@ type ElectronAppLike = {
 };
 
 let cachedUserDataRoot: string | null = null;
+const DEFAULT_RUNTIME_ROOT = "E:\\VOLUMIA_DATA\\volumia";
 
 function ensureDir(dirPath: string) {
   fs.mkdirSync(dirPath, { recursive: true });
@@ -32,11 +32,7 @@ function resolveFallbackUserDataDir() {
   if (runtimeRoot) {
     return path.join(runtimeRoot, "userData");
   }
-  const appData = process.env.APPDATA?.trim();
-  if (appData) {
-    return appData;
-  }
-  return path.join(os.homedir(), "AppData", "Roaming");
+  return path.join(DEFAULT_RUNTIME_ROOT, "userData");
 }
 
 function resolveBaseUserDataDir() {

@@ -10,7 +10,12 @@ import {
 import { Navigate, useNavigate, useParams } from "react-router-dom";
 import { useProjects } from "@/projects/context";
 import { selectProjectById } from "@/projects/selectors";
-import type { GenerationPreset, ProjectModel } from "@/projects/types";
+import type {
+  GenerationPreset,
+  ProjectModel,
+  ProjectTextureStatus,
+  ProjectTextureValidation,
+} from "@/projects/types";
 import { desktopApi, hasDesktopBridge } from "@/electron/desktopApi";
 import { backendClient } from "@/services/backendClient";
 import { Badge, type BadgeTone } from "@/ui/primitives";
@@ -200,6 +205,11 @@ function getProjectModel(model: ProjectModel | undefined): ProjectModel {
     generatedAt: model?.generatedAt,
     preset: model?.preset,
     mode: model?.mode ?? "auto",
+    textureStatus: model?.textureStatus,
+    textureMessage: model?.textureMessage,
+    textureValidation: model?.textureValidation
+      ? { ...model.textureValidation }
+      : undefined,
   };
 }
 
@@ -450,6 +460,9 @@ export function ProjectPage() {
       autoPreset?: AutoPreset;
       device?: { device: "cuda" | "cpu"; name: string } | null;
       warnings?: string[];
+      textureStatus?: ProjectTextureStatus;
+      textureMessage?: string;
+      textureValidation?: ProjectTextureValidation;
     }) => {
       const currentProject = projectRef.current;
       if (!currentProject || payload.projectId !== currentProject.id) {
@@ -479,6 +492,12 @@ export function ProjectPage() {
         generatedAt: Date.now(),
         preset: payload.preset ?? presetRef.current,
         mode: payload.mode ?? "auto",
+        textureStatus:
+          payload.textureStatus ?? currentProject.model?.textureStatus,
+        textureMessage:
+          payload.textureMessage ?? currentProject.model?.textureMessage,
+        textureValidation:
+          payload.textureValidation ?? currentProject.model?.textureValidation,
       };
 
       updateProjectModelRef.current(currentProject.id, nextModel);
@@ -575,6 +594,10 @@ export function ProjectPage() {
         preset: pendingRun?.preset ?? presetRef.current,
         mode: "auto",
         message: generationJob.message,
+        textureStatus: generationJob.outputs?.textureStatus,
+        textureMessage:
+          generationJob.outputs?.textureMessage ?? generationJob.message,
+        textureValidation: generationJob.outputs?.textureValidation,
       });
       pendingGenerationRef.current = null;
       return;
@@ -1214,6 +1237,9 @@ export function ProjectPage() {
                 <ProjectViewport
                   glbPath={project.model?.glbPath}
                   glbVersion={project.model?.generatedAt}
+                  textureStatus={project.model?.textureStatus}
+                  textureMessage={project.model?.textureMessage}
+                  textureValidation={project.model?.textureValidation}
                   isGenerating={isGenerating}
                   generationStage={generationStage}
                   showUtilityButtons={false}

@@ -21,7 +21,7 @@ export type RuntimePaths = {
   crashDumps: string;
 };
 
-const DEFAULT_RUNTIME_ROOT = "F:\\VOLUMIA_RUNTIME";
+const DEFAULT_RUNTIME_ROOT = "E:\\VOLUMIA_DATA\\volumia";
 
 export function resolveRuntimeRoot() {
   const raw = process.env.VOLUMIA_RUNTIME_DIR?.trim() || DEFAULT_RUNTIME_ROOT;

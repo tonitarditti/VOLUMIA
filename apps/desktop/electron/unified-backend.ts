@@ -344,6 +344,49 @@ export class UnifiedBackendClient {
       glbPath: typeof output.glbPath === "string" ? output.glbPath : undefined,
       meshPath: typeof output.meshPath === "string" ? output.meshPath : undefined,
       texturedGlbPath: typeof output.texturedGlbPath === "string" ? output.texturedGlbPath : undefined,
+      textureStatus:
+        typeof output.textureStatus === "string"
+          ? (output.textureStatus as ComfyJobOutputs["textureStatus"])
+          : undefined,
+      textureMessage:
+        typeof output.textureMessage === "string"
+          ? output.textureMessage
+          : undefined,
+      textureErrorLogPath:
+        typeof output.textureErrorLogPath === "string"
+          ? output.textureErrorLogPath
+          : undefined,
+      textureMetadataPath:
+        typeof output.textureMetadataPath === "string"
+          ? output.textureMetadataPath
+          : undefined,
+      textureDependencies:
+        output.textureDependencies &&
+        typeof output.textureDependencies === "object" &&
+        !Array.isArray(output.textureDependencies)
+          ? (output.textureDependencies as ComfyJobOutputs["textureDependencies"])
+          : undefined,
+      textureValidation:
+        output.textureValidation &&
+        typeof output.textureValidation === "object" &&
+        !Array.isArray(output.textureValidation)
+          ? (output.textureValidation as ComfyJobOutputs["textureValidation"])
+          : undefined,
+      textureAttempts: Array.isArray(output.textureAttempts)
+        ? (output.textureAttempts as ComfyJobOutputs["textureAttempts"])
+        : undefined,
+      textureMeshValidation:
+        output.textureMeshValidation &&
+        typeof output.textureMeshValidation === "object" &&
+        !Array.isArray(output.textureMeshValidation)
+          ? (output.textureMeshValidation as ComfyJobOutputs["textureMeshValidation"])
+          : undefined,
+      textureImageValidation:
+        output.textureImageValidation &&
+        typeof output.textureImageValidation === "object" &&
+        !Array.isArray(output.textureImageValidation)
+          ? (output.textureImageValidation as ComfyJobOutputs["textureImageValidation"])
+          : undefined,
       previewImages,
       raw: output,
     };

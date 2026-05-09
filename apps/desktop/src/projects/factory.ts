@@ -86,6 +86,11 @@ export function duplicateProject(source: Project, existingNames: string[]): Proj
       generatedAt: source.model?.generatedAt,
       preset: source.model?.preset,
       mode: source.model?.mode,
+      textureStatus: source.model?.textureStatus,
+      textureMessage: source.model?.textureMessage,
+      textureValidation: source.model?.textureValidation
+        ? { ...source.model.textureValidation }
+        : undefined,
     },
   };
 }

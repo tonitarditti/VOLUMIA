@@ -11,11 +11,21 @@ import { ContactShadows, Environment, OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
+import type {
+  ProjectTextureStatus,
+  ProjectTextureValidation,
+} from "@/projects/types";
 import { useT } from "@/volumia/i18n/useT";
 import { useSettings } from "@/volumia/settings/context";
 import type { StudioProfile } from "@/volumia/settings/types";
 import { themeTokens } from "@/ui/theme/tokens";
 import { SceneMassing } from "./SceneMassing";
+import {
+  VIEWER_FALLBACK_CLAY_COLOR,
+  evaluateViewerMaterialPolicy,
+  type ViewerMaterialPolicyResult,
+  type ViewerRenderState,
+} from "./viewerMaterialPolicy";
 
 type ViewportSize = {
   width: number;
@@ -41,6 +51,9 @@ type OrbitTargetClampProps = {
 type ProjectViewportProps = {
   glbPath?: string;
   glbVersion?: number;
+  textureStatus?: ProjectTextureStatus;
+  textureMessage?: string;
+  textureValidation?: ProjectTextureValidation;
   isGenerating?: boolean;
   generationStage?: string;
   showUtilityButtons?: boolean;
@@ -81,6 +94,8 @@ type ViewportGenerationBridge = {
 type LoadedModelProps = {
   glbPath?: string;
   glbVersion?: number;
+  textureStatus?: ProjectTextureStatus;
+  textureValidation?: ProjectTextureValidation;
   modelUrl?: string;
   allowFit: boolean;
   debugRenderEnabled: boolean;
@@ -92,6 +107,7 @@ type LoadedModelProps = {
   onLoadError: (message: string | null) => void;
   onCameraFit: (snapshot: CameraSnapshot) => void;
   onModelNormalizationDebug: (info: ModelNormalizationDebug | null) => void;
+  onViewerMaterialPolicy: (info: ViewerMaterialPolicyResult | null) => void;
   onModelReady: (model: THREE.Object3D | null) => void;
 };
 
@@ -149,6 +165,12 @@ type MaterialStabilityStats = {
   forcedOpaqueMaterials: number;
   translucentMaterials: number;
   polygonOffsetMaterials: number;
+  invalidMaterialsReplaced: number;
+  fallbackClayApplied: boolean;
+  missingNormalsFixed: number;
+  renderState: ViewerRenderState;
+  hasTextureMaps: boolean;
+  hasValidUv: boolean;
 };
 
 type ModelStabilizationResult = {
@@ -166,6 +188,7 @@ type ModelStabilizationResult = {
   coplanar: CoplanarHeuristicStats;
   material: MaterialStabilityStats;
   polygonOffsetEngaged: boolean;
+  viewerPolicy: ViewerMaterialPolicyResult;
 };
 
 type NormalizeAndStabilizeOptions = {
@@ -175,6 +198,8 @@ type NormalizeAndStabilizeOptions = {
   wireframe: boolean;
   debugRender: boolean;
   forcePolygonOffsetAllMeshes: boolean;
+  textureStatus?: ProjectTextureStatus;
+  textureValidation?: ProjectTextureValidation;
 };
 
 type TextureAssignment = {
@@ -539,15 +564,6 @@ function normalizeTextureColorSpace(texture: THREE.Texture) {
   texture.needsUpdate = true;
 }
 
-function neutralizeViewportGround(color: string) {
-  const source = new THREE.Color(color);
-  const hsl = { h: 0, s: 0, l: 0 };
-  source.getHSL(hsl);
-  return new THREE.Color()
-    .setHSL(hsl.h, hsl.s * 0.85, hsl.l * 0.985)
-    .getStyle();
-}
-
 function reduceWarmGroundBounce(color: string) {
   const source = new THREE.Color(color);
   const hsl = { h: 0, s: 0, l: 0 };
@@ -645,19 +661,52 @@ function applyModelVisualSettings(
     envMapIntensity: number;
     wireframe: boolean;
     polygonOffset: boolean;
-
     fallbackMaterialColor: string;
-
-
+    textureStatus?: ProjectTextureStatus;
+    textureValidation?: ProjectTextureValidation;
   };
 },
-): MaterialStabilityStats {
+): MaterialStabilityStats & { policy: ViewerMaterialPolicyResult } {
+  const policy = evaluateViewerMaterialPolicy(object, {
+    textureStatus: options.textureStatus,
+    textureValidation: options.textureValidation,
+  });
+
+  console.info("[VOLUMIA][viewer] texture maps found / not found", {
+    renderState: policy.renderState,
+    textureStatus: options.textureStatus ?? "unknown",
+    texturedMaterialCount: policy.texturedMaterialCount,
+    materialCount: policy.materialCount,
+    uvMeshCount: policy.uvMeshCount,
+    hasTextureMaps: policy.hasTextureMaps,
+    hasValidUv: policy.hasValidUv,
+    message: policy.message,
+  });
+  if (policy.fallbackApplied) {
+    console.warn("[VOLUMIA][viewer] fallback clay applied", {
+      renderState: policy.renderState,
+      replacedMaterialCount: policy.replacedMaterialCount,
+      missingNormalCount: policy.missingNormalCount,
+    });
+  } else if (policy.replacedMaterialCount > 0) {
+    console.warn("[VOLUMIA][viewer] invalid material replaced", {
+      renderState: policy.renderState,
+      replacedMaterialCount: policy.replacedMaterialCount,
+    });
+  }
+
   const stats: MaterialStabilityStats = {
     totalMaterials: 0,
     transparentMaterials: 0,
     forcedOpaqueMaterials: 0,
     translucentMaterials: 0,
     polygonOffsetMaterials: 0,
+    invalidMaterialsReplaced: policy.replacedMaterialCount,
+    fallbackClayApplied: policy.fallbackApplied,
+    missingNormalsFixed: policy.missingNormalCount,
+    renderState: policy.renderState,
+    hasTextureMaps: policy.hasTextureMaps,
+    hasValidUv: policy.hasValidUv,
   };
 
   object.traverse((child) => {
@@ -670,9 +719,9 @@ function applyModelVisualSettings(
 
     if (!child.material) {
       child.material = new THREE.MeshStandardMaterial({
-        color: options.fallbackMaterialColor,
-        roughness: 0.62,
-        metalness: 0.08,
+        color: VIEWER_FALLBACK_CLAY_COLOR,
+        roughness: 0.82,
+        metalness: 0.03,
       });
     }
 
@@ -682,9 +731,9 @@ function applyModelVisualSettings(
     const normalizedMaterials = sourceMaterials.map((material) => {
       if (!material) {
         return new THREE.MeshStandardMaterial({
-          color: options.fallbackMaterialColor,
-          roughness: 0.62,
-          metalness: 0.08,
+          color: VIEWER_FALLBACK_CLAY_COLOR,
+          roughness: 0.82,
+          metalness: 0.03,
         });
       }
 
@@ -716,9 +765,9 @@ function applyModelVisualSettings(
       const baseColor =
         source.color instanceof THREE.Color
           ? source.color.clone()
-          : new THREE.Color(options.fallbackMaterialColor);
+          : new THREE.Color(VIEWER_FALLBACK_CLAY_COLOR);
       if (!hasTextureMaps && isDefaultMaterial) {
-        baseColor.set(options.fallbackMaterialColor);
+        baseColor.set(VIEWER_FALLBACK_CLAY_COLOR);
       }
 
       const standard = new THREE.MeshStandardMaterial({
@@ -732,11 +781,11 @@ function applyModelVisualSettings(
         emissive: source.emissive ?? new THREE.Color(0x000000),
         emissiveMap: source.emissiveMap ?? null,
         roughness:
-          typeof source.roughness === "number" ? source.roughness : 0.62,
+          typeof source.roughness === "number" ? source.roughness : 0.82,
         metalness:
-          typeof source.metalness === "number" ? source.metalness : 0.08,
-        transparent: source.transparent === true,
-        opacity: typeof source.opacity === "number" ? source.opacity : 1,
+          typeof source.metalness === "number" ? source.metalness : 0.03,
+        transparent: false,
+        opacity: 1,
         side:
           typeof source.side === "number" ? source.side : THREE.FrontSide,
       });
@@ -816,7 +865,10 @@ function applyModelVisualSettings(
     }
   });
 
-  return stats;
+  return {
+    ...stats,
+    policy,
+  };
 }
 
 function applyTextures(root: THREE.Object3D, materialMap: TextureMaterialMap) {
@@ -982,6 +1034,8 @@ function normalizeAndStabilizeModel(
         wireframe: options.wireframe,
         polygonOffset: polygonOffsetEngaged,
         fallbackMaterialColor: options.fallbackMaterialColor,
+        textureStatus: options.textureStatus,
+        textureValidation: options.textureValidation,
       }
     });
 
@@ -1000,6 +1054,7 @@ function normalizeAndStabilizeModel(
       minYTranslation,
       coplanar,
       material,
+      viewerPolicy: material.policy,
       polygonOffsetEngaged,
       removedBaseMeshes: stripResult.removed,
     });
@@ -1020,12 +1075,15 @@ function normalizeAndStabilizeModel(
     coplanar,
     material,
     polygonOffsetEngaged,
+    viewerPolicy: material.policy,
   };
 }
 
 function LoadedModel({
   glbPath,
   glbVersion,
+  textureStatus,
+  textureValidation,
   modelUrl,
   allowFit,
   debugRenderEnabled,
@@ -1037,6 +1095,7 @@ function LoadedModel({
   onLoadError,
   onCameraFit,
   onModelNormalizationDebug,
+  onViewerMaterialPolicy,
   onModelReady,
 }: LoadedModelProps) {
   const { camera, controls, invalidate } = useThree();
@@ -1054,6 +1113,7 @@ function LoadedModel({
   const debugRenderEnabledRef = useRef(debugRenderEnabled);
   const onLoadErrorRef = useRef(onLoadError);
   const onModelNormalizationDebugRef = useRef(onModelNormalizationDebug);
+  const onViewerMaterialPolicyRef = useRef(onViewerMaterialPolicy);
   const onModelReadyRef = useRef(onModelReady);
 
   useEffect(() => {
@@ -1085,6 +1145,10 @@ function LoadedModel({
   }, [onModelNormalizationDebug]);
 
   useEffect(() => {
+    onViewerMaterialPolicyRef.current = onViewerMaterialPolicy;
+  }, [onViewerMaterialPolicy]);
+
+  useEffect(() => {
     onModelReadyRef.current = onModelReady;
   }, [onModelReady]);
 
@@ -1102,6 +1166,7 @@ function LoadedModel({
       setStabilization(null);
       onLoadErrorRef.current(null);
       onModelNormalizationDebugRef.current(null);
+      onViewerMaterialPolicyRef.current(null);
       onModelReadyRef.current(null);
       cameraFitKeyRef.current = null;
       invalidateRef.current();
@@ -1115,6 +1180,20 @@ function LoadedModel({
 
     if (!readGlb) {
       onLoadErrorRef.current("GLB reader unavailable in this environment.");
+      onViewerMaterialPolicyRef.current({
+        renderState: "invalid_asset",
+        message: "Invalid asset: GLB reader unavailable in this environment.",
+        meshCount: 0,
+        materialCount: 0,
+        texturedMaterialCount: 0,
+        uvMeshCount: 0,
+        missingNormalCount: 0,
+        invalidMaterialCount: 0,
+        replacedMaterialCount: 0,
+        fallbackApplied: false,
+        hasTextureMaps: false,
+        hasValidUv: false,
+      });
       return;
     }
 
@@ -1204,12 +1283,28 @@ function LoadedModel({
           wireframe: wireframeRef.current,
           debugRender: debugRenderEnabledRef.current,
           forcePolygonOffsetAllMeshes: DEV_POLY_OFFSET_ALL_MESHES,
+          textureStatus,
+          textureValidation,
         });
 
         if (!stabilized) {
           disposeObject3D(nextModel);
           if (seq === loadSeqRef.current) {
             onLoadErrorRef.current("GLB stabilization failed.");
+            onViewerMaterialPolicyRef.current({
+              renderState: "invalid_asset",
+              message: "Invalid asset: stabilization failed.",
+              meshCount: 0,
+              materialCount: 0,
+              texturedMaterialCount: 0,
+              uvMeshCount: 0,
+              missingNormalCount: 0,
+              invalidMaterialCount: 0,
+              replacedMaterialCount: 0,
+              fallbackApplied: false,
+              hasTextureMaps: false,
+              hasValidUv: false,
+            });
           }
           return;
         }
@@ -1226,6 +1321,16 @@ function LoadedModel({
           centeredX: stabilized.centeredX,
           centeredZ: stabilized.centeredZ,
         };
+        onViewerMaterialPolicyRef.current(stabilized.viewerPolicy);
+        if (stabilized.viewerPolicy.renderState === "invalid_asset") {
+          disposeObject3D(nextModel);
+          if (seq === loadSeqRef.current) {
+            onLoadErrorRef.current(stabilized.viewerPolicy.message);
+            onModelNormalizationDebugRef.current(normalizationDebug);
+            onModelReadyRef.current(null);
+          }
+          return;
+        }
         if (debugRenderEnabledRef.current) {
           const cameraPlanes = deriveCameraPlanes(stabilized.radius);
           console.debug("[ProjectViewport][debug-render]", {
@@ -1275,6 +1380,20 @@ function LoadedModel({
           return;
         }
         onLoadErrorRef.current(`GLB load error: ${extractErrorMessage(error)}`);
+        onViewerMaterialPolicyRef.current({
+          renderState: "invalid_asset",
+          message: `Invalid asset: ${extractErrorMessage(error)}`,
+          meshCount: 0,
+          materialCount: 0,
+          texturedMaterialCount: 0,
+          uvMeshCount: 0,
+          missingNormalCount: 0,
+          invalidMaterialCount: 0,
+          replacedMaterialCount: 0,
+          fallbackApplied: false,
+          hasTextureMaps: false,
+          hasValidUv: false,
+        });
         invalidateRef.current();
       }
     })();
@@ -1282,7 +1401,14 @@ function LoadedModel({
     return () => {
       cancelled = true;
     };
-  }, [fittedForUrlRef, glbPath, glbVersion, modelUrl]);
+  }, [
+    fittedForUrlRef,
+    glbPath,
+    glbVersion,
+    modelUrl,
+    textureStatus,
+    textureValidation,
+  ]);
 
   useEffect(() => {
     if (!loadedModel || !(camera instanceof THREE.PerspectiveCamera)) {
@@ -1425,15 +1551,17 @@ function LoadedModel({
       return;
     }
 
-    applyModelVisualSettings({
+    const materialRefresh = applyModelVisualSettings({
         object: loadedModel, options: {
           envMapIntensity,
           wireframe,
           polygonOffset: stabilization?.polygonOffsetEngaged ?? DEV_POLY_OFFSET_ALL_MESHES,
-
           fallbackMaterialColor,
+          textureStatus,
+          textureValidation,
         }
       });
+    onViewerMaterialPolicyRef.current(materialRefresh.policy);
     invalidate();
   }, [
     envMapIntensity,
@@ -1441,6 +1569,8 @@ function LoadedModel({
     invalidate,
     loadedModel,
     stabilization,
+    textureStatus,
+    textureValidation,
     wireframe,
   ]);
 
@@ -1570,33 +1700,31 @@ function getViewportThemeConfig(
     isDark,
     environmentPreset: isAtelier ? (isDark ? "warehouse" : "studio") : "studio",
     background: tokens.viewportBackground,
-    ground: isDark
-      ? reduceWarmGroundBounce(neutralizeViewportGround(tokens.viewportGround))
-      : tokens.viewportGround,
+    ground: isDark ? "#747A84" : "#C5CBD2",
     groundBronzeTint: tokens.accentPrimary,
-    groundBronzeStrength: isAtelier ? (isDark ? 0.0275 : 0.01) : 0,
-    groundMetalness: isAtelier ? (isDark ? 0.028 : 0.012) : 0,
-    groundRoughness: isAtelier ? (isDark ? 0.94 : 0.94) : 0.955,
+    groundBronzeStrength: isAtelier ? (isDark ? 0.018 : 0.008) : 0,
+    groundMetalness: isAtelier ? (isDark ? 0.022 : 0.01) : 0,
+    groundRoughness: 0.94,
     gridMain: tokens.viewportGridMain,
     gridSub: tokens.viewportGridSub,
     gridOpacity: isDark ? 0.23 : 0.18,
     ambientIntensity: isDark
       ? isAtelier
-        ? 0.18
-        : 0.165
+        ? 0.24
+        : 0.22
       : isAtelier
-        ? 0.255
-        : 0.235,
+        ? 0.28
+        : 0.25,
     ambientColor: isAtelier
       ? softenWarmAmbient(tokens.viewportAmbientLight)
       : coolNeutralLight(tokens.viewportAmbientLight),
     hemisphereIntensity: isDark
       ? isAtelier
-        ? 0.76
-        : 0.7
+        ? 0.84
+        : 0.78
       : isAtelier
-        ? 0.74
-        : 0.7,
+        ? 0.78
+        : 0.74,
     hemisphereSkyColor: isAtelier
       ? tokens.viewportHemisphereSky
       : coolNeutralLight(tokens.viewportHemisphereSky),
@@ -1655,7 +1783,7 @@ function getViewportThemeConfig(
         ? "radial-gradient(circle at 50% 42%, rgba(0, 0, 0, 0) 58%, rgba(0, 0, 0, 0.1) 100%)"
         : "radial-gradient(circle at 50% 42%, rgba(255, 255, 255, 0) 60%, rgba(28, 24, 20, 0.032) 100%)"
       : null,
-    fallbackMaterialColor: tokens.viewportFallbackMaterial,
+    fallbackMaterialColor: VIEWER_FALLBACK_CLAY_COLOR,
     errorBorder: tokens.viewportErrorBorder,
     errorBg: tokens.viewportErrorBg,
     errorText: tokens.viewportErrorText,
@@ -1665,6 +1793,9 @@ function getViewportThemeConfig(
 export function ProjectViewport({
   glbPath,
   glbVersion,
+  textureStatus,
+  textureMessage,
+  textureValidation,
   isGenerating = false,
   generationStage,
   showUtilityButtons = true,
@@ -1700,6 +1831,8 @@ export function ProjectViewport({
   const [debugRenderEnabled, setDebugRenderEnabled] =
     useState(DEFAULT_DEBUG_RENDER);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [viewerMaterialPolicy, setViewerMaterialPolicy] =
+    useState<ViewerMaterialPolicyResult | null>(null);
   const [modelNormalizationDebug, setModelNormalizationDebug] =
     useState<ModelNormalizationDebug | null>(null);
   const [modelStats, setModelStats] = useState<ModelViewportStats | null>(null);
@@ -1720,6 +1853,39 @@ export function ProjectViewport({
     return stage === "done" || stage === "ready" || stage === "final";
   }, [generationStage]);
   const allowModelFit = !isGenerating && isFinalStage;
+  const viewerStatusLabel = useMemo(() => {
+    if (!viewerMaterialPolicy) {
+      return null;
+    }
+    if (viewerMaterialPolicy.renderState === "textured_final") {
+      return null;
+    }
+    if (viewerMaterialPolicy.renderState === "texgen_failed") {
+      return "TexGen failed";
+    }
+    if (viewerMaterialPolicy.renderState === "geometry_preview") {
+      return "Geometry preview";
+    }
+    return "Invalid asset";
+  }, [viewerMaterialPolicy]);
+  const viewerStatusMessage = useMemo(() => {
+    if (!viewerMaterialPolicy) {
+      return null;
+    }
+    if (
+      textureMessage &&
+      viewerMaterialPolicy.renderState !== "textured_final"
+    ) {
+      return textureMessage;
+    }
+    return viewerMaterialPolicy.message;
+  }, [textureMessage, viewerMaterialPolicy]);
+
+  useEffect(() => {
+    if (!glbPath) {
+      setViewerMaterialPolicy(null);
+    }
+  }, [glbPath]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -1928,6 +2094,26 @@ export function ProjectViewport({
       setLoadError(`Screenshot failed: ${extractErrorMessage(error)}`);
     }
   }, []);
+
+  useEffect(() => {
+    console.info("[VOLUMIA][viewer] viewer lighting initialized", {
+      environmentPreset: themeConfig.environmentPreset,
+      ambientIntensity: themeConfig.ambientIntensity,
+      hemisphereIntensity: themeConfig.hemisphereIntensity,
+      keyIntensity: themeConfig.keyIntensity,
+      fillIntensity: themeConfig.fillIntensity,
+      rimIntensity: themeConfig.rimIntensity,
+      topDownKeyIntensity: themeConfig.topDownKeyIntensity,
+    });
+  }, [
+    themeConfig.ambientIntensity,
+    themeConfig.environmentPreset,
+    themeConfig.fillIntensity,
+    themeConfig.hemisphereIntensity,
+    themeConfig.keyIntensity,
+    themeConfig.rimIntensity,
+    themeConfig.topDownKeyIntensity,
+  ]);
 
   useEffect(() => {
     if (typeof screenshotSignal !== "number" || screenshotSignal <= 0) {
@@ -2313,6 +2499,16 @@ export function ProjectViewport({
               {loadError}
             </div>
           ) : null}
+          {!loadError && viewerStatusLabel && viewerMaterialPolicy ? (
+            <div className="pointer-events-none absolute left-3 top-3 z-20 max-w-[320px] rounded-[var(--radius-sm)] border border-[var(--glass-border)] bg-[var(--glass-bg-strong)] px-3 py-2 text-[11px] leading-snug text-[var(--text)] shadow-[var(--glass-shadow)] backdrop-blur-[12px]">
+              <div className="font-medium uppercase tracking-[0.08em] text-[var(--text-faint)]">
+                {viewerStatusLabel}
+              </div>
+              <div className="mt-1 text-[var(--muted-text)]">
+                {viewerStatusMessage}
+              </div>
+            </div>
+          ) : null}
           {showChrome && modelStats ? (
             <div className="pointer-events-none absolute right-3 top-3 z-20 rounded-[var(--radius-md)] border border-[var(--glass-border)] bg-[var(--glass-bg-strong)] px-3 py-2 text-right text-[10px] uppercase tracking-[0.12em] text-[var(--muted-text)] shadow-[var(--glass-shadow)] backdrop-blur-[12px]">
               <div>Mesh {modelStats.triangleCount.toLocaleString()} tris</div>
@@ -2487,6 +2683,8 @@ export function ProjectViewport({
                 <LoadedModel
                   glbPath={glbPath}
                   glbVersion={glbVersion}
+                  textureStatus={textureStatus}
+                  textureValidation={textureValidation}
                   modelUrl={url}
                   allowFit={allowModelFit}
                   debugRenderEnabled={debugRenderEnabled}
@@ -2505,6 +2703,7 @@ export function ProjectViewport({
                     emitCameraTelemetry();
                   }}
                   onModelNormalizationDebug={setModelNormalizationDebug}
+                  onViewerMaterialPolicy={setViewerMaterialPolicy}
                 />
                 <OrbitControls
                   ref={controlsRef}

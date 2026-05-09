@@ -1,4 +1,4 @@
-﻿import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 
@@ -55,15 +55,22 @@ export function SceneMassing({
   gridOpacity,
 }: SceneMassingProps) {
   const groundMaterialColor = useMemo(() => {
-    const base = new THREE.Color(groundColor).multiplyScalar(0.76);
+    const base = new THREE.Color(groundColor);
+    const studioGray = new THREE.Color("#8D939C");
+    base.lerp(studioGray, 0.18);
     if (bronzeTintColor && bronzeTintStrength > 0) {
       base.lerp(new THREE.Color(bronzeTintColor), bronzeTintStrength);
+    }
+    const hsl = { h: 0, s: 0, l: 0 };
+    base.getHSL(hsl);
+    if (hsl.l < 0.42) {
+      base.lerp(new THREE.Color("#949AA3"), 0.22);
     }
     return base;
   }, [bronzeTintColor, bronzeTintStrength, groundColor]);
   const massingMaterialColor = useMemo(() => {
-    return new THREE.Color(groundColor).multiplyScalar(0.56);
-  }, [groundColor]);
+    return new THREE.Color("#B9BFC7");
+  }, []);
 
   const grid = useMemo(() => {
     const nextGrid = new THREE.GridHelper(100, 20, gridMain, gridSub);
@@ -80,6 +87,24 @@ export function SceneMassing({
     );
     applyGridOpacity(grid, opacity);
   });
+
+  useEffect(() => {
+    console.info("[VOLUMIA][viewer] ground plane material initialized", {
+      groundColor: groundMaterialColor.getStyle(),
+      groundMetalness,
+      groundRoughness,
+      gridMain,
+      gridSub,
+      gridOpacity,
+    });
+  }, [
+    gridMain,
+    gridOpacity,
+    gridSub,
+    groundMaterialColor,
+    groundMetalness,
+    groundRoughness,
+  ]);
 
   return (
     <>
@@ -102,8 +127,8 @@ export function SceneMassing({
           <boxGeometry args={MASSING_SIZE} />
           <meshStandardMaterial
             color={massingMaterialColor}
-            metalness={0.12}
-            roughness={0.72}
+            metalness={0.08}
+            roughness={0.78}
           />
         </mesh>
       ) : null}

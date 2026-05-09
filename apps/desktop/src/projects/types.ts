@@ -16,6 +16,30 @@ export type ModelMetadata = {
 
 export type GenerationPreset = "fast" | "balanced" | "high" | "quality";
 export type GenerationMode = "auto" | "neural" | "architectural";
+export type ProjectTextureStatus =
+  | "pending"
+  | "running"
+  | "success"
+  | "skipped_invalid_mesh"
+  | "skipped_invalid_image"
+  | "stalled"
+  | "timed_out"
+  | "runtime_error"
+  | "process_start_failed"
+  | "no_output_generated"
+  | "invalid_output"
+  | "fallback_geometry_only";
+
+export type ProjectTextureValidation = {
+  ok: boolean;
+  hasMaterials: boolean;
+  hasImages: boolean;
+  hasTextures: boolean;
+  hasMaterialTextureBinding: boolean;
+  reason?: string;
+  fileSizeBytes?: number;
+  sameAsSourceMesh?: boolean;
+};
 
 export type ProjectModel = {
   sourceImages: string[];
@@ -23,6 +47,9 @@ export type ProjectModel = {
   generatedAt?: number;
   preset?: GenerationPreset;
   mode?: GenerationMode;
+  textureStatus?: ProjectTextureStatus;
+  textureMessage?: string;
+  textureValidation?: ProjectTextureValidation;
 };
 
 export type Project = {
@@ -75,6 +102,43 @@ const isGenerationMode = (value: unknown): value is GenerationMode => {
   return value === "auto" || value === "neural" || value === "architectural";
 };
 
+const isProjectTextureStatus = (
+  value: unknown,
+): value is ProjectTextureStatus => {
+  return (
+    value === "pending" ||
+    value === "running" ||
+    value === "success" ||
+    value === "skipped_invalid_mesh" ||
+    value === "skipped_invalid_image" ||
+    value === "stalled" ||
+    value === "timed_out" ||
+    value === "runtime_error" ||
+    value === "process_start_failed" ||
+    value === "no_output_generated" ||
+    value === "invalid_output" ||
+    value === "fallback_geometry_only"
+  );
+};
+
+const isProjectTextureValidation = (
+  value: unknown,
+): value is ProjectTextureValidation => {
+  if (!isRecord(value)) return false;
+  return (
+    typeof value.ok === "boolean" &&
+    typeof value.hasMaterials === "boolean" &&
+    typeof value.hasImages === "boolean" &&
+    typeof value.hasTextures === "boolean" &&
+    typeof value.hasMaterialTextureBinding === "boolean" &&
+    (value.reason === undefined || isString(value.reason)) &&
+    (value.fileSizeBytes === undefined ||
+      typeof value.fileSizeBytes === "number") &&
+    (value.sameAsSourceMesh === undefined ||
+      typeof value.sameAsSourceMesh === "boolean")
+  );
+};
+
 export const isChatMessage = (value: unknown): value is ChatMessage => {
   if (!isRecord(value)) return false;
   return (
@@ -106,7 +170,12 @@ export const isProjectModel = (value: unknown): value is ProjectModel => {
     (value.glbPath === undefined || isString(value.glbPath)) &&
     (value.generatedAt === undefined || typeof value.generatedAt === "number") &&
     (value.preset === undefined || isGenerationPreset(value.preset)) &&
-    (value.mode === undefined || isGenerationMode(value.mode))
+    (value.mode === undefined || isGenerationMode(value.mode)) &&
+    (value.textureStatus === undefined ||
+      isProjectTextureStatus(value.textureStatus)) &&
+    (value.textureMessage === undefined || isString(value.textureMessage)) &&
+    (value.textureValidation === undefined ||
+      isProjectTextureValidation(value.textureValidation))
   );
 };
 

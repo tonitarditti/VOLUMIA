@@ -33,6 +33,19 @@ import {
   syncWorkflows,
   type WorkflowCheckpointUsage,
 } from "./workflowManager";
+import { validateImageForTexGen } from "./texgenImageValidation";
+import { validateMeshForTexGen } from "./texgenMeshValidation";
+import { validateTexgenOutput, validateTexturedGlb } from "./texgenOutputValidation";
+import { buildTexgenAttemptPlan, shouldRetryTexgenFailure } from "./texgenRetryPolicy";
+import { runTexgenAttempt } from "./texgenRunner";
+import type {
+  TextureStageStatus,
+  TexgenAttemptOutcome,
+  TexgenAttemptRecord,
+  TexgenDependencySnapshot,
+  TexgenOutputValidation,
+  TexturedGlbValidation,
+} from "./texgenTypes";
 
 export type BackendMode = "dev" | "prod";
 export type BackendServiceState = "stopped" | "starting" | "running" | "error";
@@ -112,37 +125,19 @@ export type ComfyWorkflowJobState =
   | "ERROR"
   | "CANCELED";
 
-export type TextureStageStatus = "ready" | "failed" | "skipped";
-
-export type TexgenDependencySnapshot = {
-  moduleRoots: string[];
-  validModuleRoots: string[];
-  hasCustomRasterizer: boolean;
-  hasDifferentiableRenderer: boolean;
-  missingPaths: string[];
-  pythonExecutable: string | null;
-  pythonRunnerDetails: string | null;
-  importChecks: Record<string, string>;
-};
-
-export type TexturedGlbValidation = {
-  ok: boolean;
-  hasMaterials: boolean;
-  hasImages: boolean;
-  hasTextures: boolean;
-  hasMaterialTextureBinding: boolean;
-  reason?: string;
-};
-
 export type ComfyWorkflowJobOutputs = {
   glbPath?: string;
   meshPath?: string;
   texturedGlbPath?: string;
   textureStatus?: TextureStageStatus;
+  textureMessage?: string;
   textureErrorLogPath?: string;
   textureMetadataPath?: string;
   textureDependencies?: TexgenDependencySnapshot;
   textureValidation?: TexturedGlbValidation;
+  textureAttempts?: TexgenAttemptRecord[];
+  textureMeshValidation?: ReturnType<typeof validateMeshForTexGen>;
+  textureImageValidation?: ReturnType<typeof validateImageForTexGen>;
   previewImages?: string[];
   raw?: unknown;
 };
@@ -266,6 +261,46 @@ function normalizeTexgenPreset(
     return "high";
   }
   return "balanced";
+}
+
+function isTexgenSuccessStatus(status: TextureStageStatus | undefined) {
+  return status === "success";
+}
+
+function toMetadataTextureStatus(status: TextureStageStatus) {
+  return status === "success" ? "completed" : status;
+}
+
+function getTexgenStatusMessage(status: TextureStageStatus, reason?: string | null) {
+  const suffix = reason ? ` ${reason}` : "";
+  switch (status) {
+    case "success":
+      return "Texture generation completed successfully.";
+    case "skipped_invalid_mesh":
+      return `Mesh was not suitable for texturing.${suffix}`.trim();
+    case "skipped_invalid_image":
+      return `Input image was invalid for texturing.${suffix}`.trim();
+    case "stalled":
+      return `Texture generation stalled and was cancelled.${suffix}`.trim();
+    case "timed_out":
+      return `Texture generation timed out.${suffix}`.trim();
+    case "runtime_error":
+      return `Texture generation failed at runtime.${suffix}`.trim();
+    case "process_start_failed":
+      return `Texture generation could not start.${suffix}`.trim();
+    case "no_output_generated":
+      return `No valid texture outputs were produced.${suffix}`.trim();
+    case "invalid_output":
+      return `Generated texture output was invalid.${suffix}`.trim();
+    case "fallback_geometry_only":
+      return `Texture fallback used geometry preview only.${suffix}`.trim();
+    case "pending":
+      return "Texture generation is pending.";
+    case "running":
+      return "Texture generation is running.";
+    default:
+      return reason?.trim() || "Texture generation failed.";
+  }
 }
 
 function toLegacyState(state: ComfySupervisorState): BackendServiceState {
@@ -430,107 +465,11 @@ function sleep(ms: number) {
   });
 }
 
-function parseGlbJsonChunk(glbPath: string): Record<string, unknown> | null {
-  try {
-    const file = fs.readFileSync(glbPath);
-    if (file.length < 20) {
-      return null;
-    }
-    const magic = file.readUInt32LE(0);
-    const version = file.readUInt32LE(4);
-    if (magic !== 0x46546c67 || version < 2) {
-      return null;
-    }
-    const jsonChunkLength = file.readUInt32LE(12);
-    const jsonChunkType = file.readUInt32LE(16);
-    if (jsonChunkType !== 0x4e4f534a) {
-      return null;
-    }
-    const jsonStart = 20;
-    const jsonEnd = jsonStart + jsonChunkLength;
-    if (jsonEnd > file.length) {
-      return null;
-    }
-    const jsonText = file.slice(jsonStart, jsonEnd).toString("utf8");
-    const parsed = JSON.parse(jsonText) as unknown;
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-      return null;
-    }
-    return parsed as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-}
-
-function validateTexturedGlb(glbPath: string): TexturedGlbValidation {
-  const parsed = parseGlbJsonChunk(glbPath);
-  if (!parsed) {
-    return {
-      ok: false,
-      hasMaterials: false,
-      hasImages: false,
-      hasTextures: false,
-      hasMaterialTextureBinding: false,
-      reason: "No se pudo parsear GLB/JSON chunk para validar texturas.",
-    };
-  }
-
-  const materials = Array.isArray(parsed.materials) ? parsed.materials : [];
-  const images = Array.isArray(parsed.images) ? parsed.images : [];
-  const textures = Array.isArray(parsed.textures) ? parsed.textures : [];
-
-  const hasMaterialTextureBinding = materials.some((material) => {
-    if (!material || typeof material !== "object" || Array.isArray(material)) {
-      return false;
-    }
-    const node = material as Record<string, unknown>;
-    const pbr =
-      node.pbrMetallicRoughness &&
-      typeof node.pbrMetallicRoughness === "object" &&
-      !Array.isArray(node.pbrMetallicRoughness)
-        ? (node.pbrMetallicRoughness as Record<string, unknown>)
-        : null;
-
-    const pbrTexture =
-      pbr?.baseColorTexture ||
-      pbr?.metallicRoughnessTexture ||
-      pbr?.normalTexture ||
-      pbr?.occlusionTexture;
-
-    return Boolean(
-      pbrTexture ||
-        node.normalTexture ||
-        node.occlusionTexture ||
-        node.emissiveTexture,
-    );
-  });
-
-  const validation: TexturedGlbValidation = {
-    ok:
-      materials.length > 0 &&
-      images.length > 0 &&
-      textures.length > 0 &&
-      hasMaterialTextureBinding,
-    hasMaterials: materials.length > 0,
-    hasImages: images.length > 0,
-    hasTextures: textures.length > 0,
-    hasMaterialTextureBinding,
-  };
-
-  if (!validation.ok) {
-    validation.reason =
-      "GLB generado sin binding de texturas/materiales reales (solo color base o material uniforme).";
-  }
-
-  return validation;
-}
-
 const COMFY_HEALTH_FAILURE_THRESHOLD = 3;
 const COMFY_AUTO_RESTART_DELAY_MS = 1_500;
 const PREFERRED_TEXGEN_PYTHON_EXE = "F:\\MINICONDA\\envs\\volumia\\python.exe";
 const DEFAULT_TEXGEN_MODEL_ROOT = "E:\\AI\\Hunyuan3D_models";
 const DEFAULT_HUNYUAN_REPO_ROOT = "E:\\AI\\Hunyuan3D-2";
-const DEFAULT_TEXGEN_TIMEOUT_MS = 20 * 60 * 1_000;
 const DEFAULT_MESH_OPTIMIZE_TIMEOUT_MS = 8 * 60 * 1_000;
 const DEFAULT_WORKFLOW_WAIT_TIMEOUT_MS = 35 * 60 * 1_000;
 const DEFAULT_IMAGE_PREPROCESS_TIMEOUT_MS = 3 * 60 * 1_000;
@@ -1444,13 +1383,6 @@ export class BackendSupervisor {
     );
   }
 
-  private resolveTexgenTimeoutMs() {
-    return parsePositiveIntEnv(
-      "VOLUMIA_TEXGEN_TIMEOUT_MS",
-      DEFAULT_TEXGEN_TIMEOUT_MS,
-    );
-  }
-
   private resolveMeshOptimizeTimeoutMs() {
     return parsePositiveIntEnv(
       "VOLUMIA_MESH_OPTIMIZE_TIMEOUT_MS",
@@ -1666,12 +1598,15 @@ export class BackendSupervisor {
     runDir: string,
     payload: Record<string, unknown>,
   ) {
-    const textureStatus =
+    const rawTextureStatus =
       typeof payload.texture_status === "string"
         ? payload.texture_status
         : typeof payload.textureStatus === "string"
           ? payload.textureStatus
-          : "failed";
+          : "runtime_error";
+    const textureStatus = toMetadataTextureStatus(
+      rawTextureStatus as TextureStageStatus,
+    );
     const shapeGlbPath =
       typeof payload.shape_glb_path === "string"
         ? payload.shape_glb_path
@@ -1727,20 +1662,25 @@ export class BackendSupervisor {
     );
     const meshOptimizeOutputPath = path.join(runDir, "optimized_mesh.obj");
     const dependencies = this.resolveTexgenDependencies();
-    const texgenTimeoutMs = this.resolveTexgenTimeoutMs();
     const texgenModelRoot = this.resolveTexgenModelRoot();
     const texgenRepoRoot = this.resolveTexgenRepoRoot(
       dependencies.validModuleRoots,
     );
-    const texgenPreset = normalizeTexgenPreset(job.texgenPreset);
+    const requestedPreset = normalizeTexgenPreset(job.texgenPreset);
+    const attemptPlan = buildTexgenAttemptPlan(requestedPreset);
+    const requestedTimings = attemptPlan[0]?.timings;
     let texgenMeshPath = meshPath;
     let meshOptimizationStatus: "skipped" | "completed" | "failed" = "skipped";
     let meshOptimizationError: string | null = null;
     const nowIso = new Date().toISOString();
     const inputImagePath = job.inputImagePath?.trim() ?? "";
+    let imageValidation = validateImageForTexGen(inputImagePath || "__missing__");
+    let meshValidation = validateMeshForTexGen(texgenMeshPath);
+    let finalValidation: TexturedGlbValidation | undefined;
+    const attemptRecords: TexgenAttemptRecord[] = [];
     this.appendComfyLog(`[${stageLabel}] shape output path: ${meshPath}`);
     this.appendComfyLog(
-      `[${stageLabel}] texgen config: preset=${texgenPreset} timeout_ms=${texgenTimeoutMs} model_root=${texgenModelRoot} repo_root=${texgenRepoRoot || "<none>"} mesh_optimize_timeout_ms=${meshOptimizeTimeoutMs}`,
+      `[${stageLabel}] texgen config: requested_preset=${requestedPreset} model_root=${texgenModelRoot} repo_root=${texgenRepoRoot || "<none>"} mesh_optimize_timeout_ms=${meshOptimizeTimeoutMs} attempts=${attemptPlan.map((attempt) => `${attempt.preset}:${attempt.timings.hardTimeoutMs}ms`).join(" -> ")}`,
     );
 
     if (fs.existsSync(fallbackTexturedGlbPath)) {
@@ -1789,16 +1729,17 @@ export class BackendSupervisor {
           texturedGlbPath: finalProjectGlbPath,
           textureStatus: "ready",
           texture_status: "completed",
+          textureMessage: "Using validated cached textured output.",
           shape_glb_path: meshPath,
           textured_glb_path: finalProjectGlbPath,
           error: null,
           texgen_started_at: null,
           texgen_ended_at: null,
           duration_ms: 0,
-          timeout_ms: texgenTimeoutMs,
+          timeout_ms: requestedTimings?.hardTimeoutMs ?? 0,
           texgen_model_root: texgenModelRoot,
           texgen_repo_root: texgenRepoRoot || null,
-          texgen_preset: texgenPreset,
+          texgen_preset: requestedPreset,
           texgen_cache_hit: true,
           textureDependencies: dependencies,
           textureValidation: cachedValidation,
@@ -1813,11 +1754,15 @@ export class BackendSupervisor {
           glbPath: finalProjectGlbPath,
           meshPath,
           texturedGlbPath: finalProjectGlbPath,
-          textureStatus: "ready" as TextureStageStatus,
+          textureStatus: "success" as TextureStageStatus,
+          textureMessage: "Using validated cached textured output.",
           textureErrorLogPath: undefined,
           textureMetadataPath: metadataPath,
           textureDependencies: dependencies,
           textureValidation: cachedValidation,
+          textureAttempts: attemptRecords,
+          textureMeshValidation: meshValidation,
+          textureImageValidation: imageValidation,
         };
       }
       if (!cachePromptMatches) {
@@ -1841,41 +1786,55 @@ export class BackendSupervisor {
     }
 
     if (!inputImagePath || !fs.existsSync(inputImagePath)) {
+      imageValidation = validateImageForTexGen(inputImagePath || "__missing__");
+      const textureStatus: TextureStageStatus = "skipped_invalid_image";
+      const textureMessage = getTexgenStatusMessage(
+        textureStatus,
+        imageValidation.reason ??
+          "Input image path unavailable for texgen stage.",
+      );
       const metadataPath = this.writeTextureMetadata(runDir, {
         createdAt: nowIso,
         promptId: job.promptId,
         meshPath,
         texturedGlbPath: null,
-        textureStatus: "skipped",
-        texture_status: "skipped",
+        textureStatus,
+        texture_status: textureStatus,
+        textureMessage,
         shape_glb_path: meshPath,
         textured_glb_path: null,
-        error: "Input image path unavailable for texgen stage.",
-        reason: "Input image path unavailable for texgen stage.",
+        error: textureMessage,
+        reason: imageValidation.reason ?? textureMessage,
         texgen_started_at: null,
         texgen_ended_at: null,
         duration_ms: 0,
-        timeout_ms: texgenTimeoutMs,
+        timeout_ms: requestedTimings?.hardTimeoutMs ?? 0,
         texgen_model_root: texgenModelRoot,
         texgen_repo_root: texgenRepoRoot || null,
-        texgen_preset: texgenPreset,
+        texgen_preset: requestedPreset,
         textureDependencies: dependencies,
+        textureImageValidation: imageValidation,
+        textureAttempts: attemptRecords,
       });
       this.appendComfyLog(
-        `[${stageLabel}] skipped: input image missing (fallback mesh).`,
+        `[${stageLabel}] image_validation_failed reason=${imageValidation.reason ?? "input image missing"}`,
         "warn",
       );
-      this.appendComfyLog(`[${stageLabel}] texture_status=skipped`, "warn");
-      this.logTexgenFallback(stageLabel, meshPath, "input image missing");
+      this.appendComfyLog(`[${stageLabel}] texgen_final_status=${textureStatus}`, "warn");
+      this.logTexgenFallback(stageLabel, meshPath, textureMessage);
       return {
         glbPath: meshPath,
         meshPath,
         texturedGlbPath: undefined,
-        textureStatus: "skipped" as TextureStageStatus,
+        textureStatus,
+        textureMessage,
         textureErrorLogPath: undefined,
         textureMetadataPath: metadataPath,
         textureDependencies: dependencies,
         textureValidation: undefined,
+        textureAttempts: attemptRecords,
+        textureMeshValidation: meshValidation,
+        textureImageValidation: imageValidation,
       };
     }
 
@@ -2090,42 +2049,175 @@ export class BackendSupervisor {
       `[${stageLabel}] texgen mesh input path: ${texgenMeshPath} (mesh_optimization_status=${meshOptimizationStatus})`,
     );
 
-    if (dependencies.validModuleRoots.length === 0) {
-      const reason = `Texgen dependencies missing: ${dependencies.missingPaths.join(" | ")}`;
-      fs.writeFileSync(logPath, `${reason}\n`, "utf8");
+    this.appendComfyLog(`[${stageLabel}] texgen_preflight_started`);
+    imageValidation = validateImageForTexGen(inputImagePath);
+    if (imageValidation.ok) {
+      this.appendComfyLog(
+        `[${stageLabel}] image_validation_passed format=${imageValidation.format} resolution=${imageValidation.width}x${imageValidation.height}`,
+      );
+    } else {
+      this.appendComfyLog(
+        `[${stageLabel}] image_validation_failed reason=${imageValidation.reason ?? "invalid image"}`,
+        "warn",
+      );
+      const textureStatus: TextureStageStatus = "skipped_invalid_image";
+      const textureMessage = getTexgenStatusMessage(
+        textureStatus,
+        imageValidation.reason,
+      );
       const metadataPath = this.writeTextureMetadata(runDir, {
         createdAt: nowIso,
         promptId: job.promptId,
         meshPath,
         texturedGlbPath: null,
-        textureStatus: "failed",
-        texture_status: "failed",
+        textureStatus,
+        texture_status: textureStatus,
+        textureMessage,
         shape_glb_path: meshPath,
         textured_glb_path: null,
-        error: reason,
-        reason,
+        error: textureMessage,
+        reason: imageValidation.reason,
         texgen_started_at: null,
         texgen_ended_at: null,
         duration_ms: 0,
-        timeout_ms: texgenTimeoutMs,
+        timeout_ms: requestedTimings?.hardTimeoutMs ?? 0,
         texgen_model_root: texgenModelRoot,
         texgen_repo_root: texgenRepoRoot || null,
-        texgen_preset: texgenPreset,
+        texgen_preset: requestedPreset,
         textureDependencies: dependencies,
-        textureErrorLogPath: logPath,
+        textureImageValidation: imageValidation,
+        textureAttempts: attemptRecords,
       });
-      this.appendComfyLog(`[${stageLabel}] ${reason}`, "warn");
-      this.appendComfyLog(`[${stageLabel}] texture_status=failed`, "warn");
-      this.logTexgenFallback(stageLabel, meshPath, reason);
+      this.appendComfyLog(`[${stageLabel}] texgen_final_status=${textureStatus}`, "warn");
+      this.logTexgenFallback(stageLabel, meshPath, textureMessage);
       return {
         glbPath: meshPath,
         meshPath,
         texturedGlbPath: undefined,
-        textureStatus: "failed" as TextureStageStatus,
+        textureStatus,
+        textureMessage,
+        textureErrorLogPath: undefined,
+        textureMetadataPath: metadataPath,
+        textureDependencies: dependencies,
+        textureValidation: undefined,
+        textureAttempts: attemptRecords,
+        textureMeshValidation: meshValidation,
+        textureImageValidation: imageValidation,
+      };
+    }
+
+    meshValidation = validateMeshForTexGen(texgenMeshPath);
+    if (meshValidation.ok) {
+      this.appendComfyLog(
+        `[${stageLabel}] mesh_validation_passed vertices=${meshValidation.vertexCount} faces=${meshValidation.faceCount} components=${meshValidation.componentCount ?? "n/a"} flatness_ratio=${meshValidation.flatnessRatio?.toFixed(5) ?? "n/a"}`,
+      );
+    } else {
+      this.appendComfyLog(
+        `[${stageLabel}] mesh_validation_failed reason=${meshValidation.reason ?? "invalid mesh"}`,
+        "warn",
+      );
+      const textureStatus: TextureStageStatus = "skipped_invalid_mesh";
+      const textureMessage = getTexgenStatusMessage(
+        textureStatus,
+        meshValidation.reason,
+      );
+      const metadataPath = this.writeTextureMetadata(runDir, {
+        createdAt: nowIso,
+        promptId: job.promptId,
+        meshPath,
+        texturedGlbPath: null,
+        textureStatus,
+        texture_status: textureStatus,
+        textureMessage,
+        shape_glb_path: meshPath,
+        textured_glb_path: null,
+        error: textureMessage,
+        reason: meshValidation.reason,
+        texgen_started_at: null,
+        texgen_ended_at: null,
+        duration_ms: 0,
+        timeout_ms: requestedTimings?.hardTimeoutMs ?? 0,
+        texgen_model_root: texgenModelRoot,
+        texgen_repo_root: texgenRepoRoot || null,
+        texgen_preset: requestedPreset,
+        mesh_optimization_status: meshOptimizationStatus,
+        mesh_optimization_error: meshOptimizationError,
+        optimized_mesh_path: texgenMeshPath !== meshPath ? texgenMeshPath : null,
+        mesh_optimization_metadata_path: fs.existsSync(meshOptimizeMetadataPath)
+          ? meshOptimizeMetadataPath
+          : null,
+        mesh_optimization_log_path: fs.existsSync(meshOptimizeLogPath)
+          ? meshOptimizeLogPath
+          : null,
+        textureDependencies: dependencies,
+        textureMeshValidation: meshValidation,
+        textureImageValidation: imageValidation,
+        textureAttempts: attemptRecords,
+      });
+      this.appendComfyLog(`[${stageLabel}] texgen_final_status=${textureStatus}`, "warn");
+      this.logTexgenFallback(stageLabel, meshPath, textureMessage);
+      return {
+        glbPath: meshPath,
+        meshPath,
+        texturedGlbPath: undefined,
+        textureStatus,
+        textureMessage,
+        textureErrorLogPath: undefined,
+        textureMetadataPath: metadataPath,
+        textureDependencies: dependencies,
+        textureValidation: undefined,
+        textureAttempts: attemptRecords,
+        textureMeshValidation: meshValidation,
+        textureImageValidation: imageValidation,
+      };
+    }
+
+    if (dependencies.validModuleRoots.length === 0) {
+      const reason = `Texgen dependencies missing: ${dependencies.missingPaths.join(" | ")}`;
+      fs.writeFileSync(logPath, `${reason}\n`, "utf8");
+      const textureStatus: TextureStageStatus = "runtime_error";
+      const textureMessage = getTexgenStatusMessage(textureStatus, reason);
+      const metadataPath = this.writeTextureMetadata(runDir, {
+        createdAt: nowIso,
+        promptId: job.promptId,
+        meshPath,
+        texturedGlbPath: null,
+        textureStatus,
+        texture_status: textureStatus,
+        textureMessage,
+        shape_glb_path: meshPath,
+        textured_glb_path: null,
+        error: textureMessage,
+        reason,
+        texgen_started_at: null,
+        texgen_ended_at: null,
+        duration_ms: 0,
+        timeout_ms: requestedTimings?.hardTimeoutMs ?? 0,
+        texgen_model_root: texgenModelRoot,
+        texgen_repo_root: texgenRepoRoot || null,
+        texgen_preset: requestedPreset,
+        textureDependencies: dependencies,
+        textureErrorLogPath: logPath,
+        textureMeshValidation: meshValidation,
+        textureImageValidation: imageValidation,
+        textureAttempts: attemptRecords,
+      });
+      this.appendComfyLog(`[${stageLabel}] ${reason}`, "warn");
+      this.appendComfyLog(`[${stageLabel}] texgen_final_status=${textureStatus}`, "warn");
+      this.logTexgenFallback(stageLabel, meshPath, textureMessage);
+      return {
+        glbPath: meshPath,
+        meshPath,
+        texturedGlbPath: undefined,
+        textureStatus,
+        textureMessage,
         textureErrorLogPath: logPath,
         textureMetadataPath: metadataPath,
         textureDependencies: dependencies,
         textureValidation: undefined,
+        textureAttempts: attemptRecords,
+        textureMeshValidation: meshValidation,
+        textureImageValidation: imageValidation,
       };
     }
 
@@ -2179,39 +2271,49 @@ export class BackendSupervisor {
     if (importProbe.missingImports.length > 0) {
       const reason = `Texgen Python imports missing: ${importProbe.missingImports.join(" | ")}`;
       fs.writeFileSync(logPath, `${reason}\n`, "utf8");
+      const textureStatus: TextureStageStatus = "runtime_error";
+      const textureMessage = getTexgenStatusMessage(textureStatus, reason);
       const metadataPath = this.writeTextureMetadata(runDir, {
         createdAt: nowIso,
         promptId: job.promptId,
         meshPath,
         texturedGlbPath: null,
-        textureStatus: "failed",
-        texture_status: "failed",
+        textureStatus,
+        texture_status: textureStatus,
+        textureMessage,
         shape_glb_path: meshPath,
         textured_glb_path: null,
-        error: reason,
+        error: textureMessage,
         reason,
         texgen_started_at: null,
         texgen_ended_at: null,
         duration_ms: 0,
-        timeout_ms: texgenTimeoutMs,
+        timeout_ms: requestedTimings?.hardTimeoutMs ?? 0,
         texgen_model_root: texgenModelRoot,
         texgen_repo_root: texgenRepoRoot || null,
-        texgen_preset: texgenPreset,
+        texgen_preset: requestedPreset,
         textureDependencies: dependencies,
         textureErrorLogPath: logPath,
+        textureMeshValidation: meshValidation,
+        textureImageValidation: imageValidation,
+        textureAttempts: attemptRecords,
       });
       this.appendComfyLog(`[${stageLabel}] ${reason}`, "warn");
-      this.appendComfyLog(`[${stageLabel}] texture_status=failed`, "warn");
-      this.logTexgenFallback(stageLabel, meshPath, reason);
+      this.appendComfyLog(`[${stageLabel}] texgen_final_status=${textureStatus}`, "warn");
+      this.logTexgenFallback(stageLabel, meshPath, textureMessage);
       return {
         glbPath: meshPath,
         meshPath,
         texturedGlbPath: undefined,
-        textureStatus: "failed" as TextureStageStatus,
+        textureStatus,
+        textureMessage,
         textureErrorLogPath: logPath,
         textureMetadataPath: metadataPath,
         textureDependencies: dependencies,
         textureValidation: undefined,
+        textureAttempts: attemptRecords,
+        textureMeshValidation: meshValidation,
+        textureImageValidation: imageValidation,
       };
     }
 
@@ -2219,164 +2321,271 @@ export class BackendSupervisor {
     if (!fs.existsSync(scriptPath)) {
       const reason = `Texgen script not found: ${scriptPath}`;
       fs.writeFileSync(logPath, `${reason}\n`, "utf8");
+      const textureStatus: TextureStageStatus = "process_start_failed";
+      const textureMessage = getTexgenStatusMessage(textureStatus, reason);
       const metadataPath = this.writeTextureMetadata(runDir, {
         createdAt: nowIso,
         promptId: job.promptId,
         meshPath,
         texturedGlbPath: null,
-        textureStatus: "failed",
-        texture_status: "failed",
+        textureStatus,
+        texture_status: textureStatus,
+        textureMessage,
         shape_glb_path: meshPath,
         textured_glb_path: null,
-        error: reason,
+        error: textureMessage,
         reason,
         texgen_started_at: null,
         texgen_ended_at: null,
         duration_ms: 0,
-        timeout_ms: texgenTimeoutMs,
+        timeout_ms: requestedTimings?.hardTimeoutMs ?? 0,
         texgen_model_root: texgenModelRoot,
         texgen_repo_root: texgenRepoRoot || null,
-        texgen_preset: texgenPreset,
+        texgen_preset: requestedPreset,
         textureDependencies: dependencies,
         textureErrorLogPath: logPath,
+        textureMeshValidation: meshValidation,
+        textureImageValidation: imageValidation,
+        textureAttempts: attemptRecords,
       });
       this.appendComfyLog(`[${stageLabel}] ${reason}`, "warn");
-      this.appendComfyLog(`[${stageLabel}] texture_status=failed`, "warn");
-      this.logTexgenFallback(stageLabel, meshPath, reason);
+      this.appendComfyLog(`[${stageLabel}] texgen_final_status=${textureStatus}`, "warn");
+      this.logTexgenFallback(stageLabel, meshPath, textureMessage);
       return {
         glbPath: meshPath,
         meshPath,
         texturedGlbPath: undefined,
-        textureStatus: "failed" as TextureStageStatus,
+        textureStatus,
+        textureMessage,
         textureErrorLogPath: logPath,
         textureMetadataPath: metadataPath,
         textureDependencies: dependencies,
         textureValidation: undefined,
+        textureAttempts: attemptRecords,
+        textureMeshValidation: meshValidation,
+        textureImageValidation: imageValidation,
       };
     }
 
-    const scriptArgs: string[] = [
-      "--mesh",
-      texgenMeshPath,
-      "--image",
-      inputImagePath,
-      "--output-dir",
-      runDir,
-      "--timeout-ms",
-      String(texgenTimeoutMs),
-      "--preset",
-      texgenPreset,
-    ];
-    if (texgenRepoRoot) {
-      scriptArgs.push("--repo-root", texgenRepoRoot);
-    }
+    const attemptLogChunks: string[] = [];
+    let finalStatus: TextureStageStatus = "runtime_error";
+    let finalReason = "Texture generation failed before producing a valid output.";
+    let finalTexturedPath: string | undefined;
+    let finalAttemptOutcome: TexgenAttemptOutcome | null = null;
+    let overallStartedAtIso: string | null = null;
+    let overallEndedAtIso: string | null = null;
+    let overallDurationMs = 0;
 
-    const texgenStartedAtMs = Date.now();
-    const texgenStartedAtIso = new Date(texgenStartedAtMs).toISOString();
-    this.appendComfyLog(`[${stageLabel}] texgen started`);
-    this.appendComfyLog(
-      `[${stageLabel}] texgen started_at=${texgenStartedAtIso} preset=${texgenPreset} timeout_ms=${texgenTimeoutMs}`,
-    );
-    const processResult = await this.runTexgenScriptProcess(
-      scriptPath,
-      scriptArgs,
-      stageLabel,
-      texgenTimeoutMs,
-      {
-        HUNYUAN_TEXGEN_MODEL_PATH: texgenModelRoot,
-        ...(texgenRepoRoot ? { HY3DGEN_ROOT: texgenRepoRoot } : {}),
-      },
-    );
-    const texgenEndedAtMs = Date.now();
-    const texgenEndedAtIso = new Date(texgenEndedAtMs).toISOString();
-    const texgenDurationMs = texgenEndedAtMs - texgenStartedAtMs;
-    this.appendComfyLog(
-      `[${stageLabel}] texgen completed (exit=${processResult.exitCode}, timed_out=${String(processResult.timedOut)})`,
-    );
-    this.appendComfyLog(
-      `[${stageLabel}] texgen ended_at=${texgenEndedAtIso} duration_ms=${texgenDurationMs} timeout_ms=${texgenTimeoutMs}`,
-    );
-    const logLines = [
-      `stage=${stageLabel}`,
-      `runner=${processResult.runnerDetails}`,
-      `exit_code=${processResult.exitCode}`,
-      `timed_out=${String(processResult.timedOut)}`,
-      `started_at=${texgenStartedAtIso}`,
-      `ended_at=${texgenEndedAtIso}`,
-      `duration_ms=${texgenDurationMs}`,
-      `timeout_ms=${texgenTimeoutMs}`,
-      "",
-      "[stdout]",
-      processResult.stdout.trim(),
-      "",
-      "[stderr]",
-      processResult.stderr.trim(),
-      "",
-    ];
-    fs.writeFileSync(logPath, `${logLines.join("\n")}\n`, "utf8");
-
-    let texgenJson: Record<string, unknown> | null = null;
-    if (fs.existsSync(scriptMetadataPath)) {
+    for (const [attemptIndex, attemptConfig] of attemptPlan.entries()) {
       try {
-        const parsed = JSON.parse(
-          fs.readFileSync(scriptMetadataPath, "utf8"),
-        ) as unknown;
-        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-          texgenJson = parsed as Record<string, unknown>;
+        if (fs.existsSync(scriptMetadataPath)) {
+          fs.rmSync(scriptMetadataPath, { force: true });
+        }
+        if (fs.existsSync(fallbackTexturedGlbPath)) {
+          fs.rmSync(fallbackTexturedGlbPath, { force: true });
         }
       } catch {
         // No-op by design.
       }
+
+      const scriptArgs: string[] = [
+        "--mesh",
+        texgenMeshPath,
+        "--image",
+        inputImagePath,
+        "--output-dir",
+        runDir,
+        "--timeout-ms",
+        String(attemptConfig.timings.hardTimeoutMs),
+        "--preset",
+        attemptConfig.preset,
+      ];
+      if (texgenRepoRoot) {
+        scriptArgs.push("--repo-root", texgenRepoRoot);
+      }
+
+      const attemptStartedAtMs = Date.now();
+      const attemptStartedAtIso = new Date(attemptStartedAtMs).toISOString();
+      if (!overallStartedAtIso) {
+        overallStartedAtIso = attemptStartedAtIso;
+      }
+      this.appendComfyLog(
+        `[${stageLabel}] texgen_attempt_started attempt=${attemptIndex + 1}/${attemptPlan.length} preset=${attemptConfig.preset} timeout_ms=${attemptConfig.timings.hardTimeoutMs} stall_timeout_ms=${attemptConfig.timings.stallTimeoutMs}`,
+      );
+
+      const runner = this.resolveTexgenRunner(scriptPath, scriptArgs);
+      const attemptOutcome = await runTexgenAttempt({
+        stageLabel,
+        outputDir: runDir,
+        metadataPath: scriptMetadataPath,
+        hardTimeoutMs: attemptConfig.timings.hardTimeoutMs,
+        stallTimeoutMs: attemptConfig.timings.stallTimeoutMs,
+        stallGraceMs: attemptConfig.timings.stallGraceMs,
+        outputGraceMs: attemptConfig.timings.outputGraceMs,
+        plan: {
+          command: runner.command,
+          args: runner.args,
+          cwd: runner.cwd,
+          env: {
+            HUNYUAN_TEXGEN_MODEL_PATH: texgenModelRoot,
+            ...(texgenRepoRoot ? { HY3DGEN_ROOT: texgenRepoRoot } : {}),
+          },
+          runnerDetails: runner.details,
+        },
+        callbacks: {
+          onLog: (message, level) => this.appendComfyLog(message, level),
+          onStdoutLine: (line) =>
+            this.appendComfyLog(`[${stageLabel}] texgen_stdout ${line}`),
+          onStderrLine: (line) =>
+            this.appendComfyLog(`[${stageLabel}] texgen_stderr ${line}`, "warn"),
+        },
+      });
+      finalAttemptOutcome = attemptOutcome;
+      const attemptEndedAtMs = Date.now();
+      const attemptEndedAtIso = new Date(attemptEndedAtMs).toISOString();
+      overallEndedAtIso = attemptEndedAtIso;
+
+      let attemptStatus = attemptOutcome.status;
+      let attemptReason = attemptOutcome.reason;
+      let outputValidation: TexgenOutputValidation | undefined;
+
+      if (attemptOutcome.status === "success") {
+        const candidateOutputPath = path.resolve(
+          attemptOutcome.outputPath ?? fallbackTexturedGlbPath,
+        );
+        outputValidation = validateTexgenOutput({
+          outputPath: candidateOutputPath,
+          sourceMeshPath: texgenMeshPath,
+        });
+        finalValidation = outputValidation;
+        if (!outputValidation.ok) {
+          attemptStatus =
+            outputValidation.fileSizeBytes === 0
+              ? "no_output_generated"
+              : "invalid_output";
+          attemptReason =
+            outputValidation.reason ??
+            "Generated texture output failed validation.";
+          this.appendComfyLog(
+            `[${stageLabel}] texgen_output_validation_failed reason=${attemptReason}`,
+            "warn",
+          );
+        } else {
+          finalTexturedPath = candidateOutputPath;
+          this.appendComfyLog(
+            `[${stageLabel}] texgen_output_validation_passed output=${candidateOutputPath}`,
+          );
+        }
+      }
+
+      const retryScheduled = shouldRetryTexgenFailure(attemptStatus, {
+        attemptIndex,
+        totalAttempts: attemptPlan.length,
+        reason: attemptReason,
+        stdout: attemptOutcome.stdout,
+        stderr: attemptOutcome.stderr,
+      });
+
+      const attemptDurationMs = attemptEndedAtMs - attemptStartedAtMs;
+      overallDurationMs += attemptDurationMs;
+      attemptRecords.push({
+        attempt: attemptIndex + 1,
+        preset: attemptConfig.preset,
+        status: attemptStatus,
+        startedAt: attemptStartedAtIso,
+        endedAt: attemptEndedAtIso,
+        durationMs: attemptDurationMs,
+        hardTimeoutMs: attemptConfig.timings.hardTimeoutMs,
+        stallTimeoutMs: attemptConfig.timings.stallTimeoutMs,
+        outputGraceMs: attemptConfig.timings.outputGraceMs,
+        exitCode: attemptOutcome.exitCode,
+        timedOut: attemptOutcome.timedOut,
+        stalled: attemptOutcome.stalled,
+        retryScheduled,
+        reason: attemptReason,
+        stdoutTail: attemptOutcome.stdout
+          .split(/\r?\n/u)
+          .map((line) => line.trim())
+          .filter((line) => line.length > 0)
+          .slice(-12),
+        stderrTail: attemptOutcome.stderr
+          .split(/\r?\n/u)
+          .map((line) => line.trim())
+          .filter((line) => line.length > 0)
+          .slice(-12),
+        outputPath: finalTexturedPath,
+        metadataPath: scriptMetadataPath,
+      });
+
+      attemptLogChunks.push(
+        [
+          `attempt=${attemptIndex + 1}`,
+          `preset=${attemptConfig.preset}`,
+          `status=${attemptStatus}`,
+          `exit_code=${attemptOutcome.exitCode}`,
+          `timed_out=${String(attemptOutcome.timedOut)}`,
+          `stalled=${String(attemptOutcome.stalled)}`,
+          `started_at=${attemptStartedAtIso}`,
+          `ended_at=${attemptEndedAtIso}`,
+          `duration_ms=${attemptDurationMs}`,
+          `hard_timeout_ms=${attemptConfig.timings.hardTimeoutMs}`,
+          `stall_timeout_ms=${attemptConfig.timings.stallTimeoutMs}`,
+          `reason=${attemptReason}`,
+          "",
+          "[stdout]",
+          attemptOutcome.stdout.trim(),
+          "",
+          "[stderr]",
+          attemptOutcome.stderr.trim(),
+          "",
+        ].join("\n"),
+      );
+
+      if (attemptStatus === "success" && finalTexturedPath) {
+        finalStatus = "success";
+        finalReason = attemptReason;
+        break;
+      }
+
+      finalStatus = attemptStatus;
+      finalReason = attemptReason;
+      if (retryScheduled) {
+        this.appendComfyLog(
+          `[${stageLabel}] texgen_retry_scheduled next_preset=${attemptPlan[attemptIndex + 1]?.preset ?? "<none>"} reason=${attemptReason}`,
+          "warn",
+        );
+        continue;
+      }
+      break;
     }
 
-    const textureStatusFromScriptRaw =
-      typeof texgenJson?.texture_status === "string"
-        ? texgenJson.texture_status.trim().toLowerCase()
-        : "";
-    const textureStatusFromScript =
-      textureStatusFromScriptRaw === "completed"
-        ? "ready"
-        : textureStatusFromScriptRaw;
-    const texturedPathFromScript =
-      typeof texgenJson?.textured_glb_path === "string"
-        ? texgenJson.textured_glb_path.trim()
-        : "";
-    const texturedGlbPath =
-      texturedPathFromScript.length > 0
-        ? path.resolve(texturedPathFromScript)
-        : fallbackTexturedGlbPath;
-    const resolvedTextureStatus: TextureStageStatus =
-      textureStatusFromScript === "ready" && fs.existsSync(texturedGlbPath)
-        ? "ready"
-        : "failed";
-    const executionFailed =
-      processResult.exitCode !== 0 ||
-      processResult.timedOut ||
-      resolvedTextureStatus !== "ready" ||
-      !fs.existsSync(texturedGlbPath);
-    if (executionFailed) {
-      const reason =
-        typeof texgenJson?.error === "string"
-          ? texgenJson.error
-          : `Texgen stage failed (exit=${processResult.exitCode}, timedOut=${String(processResult.timedOut)}).`;
+    fs.writeFileSync(logPath, `${attemptLogChunks.join("\n")}\n`, "utf8");
+
+    if (finalStatus === "success" && finalTexturedPath) {
+      const finalProjectGlbPath = this.promoteTexturedGlbAsLatest(
+        meshPath,
+        finalTexturedPath,
+        stageLabel,
+      );
+      const textureMessage = getTexgenStatusMessage("success");
       const metadataPath = this.writeTextureMetadata(runDir, {
         createdAt: nowIso,
         promptId: job.promptId,
         meshPath,
-        texturedGlbPath: null,
-        textureStatus: "failed",
-        texture_status: "failed",
+        texturedGlbPath: finalProjectGlbPath,
+        textureStatus: "success",
+        texture_status: "completed",
+        textureMessage,
         shape_glb_path: meshPath,
-        textured_glb_path: null,
-        error: reason,
-        reason,
-        texgen_started_at: texgenStartedAtIso,
-        texgen_ended_at: texgenEndedAtIso,
-        duration_ms: texgenDurationMs,
-        timeout_ms: texgenTimeoutMs,
+        textured_glb_path: finalProjectGlbPath,
+        error: null,
+        texgen_started_at: overallStartedAtIso,
+        texgen_ended_at: overallEndedAtIso,
+        duration_ms: overallDurationMs,
+        timeout_ms: requestedTimings?.hardTimeoutMs ?? 0,
         texgen_model_root: texgenModelRoot,
         texgen_repo_root: texgenRepoRoot || null,
-        texgen_preset: texgenPreset,
+        texgen_preset: requestedPreset,
         mesh_optimization_status: meshOptimizationStatus,
         mesh_optimization_error: meshOptimizationError,
         optimized_mesh_path: texgenMeshPath !== meshPath ? texgenMeshPath : null,
@@ -2387,97 +2596,64 @@ export class BackendSupervisor {
           ? meshOptimizeLogPath
           : null,
         textureDependencies: dependencies,
-        textureErrorLogPath: logPath,
-        texgenResult: texgenJson,
+        textureValidation: finalValidation,
+        textureMeshValidation: meshValidation,
+        textureImageValidation: imageValidation,
+        textureAttempts: attemptRecords,
+        texgenResult: finalAttemptOutcome?.metadata ?? null,
       });
-      this.appendComfyLog(`[${stageLabel}] ${reason}`, "warn");
-      this.appendComfyLog(`[${stageLabel}] texture_status=failed`, "warn");
-      this.logTexgenFallback(stageLabel, meshPath, reason);
+      this.appendComfyLog(
+        `[${stageLabel}] texgen_final_status=success textured_glb=${finalProjectGlbPath}`,
+      );
       return {
-        glbPath: meshPath,
+        glbPath: finalProjectGlbPath,
         meshPath,
-        texturedGlbPath: undefined,
-        textureStatus: "failed" as TextureStageStatus,
-        textureErrorLogPath: logPath,
+        texturedGlbPath: finalProjectGlbPath,
+        textureStatus: "success" as TextureStageStatus,
+        textureMessage,
+        textureErrorLogPath: undefined,
         textureMetadataPath: metadataPath,
         textureDependencies: dependencies,
-        textureValidation: undefined,
+        textureValidation: finalValidation,
+        textureAttempts: attemptRecords,
+        textureMeshValidation: meshValidation,
+        textureImageValidation: imageValidation,
       };
     }
 
-    const validation = validateTexturedGlb(texturedGlbPath);
-    if (!validation.ok) {
-      const reason = validation.reason ?? "Textured GLB validation failed.";
-      const metadataPath = this.writeTextureMetadata(runDir, {
-        createdAt: nowIso,
-        promptId: job.promptId,
-        meshPath,
-        texturedGlbPath,
-        textureStatus: "failed",
-        texture_status: "failed",
-        shape_glb_path: meshPath,
-        textured_glb_path: texturedGlbPath,
-        error: reason,
-        reason,
-        texgen_started_at: texgenStartedAtIso,
-        texgen_ended_at: texgenEndedAtIso,
-        duration_ms: texgenDurationMs,
-        timeout_ms: texgenTimeoutMs,
-        texgen_model_root: texgenModelRoot,
-        texgen_repo_root: texgenRepoRoot || null,
-        texgen_preset: texgenPreset,
-        mesh_optimization_status: meshOptimizationStatus,
-        mesh_optimization_error: meshOptimizationError,
-        optimized_mesh_path: texgenMeshPath !== meshPath ? texgenMeshPath : null,
-        mesh_optimization_metadata_path: fs.existsSync(meshOptimizeMetadataPath)
-          ? meshOptimizeMetadataPath
-          : null,
-        mesh_optimization_log_path: fs.existsSync(meshOptimizeLogPath)
-          ? meshOptimizeLogPath
-          : null,
-        textureDependencies: dependencies,
-        textureValidation: validation,
-        textureErrorLogPath: logPath,
-        texgenResult: texgenJson,
-      });
-      this.appendComfyLog(`[${stageLabel}] ${reason}`, "warn");
-      this.appendComfyLog(`[${stageLabel}] textured glb path: ${texturedGlbPath}`);
-      this.appendComfyLog(`[${stageLabel}] texture_status=failed`, "warn");
-      this.logTexgenFallback(stageLabel, meshPath, reason);
-      return {
-        glbPath: meshPath,
-        meshPath,
-        texturedGlbPath,
-        textureStatus: "failed" as TextureStageStatus,
-        textureErrorLogPath: logPath,
-        textureMetadataPath: metadataPath,
-        textureDependencies: dependencies,
-        textureValidation: validation,
-      };
-    }
-
-    const finalProjectGlbPath = this.promoteTexturedGlbAsLatest(
-      meshPath,
-      texturedGlbPath,
-      stageLabel,
+    const retriedLowerPresets = attemptRecords.length > 1;
+    const finalReasonWithRetryContext =
+      retriedLowerPresets &&
+      (finalStatus === "timed_out" ||
+        finalStatus === "stalled" ||
+        finalStatus === "runtime_error" ||
+        finalStatus === "no_output_generated" ||
+        finalStatus === "invalid_output")
+        ? `${finalReason} Retried with lower quality presets and still failed.`
+        : finalReason;
+    const textureMessage = getTexgenStatusMessage(
+      finalStatus,
+      finalReasonWithRetryContext,
     );
     const metadataPath = this.writeTextureMetadata(runDir, {
       createdAt: nowIso,
       promptId: job.promptId,
       meshPath,
-      texturedGlbPath: finalProjectGlbPath,
-      textureStatus: "ready",
-      texture_status: "completed",
+      texturedGlbPath: finalTexturedPath ?? null,
+      textureStatus: finalStatus,
+      texture_status: finalStatus,
+      textureMessage,
       shape_glb_path: meshPath,
-      textured_glb_path: finalProjectGlbPath,
-      error: null,
-      texgen_started_at: texgenStartedAtIso,
-      texgen_ended_at: texgenEndedAtIso,
-      duration_ms: texgenDurationMs,
-      timeout_ms: texgenTimeoutMs,
+      textured_glb_path: finalTexturedPath ?? null,
+      error: textureMessage,
+      reason: finalReasonWithRetryContext,
+      texgen_started_at: overallStartedAtIso,
+      texgen_ended_at: overallEndedAtIso,
+      duration_ms: overallDurationMs,
+      timeout_ms: requestedTimings?.hardTimeoutMs ?? 0,
       texgen_model_root: texgenModelRoot,
       texgen_repo_root: texgenRepoRoot || null,
-      texgen_preset: texgenPreset,
+      texgen_preset: requestedPreset,
       mesh_optimization_status: meshOptimizationStatus,
       mesh_optimization_error: meshOptimizationError,
       optimized_mesh_path: texgenMeshPath !== meshPath ? texgenMeshPath : null,
@@ -2488,24 +2664,31 @@ export class BackendSupervisor {
         ? meshOptimizeLogPath
         : null,
       textureDependencies: dependencies,
-      textureValidation: validation,
+      textureValidation: finalValidation,
       textureErrorLogPath: logPath,
-      texgenResult: texgenJson,
+      textureMeshValidation: meshValidation,
+      textureImageValidation: imageValidation,
+      textureAttempts: attemptRecords,
+      texgenResult: finalAttemptOutcome?.metadata ?? null,
     });
     this.appendComfyLog(
-      `[${stageLabel}] ready. textured_glb=${finalProjectGlbPath}`,
+      `[${stageLabel}] texgen_final_status=${finalStatus} reason=${finalReasonWithRetryContext}`,
+      "warn",
     );
-    this.appendComfyLog(`[${stageLabel}] textured glb path: ${finalProjectGlbPath}`);
-    this.appendComfyLog(`[${stageLabel}] texture_status=completed`);
+    this.logTexgenFallback(stageLabel, meshPath, textureMessage);
     return {
-      glbPath: finalProjectGlbPath,
+      glbPath: meshPath,
       meshPath,
-      texturedGlbPath: finalProjectGlbPath,
-      textureStatus: "ready" as TextureStageStatus,
-      textureErrorLogPath: undefined,
+      texturedGlbPath: finalTexturedPath,
+      textureStatus: finalStatus,
+      textureMessage,
+      textureErrorLogPath: logPath,
       textureMetadataPath: metadataPath,
       textureDependencies: dependencies,
-      textureValidation: validation,
+      textureValidation: finalValidation,
+      textureAttempts: attemptRecords,
+      textureMeshValidation: meshValidation,
+      textureImageValidation: imageValidation,
     };
   }
 
@@ -2566,11 +2749,22 @@ export class BackendSupervisor {
       glbPath: resolvedMeshPath ?? undefined,
       meshPath: resolvedMeshPath ?? undefined,
       texturedGlbPath: undefined as string | undefined,
-      textureStatus: "skipped" as TextureStageStatus,
+      textureStatus: "fallback_geometry_only" as TextureStageStatus,
+      textureMessage: getTexgenStatusMessage(
+        "fallback_geometry_only",
+        "Texture stage was not executed.",
+      ),
       textureErrorLogPath: undefined as string | undefined,
       textureMetadataPath: undefined as string | undefined,
       textureDependencies: this.resolveTexgenDependencies(),
       textureValidation: undefined as TexturedGlbValidation | undefined,
+      textureAttempts: [] as TexgenAttemptRecord[],
+      textureMeshValidation: undefined as ReturnType<
+        typeof validateMeshForTexGen
+      > | undefined,
+      textureImageValidation: undefined as ReturnType<
+        typeof validateImageForTexGen
+      > | undefined,
     };
 
     if (resolvedMeshPath) {
@@ -2585,7 +2779,10 @@ export class BackendSupervisor {
           `[texgen:${job.promptId}] ${fallbackReason}`,
           "warn",
         );
-        this.appendComfyLog(`[texgen:${job.promptId}] texture_status=failed`, "warn");
+        this.appendComfyLog(
+          `[texgen:${job.promptId}] texgen_final_status=runtime_error`,
+          "warn",
+        );
         this.logTexgenFallback(
           `texgen:${job.promptId}`,
           resolvedMeshPath,
@@ -2595,11 +2792,18 @@ export class BackendSupervisor {
           glbPath: resolvedMeshPath,
           meshPath: resolvedMeshPath,
           texturedGlbPath: undefined,
-          textureStatus: "failed",
+          textureStatus: "runtime_error",
+          textureMessage: getTexgenStatusMessage(
+            "runtime_error",
+            fallbackReason,
+          ),
           textureErrorLogPath: undefined,
           textureMetadataPath: undefined,
           textureDependencies: this.resolveTexgenDependencies(),
           textureValidation: undefined,
+          textureAttempts: [],
+          textureMeshValidation: undefined,
+          textureImageValidation: undefined,
         };
       }
     }
@@ -2609,10 +2813,14 @@ export class BackendSupervisor {
       meshPath: textureStage.meshPath,
       texturedGlbPath: textureStage.texturedGlbPath,
       textureStatus: textureStage.textureStatus,
+      textureMessage: textureStage.textureMessage,
       textureErrorLogPath: textureStage.textureErrorLogPath,
       textureMetadataPath: textureStage.textureMetadataPath,
       textureDependencies: textureStage.textureDependencies,
       textureValidation: textureStage.textureValidation,
+      textureAttempts: textureStage.textureAttempts,
+      textureMeshValidation: textureStage.textureMeshValidation,
+      textureImageValidation: textureStage.textureImageValidation,
       previewImages,
       raw: history ?? job.outputs?.raw,
     };
@@ -2621,7 +2829,9 @@ export class BackendSupervisor {
     job.updatedAt = Date.now();
     job.finishedAt = job.finishedAt ?? Date.now();
     if (textureStage.glbPath) {
-      job.message = `Workflow completado. promptId=${job.promptId}. GLB=${textureStage.glbPath} (texture_status=${textureStage.textureStatus})`;
+      job.message = textureStage.textureMessage
+        ? `${textureStage.textureMessage} GLB=${textureStage.glbPath}`
+        : `Workflow completado. promptId=${job.promptId}. GLB=${textureStage.glbPath} (texture_status=${textureStage.textureStatus})`;
     } else {
       job.message = `Workflow completado. promptId=${job.promptId}.`;
     }
