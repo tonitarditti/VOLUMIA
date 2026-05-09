@@ -1,0 +1,24 @@
+{
+  "projectId": "project_1778368066071",
+  "status": "error",
+  "createdAt": "2026-05-09T23:07:46.072Z",
+  "updatedAt": "2026-05-09T23:07:50.584Z",
+  "warnings": [],
+  "logs": [
+    "[2026-05-09T23:07:50.539Z] Running TripoSR: F:\\MINICONDA\\python.exe E:\\AI3D\\TripoSR_clean\\TripoSR\\run.py E:\\VOLUMIA\\apps\\desktop\\projects\\project_1778368066071\\input\\1778368068848-New_Project-thumbnail-600x600-100.jpg --output-dir E:\\VOLUMIA\\apps\\desktop\\projects\\project_1778368066071\\output\\triposr",
+    "[2026-05-09T23:07:50.573Z] Traceback (most recent call last):",
+    "[2026-05-09T23:07:50.575Z] File \"E:\\AI3D\\TripoSR_clean\\TripoSR\\run.py\", line 6, in <module>\r\n    import numpy as np",
+    "[2026-05-09T23:07:50.575Z] ModuleNotFoundError: No module named 'numpy'"
+  ],
+  "id": "job_1778368070479",
+  "mode": "quick",
+  "message": "Error ejecutando Python: F:\\MINICONDA\\python.exe exited with code 1.\nTraceback (most recent call last):\r\n  File \"E:\\AI3D\\TripoSR_clean\\TripoSR\\run.py\", line 6, in <module>\r\n    import numpy as np\r\nModuleNotFoundError: No module named 'numpy'\r\n",
+  "inputFiles": [
+    "E:\\VOLUMIA\\apps\\desktop\\projects\\project_1778368066071\\input\\1778368068848-New_Project-thumbnail-600x600-100.jpg"
+  ],
+  "error": {
+    "message": "Error ejecutando Python: F:\\MINICONDA\\python.exe exited with code 1.\nTraceback (most recent call last):\r\n  File \"E:\\AI3D\\TripoSR_clean\\TripoSR\\run.py\", line 6, in <module>\r\n    import numpy as np\r\nModuleNotFoundError: No module named 'numpy'\r\n"
+  },
+  "startedAt": "2026-05-09T23:07:50.480Z",
+  "finishedAt": "2026-05-09T23:07:50.584Z"
+}

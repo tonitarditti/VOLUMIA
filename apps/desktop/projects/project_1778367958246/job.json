@@ -1,0 +1,29 @@
+{
+  "projectId": "project_1778367958246",
+  "status": "error",
+  "createdAt": "2026-05-09T23:05:58.247Z",
+  "updatedAt": "2026-05-09T23:06:07.295Z",
+  "warnings": [],
+  "logs": [
+    "[2026-05-09T23:06:04.498Z] Running TripoSR: F:\\MINICONDA\\envs\\volumia\\python.exe E:\\AI3D\\TripoSR_clean\\TripoSR\\run.py E:\\VOLUMIA\\apps\\desktop\\projects\\project_1778367958246\\input\\1778367961162-New_Project-thumbnail-600x600-100.jpg --output-dir E:\\VOLUMIA\\apps\\desktop\\projects\\project_1778367958246\\output\\triposr",
+    "[2026-05-09T23:06:07.011Z] Traceback (most recent call last):\r\n  File \"E:\\AI3D\\TripoSR_clean\\TripoSR\\run.py\", line 14, in <module>",
+    "[2026-05-09T23:06:07.012Z] from tsr.bake_texture import bake_texture\r\n  File \"E:\\AI3D\\TripoSR_clean\\TripoSR\\tsr\\bake_texture.py\", line 5, in <module>\r\n    import moderngl\r\nModuleNotFoundError: No module named 'moderngl'"
+  ],
+  "id": "job_1778367964438",
+  "mode": "quick",
+  "message": "Error ejecutando Python: F:\\MINICONDA\\envs\\volumia\\python.exe exited with code 1.\nTraceback (most recent call last):\r\n  File \"E:\\AI3D\\TripoSR_clean\\TripoSR\\run.py\", line 14, in <module>\r\n    from tsr.bake_texture import bake_texture\r\n  File \"E:\\AI3D\\TripoSR_clean\\TripoSR\\tsr\\bake_texture.py\", line 5, in <module>\r\n    import moderngl\r\nModuleNotFoundError: No module named 'moderngl'\r\n",
+  "inputFiles": [
+    "E:\\VOLUMIA\\apps\\desktop\\projects\\project_1778367958246\\input\\1778367961162-New_Project-thumbnail-600x600-100.jpg"
+  ],
+  "error": {
+    "message": "Error ejecutando Python: F:\\MINICONDA\\envs\\volumia\\python.exe exited with code 1.\nTraceback (most recent call last):\r\n  File \"E:\\AI3D\\TripoSR_clean\\TripoSR\\run.py\", line 14, in <module>\r\n    from tsr.bake_texture import bake_texture\r\n  File \"E:\\AI3D\\TripoSR_clean\\TripoSR\\tsr\\bake_texture.py\", line 5, in <module>\r\n    import moderngl\r\nModuleNotFoundError: No module named 'moderngl'\r\n"
+  },
+  "startedAt": "2026-05-09T23:06:04.439Z",
+  "finishedAt": "2026-05-09T23:06:07.295Z",
+  "latestGlb": "E:\\VOLUMIA\\apps\\desktop\\projects\\project_1778367958246\\latest.glb",
+  "output": {
+    "latestGlb": "E:\\VOLUMIA\\apps\\desktop\\projects\\project_1778367958246\\latest.glb",
+    "source": "E:\\VOLUMIA\\apps\\desktop\\assets\\templates\\box.glb",
+    "warnings": []
+  }
+}

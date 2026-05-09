@@ -1,0 +1,21 @@
+{
+  "projectId": "project_1778367896112",
+  "status": "error",
+  "createdAt": "2026-05-09T23:04:56.113Z",
+  "updatedAt": "2026-05-09T23:05:04.443Z",
+  "warnings": [],
+  "logs": [
+    "[2026-05-09T23:05:04.438Z] No TripoSR entrypoint found. Expected run.py, infer.py, inference.py, demo.py or main.py."
+  ],
+  "id": "job_1778367904383",
+  "mode": "quick",
+  "message": "Error ejecutando Python: F:\\MINICONDA\\envs\\volumia\\python.exe exited with code 3.\nNo TripoSR entrypoint found. Expected run.py, infer.py, inference.py, demo.py or main.py.\r\n",
+  "inputFiles": [
+    "E:\\VOLUMIA\\apps\\desktop\\projects\\project_1778367896112\\input\\1778367899155-New_Project-thumbnail-600x600-100.jpg"
+  ],
+  "error": {
+    "message": "Error ejecutando Python: F:\\MINICONDA\\envs\\volumia\\python.exe exited with code 3.\nNo TripoSR entrypoint found. Expected run.py, infer.py, inference.py, demo.py or main.py.\r\n"
+  },
+  "startedAt": "2026-05-09T23:05:04.384Z",
+  "finishedAt": "2026-05-09T23:05:04.442Z"
+}

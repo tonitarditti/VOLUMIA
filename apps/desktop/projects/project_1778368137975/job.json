@@ -1,0 +1,19 @@
+{
+  "projectId": "project_1778368137975",
+  "status": "error",
+  "createdAt": "2026-05-09T23:08:57.975Z",
+  "updatedAt": "2026-05-09T23:09:03.873Z",
+  "warnings": [],
+  "logs": [],
+  "id": "job_1778368143871",
+  "mode": "quick",
+  "message": "Python no configurado: define VOLUMIA_PYTHON.",
+  "inputFiles": [
+    "E:\\VOLUMIA\\apps\\desktop\\projects\\project_1778368137975\\input\\1778368143170-New_Project-thumbnail-600x600-100.jpg"
+  ],
+  "error": {
+    "message": "Python no configurado: define VOLUMIA_PYTHON."
+  },
+  "startedAt": "2026-05-09T23:09:03.871Z",
+  "finishedAt": "2026-05-09T23:09:03.873Z"
+}
