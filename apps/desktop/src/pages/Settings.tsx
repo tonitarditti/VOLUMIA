@@ -1,38 +1,114 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/ui/primitives";
-import { generationClient, type ToolsStatusResponse } from "@/services/generationClient";
+import {
+  generationClient,
+  type LocalSettings,
+  type ToolsStatusResponse,
+} from "@/services/generationClient";
 
-const envNames = [
-  "VOLUMIA_ROOT",
-  "VOLUMIA_PYTHON",
-  "VOLUMIA_BLENDER",
-  "VOLUMIA_TRIPOSR_DIR",
-  "VOLUMIA_HUNYUAN_DIR",
-  "VOLUMIA_MESHROOM_DIR",
+const fields: Array<{ key: keyof LocalSettings; label: string; placeholder: string }> = [
+  {
+    key: "VOLUMIA_PYTHON",
+    label: "Python",
+    placeholder: "F:\\MINICONDA\\envs\\volumia\\python.exe",
+  },
+  {
+    key: "VOLUMIA_BLENDER",
+    label: "Blender",
+    placeholder: "C:\\Program Files\\Blender Foundation\\Blender 4.3\\blender.exe",
+  },
+  {
+    key: "VOLUMIA_TRIPOSR_DIR",
+    label: "TripoSR",
+    placeholder: "E:\\AI\\TripoSR",
+  },
+  {
+    key: "VOLUMIA_HUNYUAN_DIR",
+    label: "Hunyuan3D",
+    placeholder: "E:\\AI\\Hunyuan3D-2.1",
+  },
+  {
+    key: "VOLUMIA_MESHROOM_DIR",
+    label: "Meshroom",
+    placeholder: "E:\\AI\\Meshroom",
+  },
 ];
+
+function emptySettings(): LocalSettings {
+  return {
+    VOLUMIA_PYTHON: "",
+    VOLUMIA_BLENDER: "",
+    VOLUMIA_TRIPOSR_DIR: "",
+    VOLUMIA_HUNYUAN_DIR: "",
+    VOLUMIA_MESHROOM_DIR: "",
+  };
+}
+
+function fieldFromTools(key: keyof LocalSettings, tools: ToolsStatusResponse["tools"] | null) {
+  if (!tools) return "";
+  const entry = Object.values(tools).find((tool) => tool.env === key);
+  return entry?.path ?? "";
+}
 
 export function Settings() {
   const navigate = useNavigate();
-  const [tools, setTools] = useState<ToolsStatusResponse | null>(null);
+  const [tools, setTools] = useState<ToolsStatusResponse["tools"] | null>(null);
+  const [form, setForm] = useState<LocalSettings>(emptySettings());
+  const [settingsPath, setSettingsPath] = useState("");
   const [message, setMessage] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [detecting, setDetecting] = useState(false);
+
+  const load = async () => {
+    const response = await generationClient.settings();
+    setTools(response.tools);
+    setSettingsPath(response.settingsPath);
+    const next = emptySettings();
+    for (const field of fields) {
+      next[field.key] = response.settings[field.key] ?? fieldFromTools(field.key, response.tools);
+    }
+    setForm(next);
+  };
 
   useEffect(() => {
-    const load = async () => {
-      try {
-        setTools(await generationClient.toolsStatus());
-      } catch (error) {
-        setMessage(error instanceof Error ? error.message : "No se pudo leer tools/status.");
-      }
-    };
-    void load();
+    void load().catch((error) => {
+      setMessage(error instanceof Error ? error.message : "No se pudo leer la configuracion.");
+    });
   }, []);
 
-  const toolItems = tools ? Object.entries(tools.tools) : [];
+  const save = async () => {
+    setSaving(true);
+    try {
+      const response = await generationClient.saveSettings(form);
+      setTools(response.tools);
+      setSettingsPath(response.settingsPath);
+      setMessage("Rutas guardadas.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudieron guardar las rutas.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const detect = async () => {
+    setDetecting(true);
+    try {
+      const response = await generationClient.detectTools();
+      setTools(response.tools);
+      setMessage("Deteccion actualizada.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudo detectar herramientas.");
+    } finally {
+      setDetecting(false);
+    }
+  };
+
+  const toolItems = tools ? Object.entries(tools) : [];
 
   return (
     <main className="h-full min-h-0 overflow-y-auto p-8">
-      <div className="mx-auto max-w-4xl">
+      <div className="mx-auto max-w-5xl">
         <div className="flex items-center justify-between gap-4">
           <div>
             <p className="text-xs uppercase tracking-[0.14em] text-[var(--text-faint)]">Settings</p>
@@ -44,19 +120,47 @@ export function Settings() {
         </div>
 
         <section className="mt-8 rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface-1)] p-5">
-          <h2 className="text-sm font-medium text-[var(--text)]">Variables soportadas</h2>
-          <div className="mt-4 grid gap-2">
-            {envNames.map((name) => (
-              <code key={name} className="rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2 text-xs text-[var(--text-muted)]">
-                {name}
-              </code>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-medium text-[var(--text)]">Rutas reales</h2>
+              <p className="mt-1 text-xs text-[var(--text-muted)]">
+                Se guardan en {settingsPath || "apps/desktop/backend/config/local.settings.json"}.
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <Button variant="secondary" disabled={detecting} onClick={() => void detect()}>
+                {detecting ? "Detectando..." : "Detectar herramientas"}
+              </Button>
+              <Button variant="primary" disabled={saving} onClick={() => void save()}>
+                {saving ? "Guardando..." : "Guardar rutas"}
+              </Button>
+            </div>
+          </div>
+
+          <div className="mt-5 grid gap-4">
+            {fields.map((field) => (
+              <label key={field.key} className="grid gap-2">
+                <span className="text-xs font-medium text-[var(--text-muted)]">{field.label}</span>
+                <input
+                  value={form[field.key] ?? ""}
+                  placeholder={field.placeholder}
+                  onChange={(event) =>
+                    setForm((current) => ({
+                      ...current,
+                      [field.key]: event.target.value,
+                    }))
+                  }
+                  className="h-10 rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--surface-2)] px-3 text-sm text-[var(--text)] placeholder:text-[var(--text-faint)]"
+                />
+              </label>
             ))}
           </div>
+          {message ? <p className="mt-4 text-sm text-[var(--text-muted)]">{message}</p> : null}
         </section>
 
         <section className="mt-5 rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface-1)] p-5">
           <h2 className="text-sm font-medium text-[var(--text)]">Estado real</h2>
-          <div className="mt-4 space-y-3">
+          <div className="mt-4 grid gap-3 md:grid-cols-2">
             {toolItems.map(([key, tool]) => (
               <div key={key} className="rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--surface-2)] p-3">
                 <div className="flex items-center justify-between gap-3">
@@ -66,6 +170,7 @@ export function Settings() {
                   </span>
                 </div>
                 <p className="mt-2 break-all text-xs text-[var(--text-muted)]">{tool.env}: {tool.path ?? "sin configurar"}</p>
+                {tool.details ? <p className="mt-1 text-xs text-[var(--text-faint)]">{tool.details}</p> : null}
               </div>
             ))}
             {!tools && <p className="text-sm text-[var(--text-muted)]">{message || "Cargando..."}</p>}

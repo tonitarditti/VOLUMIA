@@ -24,6 +24,7 @@ function StatusIcon({ status }: { status?: string }) {
 export function JobStatus({ job }: JobStatusProps) {
   const status = job?.status ?? "idle";
   const warnings = job?.warnings ?? [];
+  const logs = job?.logs ?? [];
   return (
     <div className="rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface-1)] p-4">
       <div className="flex items-center justify-between gap-3">
@@ -47,6 +48,20 @@ export function JobStatus({ job }: JobStatusProps) {
           ))}
         </div>
       ) : null}
+      <div className="mt-4">
+        <div className="text-xs font-medium uppercase tracking-[0.12em] text-[var(--text-faint)]">Logs</div>
+        <div className="mt-2 max-h-44 overflow-y-auto rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--surface-2)] p-3">
+          {logs.length > 0 ? (
+            logs.slice(-30).map((line, index) => (
+              <p key={`${index}-${line}`} className="font-mono text-[11px] leading-5 text-[var(--text-muted)]">
+                {line}
+              </p>
+            ))
+          ) : (
+            <p className="text-xs text-[var(--text-muted)]">Sin logs todavia.</p>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

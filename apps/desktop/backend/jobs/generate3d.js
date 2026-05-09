@@ -64,10 +64,14 @@ function readJob(projectId) {
 }
 
 function appendJobLog(projectId, line) {
+  const cleanLine = String(line || "").trim();
+  if (!cleanLine) {
+    return readJob(projectId);
+  }
   const current = readJob(projectId);
   const logs = Array.isArray(current.logs) ? current.logs : [];
   return writeJob(projectId, {
-    logs: [...logs, `[${nowIso()}] ${line}`].slice(-200),
+    logs: [...logs, `[${nowIso()}] ${cleanLine}`].slice(-200),
   });
 }
 
@@ -111,6 +115,17 @@ function latestGeneratedAsset(outputDir) {
     .map((filePath) => ({ filePath, mtimeMs: fs.statSync(filePath).mtimeMs }))
     .sort((a, b) => b.mtimeMs - a.mtimeMs);
   return candidates[0]?.filePath || null;
+}
+
+function copyRawOutput(projectId, sourcePath) {
+  const paths = ensureProjectLayout(projectId);
+  const ext = path.extname(sourcePath).toLowerCase();
+  const rawPath = path.join(paths.output, `raw${ext}`);
+  if (path.resolve(sourcePath) !== path.resolve(rawPath)) {
+    fs.copyFileSync(sourcePath, rawPath);
+  }
+  appendJobLog(projectId, `Raw model: ${rawPath}`);
+  return rawPath;
 }
 
 function spawnProcess(command, args, options = {}) {
@@ -172,11 +187,12 @@ async function runBlenderOptimize(projectId, sourcePath) {
         warnings: ["Blender no esta configurado; se uso el GLB generado directamente."],
       };
     }
-    throw new Error("Blender no esta configurado y el runner no produjo un GLB directo.");
+    throw new Error("Blender no configurado: se necesita para convertir OBJ/PLY a GLB.");
   }
 
   writeJob(projectId, { status: "optimizing", message: "Optimizando y exportando con Blender..." });
   appendJobLog(projectId, `Blender optimize: ${sourcePath}`);
+  const optimizedGlb = path.join(paths.output, "optimized.glb");
   await spawnProcess(tools.blender.path, [
     "--background",
     "--python",
@@ -185,52 +201,62 @@ async function runBlenderOptimize(projectId, sourcePath) {
     "--input",
     sourcePath,
     "--output",
-    paths.latestGlb,
+    optimizedGlb,
   ], {
     onOutput: (chunk) => appendJobLog(projectId, chunk.trim()),
   });
-  if (!isValidGlb(paths.latestGlb)) {
-    throw new Error("Blender termino, pero latest.glb no es un GLB valido.");
+  if (!isValidGlb(optimizedGlb)) {
+    throw new Error("Blender termino, pero output/optimized.glb no es un GLB valido.");
   }
-  return { latestGlb: paths.latestGlb, warnings: [] };
+  fs.copyFileSync(optimizedGlb, paths.latestGlb);
+  return { latestGlb: paths.latestGlb, optimizedGlb, warnings: [] };
 }
 
 async function runQuick(projectId, inputFiles) {
   const tools = getToolStatus();
   if (!tools.python.exists) {
-    throw new Error("Python no esta configurado. Define VOLUMIA_PYTHON.");
+    throw new Error("Python no configurado: define VOLUMIA_PYTHON.");
   }
   if (!tools.triposr.exists) {
-    throw new Error("TripoSR no esta configurado. Define VOLUMIA_TRIPOSR_DIR.");
+    throw new Error("TripoSR no configurado: define VOLUMIA_TRIPOSR_DIR.");
   }
   if (inputFiles.length < 1) {
-    throw new Error("El modo quick requiere una imagen.");
+    throw new Error("No se encontró imagen de entrada.");
   }
 
   const paths = ensureProjectLayout(projectId);
   const triposrOutput = path.join(paths.output, "triposr");
+  fs.rmSync(triposrOutput, { recursive: true, force: true });
   ensureDir(triposrOutput);
   writeJob(projectId, { status: "running", message: "Ejecutando TripoSR..." });
-  await spawnProcess(tools.python.path, [
-    path.join(backendDir, "tools", "triposr_runner.py"),
-    "--triposr-dir",
-    tools.triposr.path,
-    "--input",
-    inputFiles[0],
-    "--output-dir",
-    triposrOutput,
-  ], {
-    cwd: tools.triposr.path,
-    onOutput: (chunk) => appendJobLog(projectId, chunk.trim()),
-  });
+  try {
+    await spawnProcess(tools.python.path, [
+      path.join(backendDir, "tools", "triposr_runner.py"),
+      "--triposr-dir",
+      tools.triposr.path,
+      "--input",
+      inputFiles[0],
+      "--output-dir",
+      triposrOutput,
+    ], {
+      cwd: tools.triposr.path,
+      onOutput: (chunk) => appendJobLog(projectId, chunk.trim()),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Error ejecutando Python: ${message}`);
+  }
 
   const generated = latestGeneratedAsset(triposrOutput);
   if (!generated) {
-    throw new Error("TripoSR termino sin generar OBJ, PLY o GLB.");
+    throw new Error("El runner no generó modelo.");
   }
-  const optimized = await runBlenderOptimize(projectId, generated);
+  const raw = copyRawOutput(projectId, generated);
+  const optimized = await runBlenderOptimize(projectId, raw);
   return {
     latestGlb: optimized.latestGlb,
+    raw,
+    optimizedGlb: optimized.optimizedGlb,
     source: generated,
     warnings: optimized.warnings,
   };
@@ -239,13 +265,13 @@ async function runQuick(projectId, inputFiles) {
 async function runTextured(projectId, inputFiles) {
   const tools = getToolStatus();
   if (!tools.python.exists) {
-    throw new Error("Python no esta configurado. Define VOLUMIA_PYTHON.");
+    throw new Error("Python no configurado: define VOLUMIA_PYTHON.");
   }
   if (!tools.hunyuan.exists) {
-    throw new Error("Hunyuan3D no esta configurado. Define VOLUMIA_HUNYUAN_DIR.");
+    throw new Error("Hunyuan3D no configurado: define VOLUMIA_HUNYUAN_DIR.");
   }
   if (inputFiles.length < 1) {
-    throw new Error("El modo textured requiere una imagen.");
+    throw new Error("No se encontró imagen de entrada.");
   }
   const paths = ensureProjectLayout(projectId);
   await spawnProcess(tools.python.path, [
@@ -262,15 +288,16 @@ async function runTextured(projectId, inputFiles) {
   });
   const generated = latestGeneratedAsset(paths.output);
   if (!generated) {
-    throw new Error("Hunyuan3D termino sin generar OBJ, PLY o GLB.");
+    throw new Error("El runner no generó modelo.");
   }
-  return await runBlenderOptimize(projectId, generated);
+  const raw = copyRawOutput(projectId, generated);
+  return await runBlenderOptimize(projectId, raw);
 }
 
 async function runPhotogrammetry(projectId, inputFiles) {
   const tools = getToolStatus();
   if (!tools.meshroom.exists) {
-    throw new Error("Meshroom no esta configurado. Define VOLUMIA_MESHROOM_DIR.");
+    throw new Error("Meshroom no configurado: define VOLUMIA_MESHROOM_DIR.");
   }
   if (inputFiles.length < 2) {
     throw new Error("El modo photogrammetry requiere multiples imagenes.");
@@ -290,9 +317,10 @@ async function runPhotogrammetry(projectId, inputFiles) {
   });
   const generated = latestGeneratedAsset(paths.output);
   if (!generated) {
-    throw new Error("Meshroom termino sin generar OBJ, PLY o GLB.");
+    throw new Error("El runner no generó modelo.");
   }
-  return await runBlenderOptimize(projectId, generated);
+  const raw = copyRawOutput(projectId, generated);
+  return await runBlenderOptimize(projectId, raw);
 }
 
 async function runGeneration(projectId, mode) {

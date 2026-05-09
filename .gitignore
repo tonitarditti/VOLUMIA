@@ -26,6 +26,7 @@ dist-electron/
 .env
 .env.*
 !.env.example
+apps/desktop/backend/config/local.settings.json
 
 # Python / IA
 __pycache__/

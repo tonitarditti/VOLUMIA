@@ -8,7 +8,10 @@ const {
   getToolStatus,
   projectPaths,
   projectsRoot,
+  readLocalSettings,
   safeProjectId,
+  saveLocalSettings,
+  settingsPath,
 } = require("./config/paths");
 const { isValidGlb, logPath, readJob, startGeneration, writeJob } = require("./jobs/generate3d");
 
@@ -86,6 +89,32 @@ app.get("/health", (_req, res) => {
 app.get("/api/tools/status", (_req, res) => {
   res.json({
     ok: true,
+    tools: getToolStatus(),
+  });
+});
+
+app.post("/api/tools/detect", (_req, res) => {
+  res.json({
+    ok: true,
+    tools: getToolStatus(),
+  });
+});
+
+app.get("/api/settings", (_req, res) => {
+  res.json({
+    ok: true,
+    settings: readLocalSettings(),
+    settingsPath,
+    tools: getToolStatus(),
+  });
+});
+
+app.post("/api/settings", (req, res) => {
+  const settings = saveLocalSettings(req.body || {});
+  res.json({
+    ok: true,
+    settings,
+    settingsPath,
     tools: getToolStatus(),
   });
 });

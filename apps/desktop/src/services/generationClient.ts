@@ -9,6 +9,8 @@ export type ToolStatus = {
   path: string | null;
   exists: boolean;
   status: "Configurada" | "No configurada";
+  details?: string;
+  entrypoint?: string | null;
 };
 
 export type ToolsStatusResponse = {
@@ -45,6 +47,18 @@ export type ProjectStatusResponse = {
   job: ProjectJob;
 };
 
+export type LocalSettings = Partial<Record<
+  "VOLUMIA_PYTHON" | "VOLUMIA_BLENDER" | "VOLUMIA_TRIPOSR_DIR" | "VOLUMIA_HUNYUAN_DIR" | "VOLUMIA_MESHROOM_DIR",
+  string
+>>;
+
+export type SettingsResponse = {
+  ok: boolean;
+  settings: LocalSettings;
+  settingsPath: string;
+  tools: ToolsStatusResponse["tools"];
+};
+
 const backendBaseUrl =
   import.meta.env.VITE_UNIFIED_BACKEND_URL ??
   import.meta.env.VITE_VOLUMIA_BACKEND_URL ??
@@ -79,6 +93,21 @@ export const generationClient = {
 
   async toolsStatus() {
     return await requestJson<ToolsStatusResponse>("/api/tools/status");
+  },
+
+  async detectTools() {
+    return await requestJson<ToolsStatusResponse>("/api/tools/detect", { method: "POST" });
+  },
+
+  async settings() {
+    return await requestJson<SettingsResponse>("/api/settings");
+  },
+
+  async saveSettings(settings: LocalSettings) {
+    return await requestJson<SettingsResponse>("/api/settings", {
+      method: "POST",
+      body: JSON.stringify(settings),
+    });
   },
 
   async createProject(id?: string) {
