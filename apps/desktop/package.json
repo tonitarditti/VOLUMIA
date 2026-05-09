@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "node scripts/dev.cjs",
     "react": "vite --host 127.0.0.1",
+    "backend": "node backend/server.js",
     "backend:status": "node scripts/backend-diag.cjs",
     "comfy:status": "node scripts/backend-diag.cjs",
     "backend:build": "tsc -p backend/tsconfig.json",
@@ -33,10 +34,17 @@
     "files": [
       "dist/**/*",
       "electron-dist/**/*",
+      "backend/server.js",
+      "backend/config/**/*",
+      "backend/jobs/**/*",
+      "backend/tools/**/*",
       "backend/python/**/*",
+      "assets/templates/**/*",
       "package.json"
     ],
     "asarUnpack": [
+      "assets/templates/**/*",
+      "backend/tools/**/*",
       "python/**/*",
       "backend/python/**/*"
     ]
@@ -44,6 +52,8 @@
   "dependencies": {
     "@react-three/drei": "^9.120.4",
     "@react-three/fiber": "^8.17.14",
+    "express": "^4.19.2",
+    "multer": "^1.4.5-lts.2",
     "nanoid": "^5.1.6",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",

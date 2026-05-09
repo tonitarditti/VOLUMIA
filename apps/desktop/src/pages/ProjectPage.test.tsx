@@ -133,11 +133,12 @@ describe("ProjectPage", () => {
     expect(screen.getByRole("heading", { name: "Result" })).toBeInTheDocument();
 
     expect(viewport.dataset.grid).toBe("true");
+    await user.click(screen.getByRole("button", { name: /Tools/i }));
     await user.click(screen.getByRole("button", { name: /Grid/i }));
     expect(viewport.dataset.grid).toBe("false");
 
     expect(viewport.dataset.shadow).toBe("true");
-    await user.click(screen.getByRole("button", { name: /Shadows/i }));
+    await user.click(screen.getByRole("button", { name: /Shadow/i }));
     expect(viewport.dataset.shadow).toBe("false");
 
     expect(viewport.dataset.wire).toBe("false");
@@ -145,15 +146,15 @@ describe("ProjectPage", () => {
     expect(viewport.dataset.wire).toBe("true");
 
     const prevReset = Number(viewport.dataset.reset ?? 0);
-    await user.click(screen.getByRole("button", { name: /Reset View/i }));
+    await user.click(screen.getByRole("button", { name: /Reset/i }));
     expect(Number(viewport.dataset.reset)).toBe(prevReset + 1);
 
     const prevFit = Number(viewport.dataset.fit ?? 0);
-    await user.click(screen.getByRole("button", { name: /Frame Model/i }));
+    await user.click(screen.getByRole("button", { name: /Frame/i }));
     expect(Number(viewport.dataset.fit)).toBe(prevFit + 1);
 
     const prevScreenshot = Number(viewport.dataset.screenshot ?? 0);
-    await user.click(screen.getByRole("button", { name: /Capture PNG/i }));
+    await user.click(screen.getAllByRole("button", { name: /Capture/i })[0]!);
     expect(Number(viewport.dataset.screenshot)).toBe(prevScreenshot + 1);
   });
 });

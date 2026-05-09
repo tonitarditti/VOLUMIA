@@ -6,7 +6,6 @@ import {
   type ComfyConfigPatch,
   type ComfyConfigResponse,
   type ComfyJobOutputs,
-  type ComfyJobState,
   type ComfyJobStatusResponse,
   type ComfyStatusResponse,
   type ComfySubmitJobPayload,
@@ -14,32 +13,48 @@ import {
 } from "./channels";
 import { ensureRuntimeLayout, resolveRuntimePaths, type RuntimePaths } from "./runtime-paths";
 
-type BackendHealth = {
+type MvpHealth = {
   ok: boolean;
   service: string;
   version: string;
+  projectsRoot: string;
+  logPath: string;
   startedAt: string;
 };
 
-type UnifiedJobResponse = {
-  jobId: string;
-  type: string;
+type MvpTool = {
+  configured: boolean;
+  exists: boolean;
+  path: string | null;
   status: string;
-  stage: string;
-  progress: number;
-  message: string;
-  createdAt: string;
+};
+
+type MvpToolsResponse = {
+  ok: boolean;
+  tools: Record<string, MvpTool>;
+};
+
+type MvpJob = {
+  id?: string;
+  projectId: string;
+  mode?: string;
+  status: string;
+  message?: string;
+  latestGlb?: string;
+  output?: Record<string, unknown>;
+  error?: { message?: string };
   startedAt?: string;
   finishedAt?: string;
-  projectId?: string;
-  input?: Record<string, unknown>;
-  output?: Record<string, unknown>;
-  error?: {
-    code?: string;
-    message?: string;
-    retryable?: boolean;
-    details?: Record<string, unknown>;
+};
+
+type MvpStatusResponse = {
+  ok: boolean;
+  project: {
+    id: string;
+    latestGlb: string | null;
+    modelUrl: string | null;
   };
+  job: MvpJob;
 };
 
 function toErrorMessage(error: unknown) {
@@ -53,30 +68,17 @@ function sleep(ms: number) {
   return new Promise<void>((resolve) => setTimeout(resolve, ms));
 }
 
-function normalizeComfyState(state: string): ComfyStatusResponse["state"] {
-  const normalized = state.toLowerCase();
-  if (normalized === "starting") return "STARTING";
-  if (normalized === "healthy" || normalized === "busy") return "READY";
-  if (normalized === "failed" || normalized === "degraded") return "ERROR";
-  return "STOPPED";
-}
-
-function mapJobState(status: string): ComfyJobState {
-  if (status === "queued") return "QUEUED";
-  if (status === "done") return "RESULT_READY";
-  if (status === "failed") return "ERROR";
-  if (status === "cancelled") return "CANCELED";
-  return "RUNNING";
-}
-
-function toTimestamp(input?: string) {
-  if (!input) return Date.now();
-  const parsed = Date.parse(input);
+function toTimestamp(value?: string) {
+  if (!value) return Date.now();
+  const parsed = Date.parse(value);
   return Number.isFinite(parsed) ? parsed : Date.now();
 }
 
-function asObject(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+function mapJobState(status: string): ComfyJobStatusResponse["state"] {
+  if (status === "queued") return "QUEUED";
+  if (status === "complete") return "RESULT_READY";
+  if (status === "error") return "ERROR";
+  return "RUNNING";
 }
 
 export class UnifiedBackendClient {
@@ -112,129 +114,110 @@ export class UnifiedBackendClient {
   }
 
   async getBackendStatus(): Promise<BackendStatusResponse> {
-    const [health, modelsPayload, comfy, processesPayload] = await Promise.all([
-      this.getHealth(),
-      this.requestJson<{ models?: Record<string, unknown> }>("/system/models", { method: "GET" }),
-      this.getComfyStatus(),
-      this.requestJson<{ processes?: Array<{ name: string; pid: number }> }>("/system/processes", { method: "GET" }),
+    await this.ensureStarted();
+    const [health, tools] = await Promise.all([
+      this.requestJson<MvpHealth>("/api/health", { method: "GET" }),
+      this.requestJson<MvpToolsResponse>("/api/tools/status", { method: "GET" }),
     ]);
-
-    const models = modelsPayload.models ?? {};
-    const modelEntries = Object.values(models).filter((entry) => typeof entry === "object");
-    const installedFiles = modelEntries.filter((entry) => Boolean((entry as Record<string, unknown>).loaded)).length;
-
+    const configuredCount = Object.values(tools.tools).filter((tool) => tool.exists).length;
     return {
       mode: process.env.NODE_ENV === "production" ? "prod" : "dev",
       startedAt: health.startedAt ?? null,
       workflows: {
-        sourceDir: path.resolve(process.cwd(), "electron", "generation", "comfyui-workflows"),
-        targetDir: path.resolve(process.cwd(), "electron", "generation", "comfyui-workflows"),
+        sourceDir: path.resolve(process.cwd(), "backend"),
+        targetDir: path.resolve(process.cwd(), "backend"),
         copied: 0,
         replaced: 0,
         backups: 0,
         lastSyncAt: null,
         error: null,
-        activeName: null,
-        activePath: null,
+        activeName: "VOLUMIA Local MVP",
+        activePath: this.resolveServerScriptPath(),
       },
       models: {
         ok: true,
-        totalFiles: modelEntries.length,
-        installedFiles,
-        message: `Loaded models: ${installedFiles}`,
+        totalFiles: Object.keys(tools.tools).length,
+        installedFiles: configuredCount,
+        message: `${configuredCount}/${Object.keys(tools.tools).length} herramientas configuradas`,
         error: null,
       },
       comfy: {
-        running: comfy.running,
-        url: comfy.url,
-        lastError: comfy.lastError,
-        state: comfy.running ? "running" : (comfy.state === "ERROR" ? "error" : "stopped"),
-        host: comfy.host,
-        port: comfy.port,
-        pid: comfy.pid,
-        python: comfy.config.pythonExeOverride || null,
-        comfyRoot: comfy.config.comfyDir || null,
-        healthy: comfy.state === "READY",
-        external: !comfy.startedByApp,
-        message: comfy.message,
+        running: true,
+        url: this.baseUrl,
+        lastError: null,
+        state: "running",
+        host: this.host,
+        port: this.port,
+        pid: this.backendProcess?.pid ?? null,
+        python: tools.tools.python?.path ?? null,
+        comfyRoot: null,
+        healthy: true,
+        external: false,
+        message: "Backend MVP local activo. ComfyUI esta aislado.",
       },
-      activeProcesses: processesPayload.processes ?? [],
-      notes: [],
+      activeProcesses: this.backendProcess?.pid ? [{ name: "volumia-mvp-backend", pid: this.backendProcess.pid }] : [],
+      notes: [`projectsRoot: ${health.projectsRoot}`, `logs: ${health.logPath}`],
     };
   }
 
   async getComfyStatus(): Promise<ComfyStatusResponse> {
     await this.ensureStarted();
-    const payload = await this.requestJson<Record<string, unknown>>("/system/comfy", { method: "GET" });
-    const config = asObject(payload.config);
     return {
-      state: normalizeComfyState(String(payload.state ?? "stopped")),
-      running: Boolean(payload.running),
-      url: String(payload.url ?? this.baseUrl),
-      pid: typeof payload.pid === "number" ? payload.pid : null,
-      startedByApp: Boolean(payload.startedByBackend),
-      lastError: payload.lastError ? String(payload.lastError) : null,
-      lastLogs: [],
-      message: String(payload.message ?? "Comfy status unavailable"),
-      host: String(payload.host ?? "127.0.0.1"),
-      port: Number.parseInt(String(payload.port ?? "8188"), 10) || 8188,
+      state: "STOPPED",
+      running: false,
+      url: this.baseUrl,
+      pid: null,
+      startedByApp: false,
+      lastError: null,
+      lastLogs: ["ComfyUI no se usa en el MVP local."],
+      message: "ComfyUI aislado; usa demo, quick, textured o photogrammetry via backend MVP.",
+      host: this.host,
+      port: 8188,
       config: {
-        comfyDir: String(config.comfyDir ?? ""),
+        comfyDir: "",
         condaHook: "",
-        condaEnvName: "volumia",
-        pythonExeOverride: String(config.pythonExeOverride ?? ""),
-        startupTimeoutMs: Number.parseInt(String(config.startupTimeoutMs ?? "120000"), 10) || 120000,
+        condaEnvName: "",
+        pythonExeOverride: process.env.VOLUMIA_PYTHON ?? "",
+        startupTimeoutMs: 0,
       },
     };
   }
 
   async startComfy(): Promise<ComfyStatusResponse> {
-    await this.ensureStarted();
-    await this.requestJson("/system/comfy/start", { method: "POST" });
     return await this.getComfyStatus();
   }
 
   async stopComfy(): Promise<ComfyStatusResponse> {
-    await this.ensureStarted();
-    await this.requestJson("/system/comfy/stop", { method: "POST" });
     return await this.getComfyStatus();
   }
 
   async getComfyLogs(limit = 200): Promise<string[]> {
     const candidates = [
-      path.join(this.runtimePaths.logs, "comfyui.log"),
-      // Legacy compatibility fallbacks.
-      path.resolve(process.cwd(), "backend", "python", "runtime", "logs", "comfyui.log"),
-      path.resolve(__dirname, "..", "backend", "python", "runtime", "logs", "comfyui.log"),
+      path.resolve(process.cwd(), "backend", "logs", "volumia.log"),
+      path.resolve(__dirname, "..", "backend", "logs", "volumia.log"),
+      path.join(this.runtimePaths.logs, "volumia.log"),
     ];
     const logPath = candidates.find((candidate) => fs.existsSync(candidate));
     if (!logPath) {
-      return [];
+      return ["No MVP backend logs yet."];
     }
-    const content = fs.readFileSync(logPath, "utf8");
-    const lines = content.split(/\r?\n/).filter((line) => line.length > 0);
+    const lines = fs.readFileSync(logPath, "utf8").split(/\r?\n/).filter(Boolean);
     return lines.slice(Math.max(0, lines.length - Math.max(1, limit)));
   }
 
   async submitWorkflow(payload?: ComfySubmitJobPayload): Promise<ComfySubmitJobResult> {
     await this.ensureStarted();
-    const imagePath = await this.resolveImagePath(payload?.imagePath, payload?.imageBase64);
-    const response = await this.requestJson<{ jobId: string; status: string }>("/jobs/reconstruct", {
+    const projectId = payload?.projectId ?? `project_${Date.now()}`;
+    await this.requestJson(`/api/projects/${encodeURIComponent(projectId)}/generate`, {
       method: "POST",
-      body: JSON.stringify({
-        projectId: payload?.projectId,
-        sourceImages: [imagePath],
-        workflowId: payload?.workflowId,
-        preset: payload?.preset,
-      }),
+      body: JSON.stringify({ mode: payload?.workflowId ?? "quick" }),
     });
-
     return {
-      jobId: response.jobId,
-      promptId: response.jobId,
-      workflowName: payload?.workflowId ?? "hunyuan_image_to_3d_textured.json",
-      workflowPath: payload?.workflowId ?? "hunyuan_image_to_3d_textured.json",
-      message: `Job ${response.jobId} queued`,
+      jobId: projectId,
+      promptId: projectId,
+      workflowName: payload?.workflowId ?? "quick",
+      workflowPath: "VOLUMIA MVP",
+      message: `Job ${projectId} queued`,
     };
   }
 
@@ -247,7 +230,6 @@ export class UnifiedBackendClient {
   }> {
     const submitted = await this.submitWorkflow(payload);
     const startedAt = Date.now();
-
     while (Date.now() - startedAt < 15 * 60 * 1000) {
       const status = await this.getWorkflowJobStatus(submitted.jobId);
       if (status.state === "RESULT_READY") {
@@ -256,145 +238,71 @@ export class UnifiedBackendClient {
           workflowName: submitted.workflowName,
           workflowPath: submitted.workflowPath,
           message: status.message,
-          outputGlbPath: status.outputs?.texturedGlbPath ?? status.outputs?.glbPath,
+          outputGlbPath: status.outputs?.glbPath,
         };
       }
       if (status.state === "ERROR") {
         throw new Error(status.error?.message ?? status.message);
       }
-      if (status.state === "CANCELED") {
-        throw new Error("Workflow canceled.");
-      }
       await sleep(1000);
     }
-
     throw new Error(`Workflow timeout for job ${submitted.jobId}`);
   }
 
-  async getWorkflowJobStatus(jobId: string): Promise<ComfyJobStatusResponse> {
+  async getWorkflowJobStatus(projectId: string): Promise<ComfyJobStatusResponse> {
     await this.ensureStarted();
-    const job = await this.requestJson<UnifiedJobResponse>(`/jobs/${encodeURIComponent(jobId)}`, { method: "GET" });
-    const output = asObject(job.output);
+    const payload = await this.requestJson<MvpStatusResponse>(`/api/projects/${encodeURIComponent(projectId)}/status`, { method: "GET" });
+    const job = payload.job;
     return {
-      jobId: job.jobId,
-      promptId: String(output.promptId ?? job.jobId),
-      workflowName: String(output.workflowName ?? "hunyuan_image_to_3d_textured.json"),
-      workflowPath: String(output.workflowName ?? "hunyuan_image_to_3d_textured.json"),
+      jobId: projectId,
+      promptId: projectId,
+      workflowName: job.mode ?? "mvp",
+      workflowPath: "VOLUMIA MVP",
       state: mapJobState(job.status),
-      progress: Math.max(0, Math.min(100, Number(job.progress ?? 0))),
+      progress: job.status === "complete" ? 100 : job.status === "queued" ? 10 : job.status === "error" ? 100 : 55,
       message: job.message ?? "",
-      queuePosition: undefined,
-      startedAt: toTimestamp(job.startedAt ?? job.createdAt),
+      startedAt: toTimestamp(job.startedAt),
       updatedAt: Date.now(),
       finishedAt: job.finishedAt ? toTimestamp(job.finishedAt) : undefined,
-      outputs: this.toComfyOutputs(output),
-      error: job.error
-        ? {
-            code: job.error.code,
-            message: job.error.message ?? "Unknown error",
-          }
-        : undefined,
+      outputs: this.toOutputs(job, payload.project.latestGlb),
+      error: job.error ? { message: job.error.message ?? job.message ?? "Unknown error" } : undefined,
     };
   }
 
-  async cancelWorkflowJob(jobId: string): Promise<void> {
-    await this.ensureStarted();
-    await this.requestJson(`/jobs/cancel/${encodeURIComponent(jobId)}`, { method: "POST" });
+  async cancelWorkflowJob(_projectId?: string): Promise<void> {
+    return;
   }
 
-  async resolveWorkflowJobOutputs(jobId: string): Promise<ComfyJobOutputs> {
-    const status = await this.getWorkflowJobStatus(jobId);
+  async resolveWorkflowJobOutputs(projectId: string): Promise<ComfyJobOutputs> {
+    const status = await this.getWorkflowJobStatus(projectId);
     return status.outputs ?? {};
   }
 
   async getComfyConfig(): Promise<ComfyConfigResponse> {
-    await this.ensureStarted();
-    const config = await this.requestJson<Record<string, unknown>>("/system/comfy/config", { method: "GET" });
-    const host = String(config.host ?? "127.0.0.1");
-    const port = Number.parseInt(String(config.port ?? "8188"), 10) || 8188;
     return {
-      host,
-      port,
-      baseUrl: String(config.baseUrl ?? `http://${host}:${port}`),
-      comfyDir: String(config.comfyDir ?? ""),
+      host: this.host,
+      port: this.port,
+      baseUrl: this.baseUrl,
+      comfyDir: "",
       condaHook: "",
-      condaEnvName: "volumia",
-      pythonExeOverride: String(config.pythonExeOverride ?? ""),
-      args: ["main.py", "--listen", host, "--port", String(port)],
-      startupTimeoutMs: Number.parseInt(String(config.startupTimeoutMs ?? "120000"), 10) || 120000,
+      condaEnvName: "",
+      pythonExeOverride: process.env.VOLUMIA_PYTHON ?? "",
+      args: ["backend/server.js"],
+      startupTimeoutMs: 0,
     };
   }
 
-  async saveComfyConfig(patch: ComfyConfigPatch): Promise<ComfyConfigResponse> {
-    await this.ensureStarted();
-    await this.requestJson("/system/comfy/config", {
-      method: "POST",
-      body: JSON.stringify(patch ?? {}),
-    });
+  async saveComfyConfig(_patch: ComfyConfigPatch): Promise<ComfyConfigResponse> {
     return await this.getComfyConfig();
   }
 
-  private toComfyOutputs(output: Record<string, unknown>): ComfyJobOutputs {
-    const previewImagesRaw = output.previewImages;
-    const previewImages = Array.isArray(previewImagesRaw)
-      ? previewImagesRaw.filter((item): item is string => typeof item === "string")
-      : undefined;
-
+  private toOutputs(job: MvpJob, latestGlb: string | null): ComfyJobOutputs {
+    const output = job.output && typeof job.output === "object" ? job.output : {};
     return {
-      glbPath: typeof output.glbPath === "string" ? output.glbPath : undefined,
-      meshPath: typeof output.meshPath === "string" ? output.meshPath : undefined,
-      texturedGlbPath: typeof output.texturedGlbPath === "string" ? output.texturedGlbPath : undefined,
-      textureStatus:
-        typeof output.textureStatus === "string"
-          ? (output.textureStatus as ComfyJobOutputs["textureStatus"])
-          : undefined,
-      textureMessage:
-        typeof output.textureMessage === "string"
-          ? output.textureMessage
-          : undefined,
-      textureErrorLogPath:
-        typeof output.textureErrorLogPath === "string"
-          ? output.textureErrorLogPath
-          : undefined,
-      textureMetadataPath:
-        typeof output.textureMetadataPath === "string"
-          ? output.textureMetadataPath
-          : undefined,
-      textureDependencies:
-        output.textureDependencies &&
-        typeof output.textureDependencies === "object" &&
-        !Array.isArray(output.textureDependencies)
-          ? (output.textureDependencies as ComfyJobOutputs["textureDependencies"])
-          : undefined,
-      textureValidation:
-        output.textureValidation &&
-        typeof output.textureValidation === "object" &&
-        !Array.isArray(output.textureValidation)
-          ? (output.textureValidation as ComfyJobOutputs["textureValidation"])
-          : undefined,
-      textureAttempts: Array.isArray(output.textureAttempts)
-        ? (output.textureAttempts as ComfyJobOutputs["textureAttempts"])
-        : undefined,
-      textureMeshValidation:
-        output.textureMeshValidation &&
-        typeof output.textureMeshValidation === "object" &&
-        !Array.isArray(output.textureMeshValidation)
-          ? (output.textureMeshValidation as ComfyJobOutputs["textureMeshValidation"])
-          : undefined,
-      textureImageValidation:
-        output.textureImageValidation &&
-        typeof output.textureImageValidation === "object" &&
-        !Array.isArray(output.textureImageValidation)
-          ? (output.textureImageValidation as ComfyJobOutputs["textureImageValidation"])
-          : undefined,
-      previewImages,
-      raw: output,
+      glbPath: latestGlb ?? (typeof job.latestGlb === "string" ? job.latestGlb : undefined),
+      meshPath: typeof output.source === "string" ? output.source : undefined,
+      raw: job,
     };
-  }
-
-  private async getHealth(): Promise<BackendHealth> {
-    await this.ensureStarted();
-    return await this.requestJson<BackendHealth>("/health", { method: "GET" });
   }
 
   private async ensureStarted() {
@@ -405,23 +313,20 @@ export class UnifiedBackendClient {
       await this.startupInFlight;
       return;
     }
-
     this.startupInFlight = (async () => {
       if (await this.isReachable()) {
         return;
       }
       await this.spawnBackendProcess();
-      const timeoutMs = 60_000;
       const startedAt = Date.now();
-      while (Date.now() - startedAt < timeoutMs) {
+      while (Date.now() - startedAt < 60_000) {
         if (await this.isReachable()) {
           return;
         }
         await sleep(400);
       }
-      throw new Error("Unified backend startup timeout.");
+      throw new Error("MVP backend startup timeout.");
     })();
-
     try {
       await this.startupInFlight;
     } finally {
@@ -431,7 +336,7 @@ export class UnifiedBackendClient {
 
   private async isReachable() {
     try {
-      await this.requestJson("/health", { method: "GET" }, 2_000);
+      await this.requestJson("/api/health", { method: "GET" }, 2_000);
       return true;
     } catch {
       return false;
@@ -441,18 +346,13 @@ export class UnifiedBackendClient {
   private async spawnBackendProcess() {
     const scriptPath = this.resolveServerScriptPath();
     if (!scriptPath) {
-      throw new Error("Python backend server.py not found.");
+      throw new Error("MVP backend/server.js not found.");
     }
-
-    const configuredPython = process.env.VOLUMIA_PYTHON?.trim();
-    const pythonCommand = configuredPython && configuredPython.length > 0
-      ? { cmd: configuredPython, prefixArgs: [] as string[] }
-      : process.platform === "win32"
-        ? { cmd: "py", prefixArgs: ["-3"] }
-        : { cmd: "python3", prefixArgs: [] as string[] };
-    const child = spawn(pythonCommand.cmd, [...pythonCommand.prefixArgs, scriptPath], {
+    const nodeCommand = process.env.VOLUMIA_NODE?.trim() || "node";
+    const child = spawn(nodeCommand, [scriptPath], {
       cwd: path.dirname(scriptPath),
       shell: false,
+      windowsHide: true,
       env: {
         ...process.env,
         VOLUMIA_BACKEND_HOST: this.host,
@@ -462,29 +362,25 @@ export class UnifiedBackendClient {
     });
     child.stdout?.on("data", (chunk) => {
       const message = String(chunk).trim();
-      if (message.length > 0) {
-        console.log("[VOLUMIA][unified-python]", message);
-      }
+      if (message) console.log("[VOLUMIA][mvp-backend]", message);
     });
     child.stderr?.on("data", (chunk) => {
       const message = String(chunk).trim();
-      if (message.length > 0) {
-        console.warn("[VOLUMIA][unified-python][err]", message);
-      }
+      if (message) console.warn("[VOLUMIA][mvp-backend][err]", message);
     });
     child.on("exit", (code, signal) => {
       if (this.backendProcess === child) {
         this.backendProcess = null;
       }
-      console.warn("[VOLUMIA][unified-python] exited", { code, signal });
+      console.warn("[VOLUMIA][mvp-backend] exited", { code, signal });
     });
     this.backendProcess = child;
   }
 
   private resolveServerScriptPath() {
     const candidates = [
-      path.resolve(process.cwd(), "backend", "python", "server.py"),
-      path.resolve(__dirname, "..", "backend", "python", "server.py"),
+      path.resolve(process.cwd(), "backend", "server.js"),
+      path.resolve(__dirname, "..", "backend", "server.js"),
     ];
     return candidates.find((candidate) => fs.existsSync(candidate)) ?? null;
   }
@@ -507,25 +403,9 @@ export class UnifiedBackendClient {
       }
       return (await response.json()) as T;
     } catch (error) {
-      throw new Error(`[UnifiedBackend] ${toErrorMessage(error)}`);
+      throw new Error(`[MvpBackend] ${toErrorMessage(error)}`);
     } finally {
       clearTimeout(timeoutId);
     }
-  }
-
-  private async resolveImagePath(imagePath?: string, imageBase64?: string): Promise<string> {
-    if (imagePath && imagePath.trim().length > 0) {
-      return imagePath;
-    }
-    if (!imageBase64 || imageBase64.trim().length === 0) {
-      throw new Error("Either imagePath or imageBase64 is required.");
-    }
-    const tempDir = this.runtimePaths.backendTemp;
-    fs.mkdirSync(tempDir, { recursive: true });
-    const outputPath = path.join(tempDir, `volumia-unified-${Date.now()}.png`);
-    const normalized = imageBase64.replace(/^data:image\/\w+;base64,/i, "").trim();
-    const buffer = Buffer.from(normalized, "base64");
-    fs.writeFileSync(outputPath, buffer);
-    return outputPath;
   }
 }
