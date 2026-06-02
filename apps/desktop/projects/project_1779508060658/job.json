@@ -1,0 +1,24 @@
+{
+  "projectId": "project_1779508060658",
+  "status": "error",
+  "createdAt": "2026-05-23T03:47:40.659Z",
+  "updatedAt": "2026-05-23T03:48:11.635Z",
+  "warnings": [],
+  "logs": [
+    "[2026-05-23T03:47:51.014Z] Running TripoSR: F:\\MINICONDA\\envs\\volumia\\python.exe E:\\AI3D\\TripoSR_clean\\TripoSR\\run.py E:\\VOLUMIA\\apps\\desktop\\projects\\project_1779508060658\\input\\1779508067407-New_Project-thumbnail-600x600-100.jpg --output-dir E:\\VOLUMIA\\apps\\desktop\\projects\\project_1779508060658\\output\\triposr",
+    "[2026-05-23T03:48:11.256Z] Traceback (most recent call last):\r\n  File \"E:\\AI3D\\TripoSR_clean\\TripoSR\\run.py\", line 14, in <module>",
+    "[2026-05-23T03:48:11.257Z] from tsr.bake_texture import bake_texture\r\n  File \"E:\\AI3D\\TripoSR_clean\\TripoSR\\tsr\\bake_texture.py\", line 5, in <module>",
+    "[2026-05-23T03:48:11.262Z] import moderngl\r\nModuleNotFoundError: No module named 'moderngl'"
+  ],
+  "id": "job_1779508070684",
+  "mode": "quick",
+  "message": "Error ejecutando Python: F:\\MINICONDA\\envs\\volumia\\python.exe exited with code 1.\nTraceback (most recent call last):\r\n  File \"E:\\AI3D\\TripoSR_clean\\TripoSR\\run.py\", line 14, in <module>\r\n    from tsr.bake_texture import bake_texture\r\n  File \"E:\\AI3D\\TripoSR_clean\\TripoSR\\tsr\\bake_texture.py\", line 5, in <module>\r\n    import moderngl\r\nModuleNotFoundError: No module named 'moderngl'\r\n",
+  "inputFiles": [
+    "E:\\VOLUMIA\\apps\\desktop\\projects\\project_1779508060658\\input\\1779508067407-New_Project-thumbnail-600x600-100.jpg"
+  ],
+  "error": {
+    "message": "Error ejecutando Python: F:\\MINICONDA\\envs\\volumia\\python.exe exited with code 1.\nTraceback (most recent call last):\r\n  File \"E:\\AI3D\\TripoSR_clean\\TripoSR\\run.py\", line 14, in <module>\r\n    from tsr.bake_texture import bake_texture\r\n  File \"E:\\AI3D\\TripoSR_clean\\TripoSR\\tsr\\bake_texture.py\", line 5, in <module>\r\n    import moderngl\r\nModuleNotFoundError: No module named 'moderngl'\r\n"
+  },
+  "startedAt": "2026-05-23T03:47:50.685Z",
+  "finishedAt": "2026-05-23T03:48:11.634Z"
+}
