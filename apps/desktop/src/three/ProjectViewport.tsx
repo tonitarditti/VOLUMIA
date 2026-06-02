@@ -1079,110 +1079,33 @@ function normalizeAndStabilizeModel(
   };
 }
 
-function normalizeModelToScene(root: THREE.Object3D, options: NormalizeAndStabilizeOptions): ModelStabilizationResult | null {
-  // Normalize position and scale but preserve user rotation
-  root.updateMatrixWorld(true);
-  const stripResult = hideLikelyEmbeddedBaseMeshes(root);
-  let bbox = computeVisibleBoundingBox(root);
-  if (!bbox || bbox.isEmpty()) {
-    return null;
-  }
 
-  const preScaleSize = bbox.getSize(new THREE.Vector3());
-  const preScaleDiagonal = preScaleSize.length();
-  let scaleApplied = 1;
-  const isScaleClearlyWrong =
-    preScaleDiagonal > 0 && (preScaleDiagonal < 0.02 || preScaleDiagonal > 200);
-  if (isScaleClearlyWrong) {
-    scaleApplied = THREE.MathUtils.clamp(
-      TARGET_MODEL_DIAGONAL / preScaleDiagonal,
-      0.001,
-      1000,
-    );
-    root.scale.multiplyScalar(scaleApplied);
-    root.updateMatrixWorld(true);
-    bbox = computeVisibleBoundingBox(root);
-    if (!bbox || bbox.isEmpty()) {
-      return null;
+
+function rotateModel90(root: THREE.Object3D | null, axis: "x" | "y" | "z", direction: 1 | -1) {
+  if (!root) return;
+  const ang = THREE.MathUtils.degToRad(90 * direction);
+  console.info("[viewer] rotate axis=", axis, "direction=", direction);
+  if (axis === "x") root.rotateX(ang);
+  if (axis === "y") root.rotateY(ang);
+  if (axis === "z") root.rotateZ(ang);
+  root.updateMatrixWorld(true);
+  console.info("[viewer] rotate done, calling normalizeAndStabilizeModel");
+  try {
+    normalizeAndStabilizeModel(root, { floorY: FLOOR_Y, envMapIntensity: 1, fallbackMaterialColor: VIEWER_FALLBACK_CLAY_COLOR, wireframe: false, debugRender: false, forcePolygonOffsetAllMeshes: DEV_POLY_OFFSET_ALL_MESHES, textureStatus: undefined, textureValidation: undefined });
+  } catch (e) {
+    console.warn('[viewer] rotate normalization failed', e);
+  }
+  // persist rotation in localStorage if possible
+  try {
+    if (typeof window !== "undefined" && (root as any).uuid) {
+      const key = `volumia:model-rotation:${(root as any).uuid}`;
+      const euler = root.rotation;
+      const payload = { x: euler.x, y: euler.y, z: euler.z };
+      localStorage.setItem(key, JSON.stringify(payload));
     }
+  } catch (e) {
+    // ignore
   }
-
-  const center = bbox.getCenter(new THREE.Vector3());
-  // move object so its center is at origin (preserve rotation)
-  root.position.x -= center.x;
-  root.position.y -= center.y;
-  root.position.z -= center.z;
-  root.updateMatrixWorld(true);
-
-  const groundedBox = computeVisibleBoundingBox(root);
-  if (!groundedBox || groundedBox.isEmpty()) {
-    return null;
-  }
-
-  const groundedSize = groundedBox.getSize(new THREE.Vector3());
-  const radius = Math.max(groundedSize.length() * 0.5, 0.001);
-  const epsilonLift = Math.max(0.001, radius * 0.001);
-  const targetMinY = options.floorY + epsilonLift;
-  const minYBefore = groundedBox.min.y;
-  let minYTranslation = targetMinY - groundedBox.min.y;
-  if (Math.abs(minYTranslation) > MODEL_GROUND_TOLERANCE) {
-    root.position.y += minYTranslation;
-    root.updateMatrixWorld(true);
-  } else {
-    minYTranslation = 0;
-  }
-
-  let finalBox = computeVisibleBoundingBox(root);
-  if (!finalBox || finalBox.isEmpty()) {
-    return null;
-  }
-
-  const material = applyModelVisualSettings({ object: root, options: {
-    envMapIntensity: options.envMapIntensity,
-    wireframe: options.wireframe,
-    polygonOffset: options.forcePolygonOffsetAllMeshes || false,
-    fallbackMaterialColor: options.fallbackMaterialColor,
-    textureStatus: options.textureStatus,
-    textureValidation: options.textureValidation,
-  } });
-
-  const finalSize = finalBox.getSize(new THREE.Vector3());
-  const minYAfter = finalBox.min.y;
-  const diagonal = finalSize.length();
-  if (options.debugRender) {
-    console.debug("[ProjectViewport][normalizeModelToScene]", {
-      bbox: { x: finalSize.x, y: finalSize.y, z: finalSize.z },
-      radius,
-      diagonal,
-      epsilonLift,
-      scaleApplied,
-      minYBefore,
-      minYAfter,
-      minYTranslation,
-      coplanar: analyzeCoplanarRisk(root),
-      material,
-      polygonOffsetEngaged: options.forcePolygonOffsetAllMeshes,
-      removedBaseMeshes: stripResult.removed,
-    });
-  }
-
-  return {
-    bboxSize: finalSize,
-    minYTranslation,
-    minYBefore,
-    minYAfter,
-    centeredX: center.x,
-    centeredZ: center.z,
-    radius,
-    diagonal,
-    epsilonLift,
-    scaleApplied,
-    removedBaseMeshes: stripResult.removed,
-    coplanar: analyzeCoplanarRisk(root),
-    material,
-    polygonOffsetEngaged: options.forcePolygonOffsetAllMeshes,
-    viewerPolicy: material.policy,
-  };
 }
 
 function LoadedModel({
@@ -1382,6 +1305,22 @@ function LoadedModel({
         }
 
         const fitKey = resolveFitKey(glbPath, glbVersion, modelUrl);
+        // Apply persisted rotation if present (localStorage keyed by glbPath or model uuid)
+        try {
+          const storageKey = glbPath ? `volumia:model-rotation:${glbPath}` : `volumia:model-rotation:${nextModel.uuid}`;
+          const raw = typeof window !== 'undefined' ? localStorage.getItem(storageKey) : null;
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (parsed && typeof parsed.x === 'number') {
+              nextModel.rotation.set(parsed.x, parsed.y, parsed.z);
+              nextModel.updateMatrixWorld(true);
+              console.info('[viewer] applied saved rotation from storage', storageKey, parsed);
+            }
+          }
+        } catch (e) {
+          // ignore
+        }
+
         const stabilized = normalizeAndStabilizeModel(nextModel, {
           floorY: FLOOR_Y,
           envMapIntensity: envMapIntensityRef.current,
@@ -2105,6 +2044,138 @@ export function ProjectViewport({
     emitCameraTelemetry();
   }, [emitCameraTelemetry, wireframe, glbPath, glbVersion]);
 
+  const handleManualRotate = useCallback((axis: "x" | "y" | "z", direction: 1 | -1) => {
+    const model = loadedModelRef.current;
+    if (!model) return;
+    console.info("[viewer] rotate axis=", axis, "direction=", direction);
+    rotateModel90(model, axis, direction);
+    setModelStats(collectModelViewportStats(model));
+    invalidateRef.current?.();
+  }, []);
+
+  const handleStraightenModel = useCallback(() => {
+    const model = loadedModelRef.current;
+    if (!model) return;
+    console.info("[viewer] straighten model start");
+    model.updateMatrixWorld(true);
+    const box = computeVisibleBoundingBox(model);
+    if (!box) return;
+    const size = box.getSize(new THREE.Vector3());
+    const origY = size.y;
+    const origFootprint = Math.max(size.x, size.z);
+
+    type Candidate = { axis: "none" | "x" | "y" | "z"; dir?: 1 | -1; y: number; footprint: number };
+    const candidates: Candidate[] = [];
+    // no rotation
+    candidates.push({ axis: "none", y: size.y, footprint: Math.max(size.x, size.z) });
+    // rotate X => swap y and z
+    candidates.push({ axis: "x", dir: 1, y: size.z, footprint: Math.max(size.x, size.y) });
+    candidates.push({ axis: "x", dir: -1, y: size.z, footprint: Math.max(size.x, size.y) });
+    // rotate Z => swap x and y
+    candidates.push({ axis: "z", dir: 1, y: size.x, footprint: Math.max(size.y, size.z) });
+    candidates.push({ axis: "z", dir: -1, y: size.x, footprint: Math.max(size.y, size.z) });
+    // rotate Y => swap x and z (height stays y)
+    candidates.push({ axis: "y", dir: 1, y: size.y, footprint: Math.max(size.z, size.x) });
+    candidates.push({ axis: "y", dir: -1, y: size.y, footprint: Math.max(size.z, size.x) });
+
+    // choose candidate with minimal y, tie-breaker larger footprint
+    candidates.sort((a, b) => {
+      if (Math.abs(a.y - b.y) > 1e-6) return a.y - b.y;
+      return b.footprint - a.footprint;
+    });
+
+    const best = candidates[0];
+    if (!best) return;
+    if (best.axis === "none" || best.y >= origY * 0.95) {
+      console.info("[viewer] straighten model: no beneficial rotation found");
+      // still recenter/normalize
+      const normalized = normalizeAndStabilizeModel(model, { floorY: FLOOR_Y, envMapIntensity: themeConfig.envMapIntensity, fallbackMaterialColor: themeConfig.fallbackMaterialColor, wireframe, debugRender: debugRenderEnabled, forcePolygonOffsetAllMeshes: DEV_POLY_OFFSET_ALL_MESHES, textureStatus, textureValidation });
+      setModelStats(collectModelViewportStats(model));
+      invalidateRef.current?.();
+      return;
+    }
+
+    // apply rotation
+    console.info("[viewer] straighten applied rotation=", best.axis, best.dir);
+    rotateModel90(model, best.axis as "x" | "y" | "z", (best.dir as 1 | -1) || 1);
+    normalizeAndStabilizeModel(model, { floorY: FLOOR_Y, envMapIntensity: themeConfig.envMapIntensity, fallbackMaterialColor: themeConfig.fallbackMaterialColor, wireframe, debugRender: debugRenderEnabled, forcePolygonOffsetAllMeshes: DEV_POLY_OFFSET_ALL_MESHES, textureStatus, textureValidation });
+    setModelStats(collectModelViewportStats(model));
+    const afterBox = computeVisibleBoundingBox(model);
+    console.info("[viewer] straighten bbox after", afterBox ? afterBox.getSize(new THREE.Vector3()) : null);
+    // persist rotation keyed by glbPath if available
+    try {
+      const key = glbPath ? `volumia:model-rotation:${glbPath}` : `volumia:model-rotation:${model.uuid}`;
+      const e = model.rotation;
+      localStorage.setItem(key, JSON.stringify({ x: e.x, y: e.y, z: e.z }));
+    } catch (e) {
+      // ignore
+    }
+    invalidateRef.current?.();
+  }, [glbPath]);
+
+  useEffect(() => {
+    // create overlay controls inside hostRef for manual rotate and straighten
+    const host = hostRef.current;
+    if (!host) return;
+    const container = document.createElement("div");
+    container.style.position = "absolute";
+    container.style.top = "12px";
+    container.style.right = "12px";
+    container.style.zIndex = "9999";
+    container.style.display = "flex";
+    container.style.flexDirection = "column";
+    container.style.gap = "6px";
+
+    const makeBtn = (label: string, onClick: () => void) => {
+      const b = document.createElement("button");
+      b.textContent = label;
+      b.style.padding = "6px 8px";
+      b.style.fontSize = "11px";
+      b.style.borderRadius = "6px";
+      b.style.border = "1px solid rgba(0,0,0,0.12)";
+      b.style.background = "rgba(255,255,255,0.04)";
+      b.style.color = "var(--text)";
+      b.onclick = onClick;
+      return b;
+    };
+
+    container.appendChild(makeBtn("X +90", () => handleManualRotate("x", 1)));
+    container.appendChild(makeBtn("X -90", () => handleManualRotate("x", -1)));
+    container.appendChild(makeBtn("Y +90", () => handleManualRotate("y", 1)));
+    container.appendChild(makeBtn("Y -90", () => handleManualRotate("y", -1)));
+    container.appendChild(makeBtn("Z +90", () => handleManualRotate("z", 1)));
+    container.appendChild(makeBtn("Z -90", () => handleManualRotate("z", -1)));
+    container.appendChild(makeBtn("Reset Rot", () => {
+      const m = loadedModelRef.current;
+      if (!m) return;
+      m.rotation.set(0,0,0);
+      normalizeAndStabilizeModel(m, { floorY: FLOOR_Y, envMapIntensity: themeConfig.envMapIntensity, fallbackMaterialColor: themeConfig.fallbackMaterialColor, wireframe, debugRender: debugRenderEnabled, forcePolygonOffsetAllMeshes: DEV_POLY_OFFSET_ALL_MESHES, textureStatus, textureValidation });
+      setModelStats(collectModelViewportStats(m));
+      invalidateRef.current?.();
+    }));
+    container.appendChild(makeBtn("Centrar/Apoyar", () => {
+      const m = loadedModelRef.current;
+      if (!m) return;
+      normalizeAndStabilizeModel(m, { floorY: FLOOR_Y, envMapIntensity: themeConfig.envMapIntensity, fallbackMaterialColor: themeConfig.fallbackMaterialColor, wireframe, debugRender: debugRenderEnabled, forcePolygonOffsetAllMeshes: DEV_POLY_OFFSET_ALL_MESHES, textureStatus, textureValidation });
+      setModelStats(collectModelViewportStats(m));
+      invalidateRef.current?.();
+    }));
+    container.appendChild(makeBtn("Enderezar modelo", () => handleStraightenModel()));
+
+    // style adapt for dark background
+    container.style.backdropFilter = "blur(6px)";
+    container.style.padding = "8px";
+    container.style.borderRadius = "8px";
+    container.style.background = "rgba(0,0,0,0.35)";
+
+    host.style.position = host.style.position || "relative";
+    host.appendChild(container);
+
+    return () => {
+      if (host.contains(container)) host.removeChild(container);
+    };
+  }, [handleManualRotate, handleStraightenModel]);
+
   useEffect(() => {
     console.debug("[ProjectViewport] studioProfile changed", {
       studioProfile,
@@ -2201,16 +2272,7 @@ export function ProjectViewport({
     }
 
     // Recenter/ground preserving rotation
-    const stabilization = normalizeModelToScene(model, {
-      floorY: FLOOR_Y,
-      envMapIntensity: themeConfig.envMapIntensity,
-      fallbackMaterialColor: themeConfig.fallbackMaterialColor,
-      wireframe,
-      debugRender: debugRenderEnabled,
-      forcePolygonOffsetAllMeshes: DEV_POLY_OFFSET_ALL_MESHES,
-      textureStatus,
-      textureValidation,
-    });
+    const stabilization = normalizeAndStabilizeModel(model, { floorY: FLOOR_Y, envMapIntensity: themeConfig.envMapIntensity, fallbackMaterialColor: themeConfig.fallbackMaterialColor, wireframe, debugRender: debugRenderEnabled, forcePolygonOffsetAllMeshes: DEV_POLY_OFFSET_ALL_MESHES, textureStatus, textureValidation });
     if (stabilization) {
       setModelNormalizationDebug({
         bboxSize: { x: stabilization.bboxSize.x, y: stabilization.bboxSize.y, z: stabilization.bboxSize.z },
@@ -2231,16 +2293,7 @@ export function ProjectViewport({
     model.rotation.set(0, 0, 0);
     console.info("[VOLUMIA][viewer] reset-orientation");
     // recentre and ground
-    const stabilization = normalizeModelToScene(model, {
-      floorY: FLOOR_Y,
-      envMapIntensity: themeConfig.envMapIntensity,
-      fallbackMaterialColor: themeConfig.fallbackMaterialColor,
-      wireframe,
-      debugRender: debugRenderEnabled,
-      forcePolygonOffsetAllMeshes: DEV_POLY_OFFSET_ALL_MESHES,
-      textureStatus,
-      textureValidation,
-    });
+    const stabilization = normalizeAndStabilizeModel(model, { floorY: FLOOR_Y, envMapIntensity: themeConfig.envMapIntensity, fallbackMaterialColor: themeConfig.fallbackMaterialColor, wireframe, debugRender: debugRenderEnabled, forcePolygonOffsetAllMeshes: DEV_POLY_OFFSET_ALL_MESHES, textureStatus, textureValidation });
     if (stabilization) {
       setModelNormalizationDebug({
         bboxSize: { x: stabilization.bboxSize.x, y: stabilization.bboxSize.y, z: stabilization.bboxSize.z },
@@ -2259,16 +2312,7 @@ export function ProjectViewport({
     const model = loadedModelRef.current;
     if (!model) return;
     console.info("[VOLUMIA][viewer] recentering model");
-    const stabilization = normalizeModelToScene(model, {
-      floorY: FLOOR_Y,
-      envMapIntensity: themeConfig.envMapIntensity,
-      fallbackMaterialColor: themeConfig.fallbackMaterialColor,
-      wireframe,
-      debugRender: debugRenderEnabled,
-      forcePolygonOffsetAllMeshes: DEV_POLY_OFFSET_ALL_MESHES,
-      textureStatus,
-      textureValidation,
-    });
+        const stabilization = normalizeAndStabilizeModel(model, { floorY: FLOOR_Y, envMapIntensity: themeConfig.envMapIntensity, fallbackMaterialColor: themeConfig.fallbackMaterialColor, wireframe, debugRender: debugRenderEnabled, forcePolygonOffsetAllMeshes: DEV_POLY_OFFSET_ALL_MESHES, textureStatus, textureValidation });
     if (stabilization) {
       setModelNormalizationDebug({
         bboxSize: { x: stabilization.bboxSize.x, y: stabilization.bboxSize.y, z: stabilization.bboxSize.z },
@@ -2319,16 +2363,7 @@ export function ProjectViewport({
           console.info('[auto-orient] revert rotation, not beneficial');
         } else {
           // accept and recenter
-          const stabilization = normalizeModelToScene(model, {
-            floorY: FLOOR_Y,
-            envMapIntensity: themeConfig.envMapIntensity,
-            fallbackMaterialColor: themeConfig.fallbackMaterialColor,
-            wireframe,
-            debugRender: debugRenderEnabled,
-            forcePolygonOffsetAllMeshes: DEV_POLY_OFFSET_ALL_MESHES,
-            textureStatus,
-            textureValidation,
-          });
+          const stabilization = normalizeAndStabilizeModel(model, { floorY: FLOOR_Y, envMapIntensity: themeConfig.envMapIntensity, fallbackMaterialColor: themeConfig.fallbackMaterialColor, wireframe, debugRender: debugRenderEnabled, forcePolygonOffsetAllMeshes: DEV_POLY_OFFSET_ALL_MESHES, textureStatus, textureValidation });
           setModelNormalizationDebug(stabilization ? {
             bboxSize: { x: stabilization.bboxSize.x, y: stabilization.bboxSize.y, z: stabilization.bboxSize.z },
             minYTranslation: stabilization.minYTranslation,

@@ -1,0 +1,29 @@
+{
+  "projectId": "project_1780389818943",
+  "status": "error",
+  "createdAt": "2026-06-02T08:43:38.943Z",
+  "updatedAt": "2026-06-02T08:45:57.059Z",
+  "warnings": [],
+  "logs": [
+    "[2026-06-02T08:45:57.054Z] Hunyuan3D is configured, but no concrete CLI entrypoint has been mapped yet. Add the project-specific command in hunyuan_runner.py."
+  ],
+  "id": "job_1780389956993",
+  "mode": "textured",
+  "message": "F:\\MINICONDA\\envs\\volumia\\python.exe exited with code 4.\nHunyuan3D is configured, but no concrete CLI entrypoint has been mapped yet. Add the project-specific command in hunyuan_runner.py.\r\n",
+  "inputFiles": [
+    "E:\\VOLUMIA\\apps\\desktop\\projects\\project_1780389818943\\input\\1780389822954-New_Project-thumbnail-600x600-100.jpg"
+  ],
+  "error": {
+    "message": "F:\\MINICONDA\\envs\\volumia\\python.exe exited with code 4.\nHunyuan3D is configured, but no concrete CLI entrypoint has been mapped yet. Add the project-specific command in hunyuan_runner.py.\r\n"
+  },
+  "startedAt": "2026-06-02T08:45:56.994Z",
+  "finishedAt": "2026-06-02T08:45:57.059Z",
+  "latestGlb": "E:\\VOLUMIA\\apps\\desktop\\projects\\project_1780389818943\\latest.glb",
+  "output": {
+    "latestGlb": "E:\\VOLUMIA\\apps\\desktop\\projects\\project_1780389818943\\latest.glb",
+    "raw": "E:\\VOLUMIA\\apps\\desktop\\projects\\project_1780389818943\\output\\raw.obj",
+    "optimizedGlb": "E:\\VOLUMIA\\apps\\desktop\\projects\\project_1780389818943\\output\\optimized.glb",
+    "source": "E:\\VOLUMIA\\apps\\desktop\\projects\\project_1780389818943\\output\\triposr\\0\\mesh.obj",
+    "warnings": []
+  }
+}
