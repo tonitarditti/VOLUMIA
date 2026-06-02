@@ -1,8 +1,10 @@
 import argparse
+import math
 import sys
 from pathlib import Path
 
 import bpy
+from mathutils import Euler
 
 
 def clear_scene() -> None:
@@ -20,6 +22,35 @@ def import_asset(source: Path) -> None:
         bpy.ops.wm.ply_import(filepath=str(source))
     else:
         raise RuntimeError(f"Unsupported input format: {source.suffix}")
+
+
+def scene_mesh_objects() -> list[bpy.types.Object]:
+    return [obj for obj in bpy.context.scene.objects if obj.type == "MESH"]
+
+
+def apply_canonical_rotation(rotation_x_deg: float, rotation_y_deg: float, rotation_z_deg: float) -> None:
+    if abs(rotation_x_deg) < 0.0001 and abs(rotation_y_deg) < 0.0001 and abs(rotation_z_deg) < 0.0001:
+        print("[blender-transform] canonical rotation skipped")
+        return
+
+    rotation = Euler(
+        (
+            math.radians(rotation_x_deg),
+            math.radians(rotation_y_deg),
+            math.radians(rotation_z_deg),
+        ),
+        "XYZ",
+    ).to_matrix().to_4x4()
+    print(
+        "[blender-transform] applying canonical rotation before bake/export "
+        f"x={rotation_x_deg} y={rotation_y_deg} z={rotation_z_deg}",
+        flush=True,
+    )
+
+    for obj in scene_mesh_objects():
+        local_rotation = obj.matrix_world.inverted() @ rotation @ obj.matrix_world
+        obj.data.transform(local_rotation)
+        obj.data.update()
 
 
 def optimize_scene() -> None:
@@ -49,6 +80,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Optimize and export a model as GLB.")
     parser.add_argument("--input", required=True)
     parser.add_argument("--output", required=True)
+    parser.add_argument("--rotation-x-deg", type=float, default=0.0)
+    parser.add_argument("--rotation-y-deg", type=float, default=0.0)
+    parser.add_argument("--rotation-z-deg", type=float, default=0.0)
     args = parser.parse_args(sys.argv[sys.argv.index("--") + 1 :] if "--" in sys.argv else None)
 
     source = Path(args.input).resolve()
@@ -58,6 +92,7 @@ def main() -> int:
 
     clear_scene()
     import_asset(source)
+    apply_canonical_rotation(args.rotation_x_deg, args.rotation_y_deg, args.rotation_z_deg)
     optimize_scene()
     export_glb(target)
     print(f"Exported GLB: {target}")

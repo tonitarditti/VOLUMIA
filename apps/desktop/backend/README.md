@@ -59,6 +59,20 @@ npm run backend:status
 npm run dev
 ```
 
+## Variables opcionales OpenMP
+
+Para Windows + Conda, algunos pipelines 3D pueden cargar más de una copia de `libiomp5md.dll`.
+El backend MVP inyecta estas variables solo en procesos Python de generación 3D:
+
+```bat
+set VOLUMIA_KMP_DUPLICATE_LIB_OK=TRUE
+set VOLUMIA_OMP_NUM_THREADS=1
+set VOLUMIA_MKL_NUM_THREADS=1
+set VOLUMIA_NUMEXPR_NUM_THREADS=1
+```
+
+También pueden guardarse en `apps/desktop/backend/config/local.settings.json`.
+
 En Dashboard:
 
 - `Refresh status` para comprobar ComfyUI.

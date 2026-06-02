@@ -1,0 +1,34 @@
+{
+  "projectId": "project_1780393546974",
+  "status": "error",
+  "createdAt": "2026-06-02T09:45:46.975Z",
+  "updatedAt": "2026-06-02T09:47:06.330Z",
+  "warnings": [],
+  "logs": [],
+  "id": "job_1780393626327",
+  "mode": "photogrammetry",
+  "message": "Meshroom no configurado: define VOLUMIA_MESHROOM_DIR.",
+  "inputFiles": [
+    "E:\\VOLUMIA\\apps\\desktop\\projects\\project_1780393546974\\input\\1780393552800-mesa_redonda.png",
+    "E:\\VOLUMIA\\apps\\desktop\\projects\\project_1780393546974\\input\\input_clean.png"
+  ],
+  "error": {
+    "message": "Meshroom no configurado: define VOLUMIA_MESHROOM_DIR."
+  },
+  "startedAt": "2026-06-02T09:47:06.328Z",
+  "finishedAt": "2026-06-02T09:47:06.330Z",
+  "latestGlb": "E:\\VOLUMIA\\apps\\desktop\\projects\\project_1780393546974\\latest.glb",
+  "output": {
+    "latestGlb": "E:\\VOLUMIA\\apps\\desktop\\projects\\project_1780393546974\\latest.glb",
+    "raw": "E:\\VOLUMIA\\apps\\desktop\\projects\\project_1780393546974\\output\\raw.obj",
+    "optimizedGlb": "E:\\VOLUMIA\\apps\\desktop\\projects\\project_1780393546974\\output\\optimized.glb",
+    "source": "E:\\VOLUMIA\\apps\\desktop\\projects\\project_1780393546974\\output\\triposr\\0\\mesh.obj",
+    "rotation": {
+      "preset": "side_to_ground",
+      "rotationXDeg": -90,
+      "rotationYDeg": 0,
+      "rotationZDeg": 0
+    },
+    "warnings": []
+  }
+}

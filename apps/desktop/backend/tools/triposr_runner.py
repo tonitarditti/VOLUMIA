@@ -20,6 +20,26 @@ def find_entrypoint(root: Path) -> Path | None:
     return None
 
 
+def openmp_compat_env() -> dict[str, str]:
+    env = os.environ.copy()
+    # Windows/Conda workaround for duplicate Intel OpenMP runtimes loaded by
+    # torch/numpy/MKL. Keep it local to Python generation scripts.
+    defaults = {
+        "KMP_DUPLICATE_LIB_OK": env.get("VOLUMIA_KMP_DUPLICATE_LIB_OK", "TRUE"),
+        "OMP_NUM_THREADS": env.get("VOLUMIA_OMP_NUM_THREADS", "1"),
+        "MKL_NUM_THREADS": env.get("VOLUMIA_MKL_NUM_THREADS", "1"),
+        "NUMEXPR_NUM_THREADS": env.get("VOLUMIA_NUMEXPR_NUM_THREADS", "1"),
+    }
+    for key, value in defaults.items():
+        env[key] = env.get(key) or value
+    return env
+
+
+def print_openmp_env(env: dict[str, str]) -> None:
+    for key in ("KMP_DUPLICATE_LIB_OK", "OMP_NUM_THREADS", "MKL_NUM_THREADS", "NUMEXPR_NUM_THREADS"):
+        print(f"[python-env] {key}={env.get(key, '')}", flush=True)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run a real TripoSR checkout.")
     parser.add_argument("--triposr-dir", required=True)
@@ -31,6 +51,7 @@ def main() -> int:
     input_path = Path(args.input).resolve()
     output_dir = Path(args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
+    env = openmp_compat_env()
 
     if not triposr_dir.exists():
         print(f"TripoSR dir not found: {triposr_dir}", file=sys.stderr)
@@ -47,8 +68,7 @@ def main() -> int:
         if script_path.exists():
             print(f"[preprocess] Running preprocess script: {script_path}", flush=True)
             pre_cmd = [sys.executable, str(script_path), "--input", str(input_path), "--output", str(clean_path), "--debug-output", str(debug_dir)]
-            pre_env = os.environ.copy()
-            pre_proc = subprocess.run(pre_cmd, cwd=str(script_path.parent), env=pre_env)
+            pre_proc = subprocess.run(pre_cmd, cwd=str(script_path.parent), env=env)
             if pre_proc.returncode == 0 and clean_path.exists():
                 print(f"[preprocess] OK original={input_path} preprocessed={clean_path}", flush=True)
                 used_input = clean_path
@@ -77,8 +97,9 @@ def main() -> int:
         "--output-dir",
         str(output_dir),
     ]
-    env = os.environ.copy()
     env["PYTHONPATH"] = f"{triposr_dir}{os.pathsep}{env.get('PYTHONPATH', '')}"
+    print("[triposr] spawning python with OpenMP compatibility env", flush=True)
+    print_openmp_env(env)
     print("Running TripoSR:", " ".join(command), "--output-dir", str(output_dir), flush=True)
     return subprocess.call(command, cwd=str(triposr_dir), env=env)
 

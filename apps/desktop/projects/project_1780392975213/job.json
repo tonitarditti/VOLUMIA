@@ -1,0 +1,62 @@
+{
+  "projectId": "project_1780392975213",
+  "status": "complete",
+  "createdAt": "2026-06-02T09:36:15.214Z",
+  "updatedAt": "2026-06-02T09:36:38.152Z",
+  "warnings": [],
+  "logs": [
+    "[2026-06-02T09:36:22.515Z] [preprocess] Running preprocess script: E:\\VOLUMIA\\apps\\desktop\\backend\\scripts\\preprocess_triposr_input.py",
+    "[2026-06-02T09:36:24.447Z] [preprocess] OK input=E:\\VOLUMIA\\apps\\desktop\\projects\\project_1780392975213\\input\\1780392981018-mesa_redonda.png original_size=(401, 282) output=E:\\VOLUMIA\\apps\\desktop\\projects\\project_1780392975213\\input\\input_clean.png output_size=(1024, 1024) rembg_used=True",
+    "[2026-06-02T09:36:24.540Z] [preprocess] OK original=E:\\VOLUMIA\\apps\\desktop\\projects\\project_1780392975213\\input\\1780392981018-mesa_redonda.png preprocessed=E:\\VOLUMIA\\apps\\desktop\\projects\\project_1780392975213\\input\\input_clean.png",
+    "[2026-06-02T09:36:24.541Z] Running TripoSR: F:\\MINICONDA\\envs\\volumia\\python.exe E:\\AI3D\\TripoSR_clean\\TripoSR\\run.py E:\\VOLUMIA\\apps\\desktop\\projects\\project_1780392975213\\input\\input_clean.png --output-dir E:\\VOLUMIA\\apps\\desktop\\projects\\project_1780392975213\\output\\triposr --output-dir E:\\VOLUMIA\\apps\\desktop\\projects\\project_1780392975213\\output\\triposr",
+    "[2026-06-02T09:36:27.379Z] 2026-06-02 06:36:27,379 - INFO - Initializing model ...",
+    "[2026-06-02T09:36:27.863Z] 2026-06-02 06:36:27,864 - INFO - HTTP Request: HEAD https://huggingface.co/stabilityai/TripoSR/resolve/main/config.yaml \"HTTP/1.1 307 Temporary Redirect\"",
+    "[2026-06-02T09:36:27.864Z] Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.\r\n2026-06-02 06:36:27,864 - WARNING - Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.",
+    "[2026-06-02T09:36:27.894Z] 2026-06-02 06:36:27,894 - INFO - HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/stabilityai/TripoSR/5b521936b01fbe1890f6f9baed0254ab6351c04a/config.yaml \"HTTP/1.1 200 OK\"",
+    "[2026-06-02T09:36:28.077Z] 2026-06-02 06:36:28,077 - INFO - HTTP Request: HEAD https://huggingface.co/stabilityai/TripoSR/resolve/main/model.ckpt \"HTTP/1.1 302 Found\"",
+    "[2026-06-02T09:36:30.324Z] 2026-06-02 06:36:30,323 - INFO - HTTP Request: HEAD https://huggingface.co/facebook/dino-vitb16/resolve/main/config.json \"HTTP/1.1 307 Temporary Redirect\"",
+    "[2026-06-02T09:36:30.351Z] 2026-06-02 06:36:30,351 - INFO - HTTP Request: HEAD https://huggingface.co/api/resolve-cache/models/facebook/dino-vitb16/f205d5d8e640a89a2b8ef0369670dfc37cc07fc2/config.json \"HTTP/1.1 200 OK\"",
+    "[2026-06-02T09:36:32.641Z] 2026-06-02 06:36:32,641 - INFO - Initializing model finished in 5262.07ms.",
+    "[2026-06-02T09:36:32.642Z] 2026-06-02 06:36:32,641 - INFO - Processing images ...",
+    "[2026-06-02T09:36:33.499Z] 2026-06-02 06:36:33,499 - INFO - Processing images finished in 857.28ms.",
+    "[2026-06-02T09:36:33.499Z] 2026-06-02 06:36:33,499 - INFO - Running image 1/1 ...\r\n2026-06-02 06:36:33,499 - INFO - Running model ...",
+    "[2026-06-02T09:36:34.354Z] 2026-06-02 06:36:34,354 - INFO - Running model finished in 855.23ms.",
+    "[2026-06-02T09:36:34.356Z] 2026-06-02 06:36:34,354 - INFO - Extracting mesh ...",
+    "[2026-06-02T09:36:36.274Z] 2026-06-02 06:36:36,273 - INFO - Extracting mesh finished in 1919.63ms.",
+    "[2026-06-02T09:36:36.274Z] 2026-06-02 06:36:36,273 - INFO - Exporting mesh ...",
+    "[2026-06-02T09:36:36.476Z] 2026-06-02 06:36:36,477 - INFO - Exporting mesh finished in 203.35ms.",
+    "[2026-06-02T09:36:37.052Z] Raw model: E:\\VOLUMIA\\apps\\desktop\\projects\\project_1780392975213\\output\\raw.obj",
+    "[2026-06-02T09:36:37.054Z] Blender optimize: E:\\VOLUMIA\\apps\\desktop\\projects\\project_1780392975213\\output\\raw.obj",
+    "[2026-06-02T09:36:37.054Z] Canonical mesh rotation before bake/export (side_to_ground): X=-90 Y=0 Z=0",
+    "[2026-06-02T09:36:37.196Z] TBBmalloc: skip allocation functions replacement in ucrtbase.dll: unknown prologue for function _msize",
+    "[2026-06-02T09:36:37.549Z] [blender-transform] applying canonical rotation before bake/export x=-90.0 y=0.0 z=0.0",
+    "[2026-06-02T09:36:37.911Z] INFO Draco mesh compression is available, use library at E:\\Program Files\\Blender Foundation\\Blender 4.2\\4.2\\python\\lib\\site-packages\\extern_draco.dll\r\n06:36:37 | INFO: Starting glTF 2.0 export",
+    "[2026-06-02T09:36:37.923Z] 06:36:37 | INFO: Extracting primitive: raw",
+    "[2026-06-02T09:36:38.030Z] 06:36:38 | INFO: Primitives created: 1",
+    "[2026-06-02T09:36:38.037Z] 06:36:38 | INFO: Finished glTF 2.0 export in 0.12628173828125 s",
+    "[2026-06-02T09:36:38.037Z] Blender 4.2.18 LTS (hash d71e3422e438 built 2026-02-17 01:34:30)\nOBJ import of 'raw.obj' took 48.21 ms\n\r\nExported GLB: E:\\VOLUMIA\\apps\\desktop\\projects\\project_1780392975213\\output\\optimized.glb"
+  ],
+  "id": "job_1780392982449",
+  "mode": "quick",
+  "message": "Modelo listo.",
+  "inputFiles": [
+    "E:\\VOLUMIA\\apps\\desktop\\projects\\project_1780392975213\\input\\1780392981018-mesa_redonda.png"
+  ],
+  "error": null,
+  "startedAt": "2026-06-02T09:36:22.450Z",
+  "finishedAt": "2026-06-02T09:36:38.152Z",
+  "latestGlb": "E:\\VOLUMIA\\apps\\desktop\\projects\\project_1780392975213\\latest.glb",
+  "output": {
+    "latestGlb": "E:\\VOLUMIA\\apps\\desktop\\projects\\project_1780392975213\\latest.glb",
+    "raw": "E:\\VOLUMIA\\apps\\desktop\\projects\\project_1780392975213\\output\\raw.obj",
+    "optimizedGlb": "E:\\VOLUMIA\\apps\\desktop\\projects\\project_1780392975213\\output\\optimized.glb",
+    "source": "E:\\VOLUMIA\\apps\\desktop\\projects\\project_1780392975213\\output\\triposr\\0\\mesh.obj",
+    "rotation": {
+      "preset": "side_to_ground",
+      "rotationXDeg": -90,
+      "rotationYDeg": 0,
+      "rotationZDeg": 0
+    },
+    "warnings": []
+  }
+}

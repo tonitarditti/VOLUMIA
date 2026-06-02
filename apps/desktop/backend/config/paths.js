@@ -9,7 +9,20 @@ const settingKeys = [
   "VOLUMIA_BLENDER",
   "VOLUMIA_TRIPOSR_DIR",
   "VOLUMIA_HUNYUAN_DIR",
+  "VOLUMIA_HUNYUAN_MODEL_PATH",
+  "VOLUMIA_HUNYUAN_SHAPE_SUBFOLDER",
+  "VOLUMIA_HUNYUAN_PAINT_SUBFOLDER",
   "VOLUMIA_MESHROOM_DIR",
+  "VOLUMIA_QUICK_ROTATION_X",
+  "VOLUMIA_QUICK_ROTATION_Y",
+  "VOLUMIA_QUICK_ROTATION_Z",
+  "VOLUMIA_HUNYUAN_ROTATION_X",
+  "VOLUMIA_HUNYUAN_ROTATION_Y",
+  "VOLUMIA_HUNYUAN_ROTATION_Z",
+  "VOLUMIA_KMP_DUPLICATE_LIB_OK",
+  "VOLUMIA_OMP_NUM_THREADS",
+  "VOLUMIA_MKL_NUM_THREADS",
+  "VOLUMIA_NUMEXPR_NUM_THREADS",
 ];
 
 function ensureDir(dirPath) {
@@ -73,6 +86,15 @@ function configuredPath(envName) {
     return null;
   }
   return path.resolve(raw);
+}
+
+function configuredNumber(envName, fallback = 0) {
+  const raw = configuredValue(envName);
+  if (!raw) {
+    return fallback;
+  }
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : fallback;
 }
 
 const defaultProjectsRoot = path.join(desktopDir, "projects");
@@ -169,32 +191,51 @@ function triposrStatus() {
 
 function hunyuanStatus() {
   const resolvedPath = configuredPath("VOLUMIA_HUNYUAN_DIR");
-  const ready = dirExists(resolvedPath);
-  return baseToolStatus(
-    "Hunyuan3D",
-    "VOLUMIA_HUNYUAN_DIR",
-    "directory",
-    resolvedPath,
-    ready,
-    ready ? "Directory found." : "Directory not found.",
-  );
+  const entrypoint = findFirstExisting(resolvedPath, [
+    "api_server.py",
+    "gradio_app.py",
+    "minimal_demo.py",
+    "run.py",
+    "app.py",
+    "main.py",
+    "infer.py",
+    "inference.py",
+    "demo.py",
+  ]);
+  const ready = dirExists(resolvedPath) && Boolean(entrypoint);
+  const details = !dirExists(resolvedPath)
+    ? "Directory not found."
+    : entrypoint
+      ? `Entrypoint found: ${path.basename(entrypoint)}`
+      : "Hunyuan3D repo entrypoint not found. This may be a checkpoints directory only.";
+  return {
+    ...baseToolStatus(
+      "Hunyuan3D",
+      "VOLUMIA_HUNYUAN_DIR",
+      "directory",
+      resolvedPath,
+      ready,
+      details,
+    ),
+    entrypoint,
+  };
 }
 
 function meshroomStatus() {
   const configured = configuredPath("VOLUMIA_MESHROOM_DIR");
   let resolvedPath = configured;
   if (configured && dirExists(configured)) {
-    const exe = findFirstExisting(configured, ["Meshroom.exe", "meshroom.exe"]);
+    const exe = findFirstExisting(configured, ["meshroom_batch.exe", "MeshroomBatch.exe", "Meshroom.exe", "meshroom.exe"]);
     resolvedPath = exe || configured;
   }
-  const ready = dirExists(configured) || fileExists(resolvedPath);
+  const ready = fileExists(resolvedPath) || Boolean(findFirstExisting(configured, ["meshroom_batch.exe", "MeshroomBatch.exe"]));
   return baseToolStatus(
     "Meshroom",
     "VOLUMIA_MESHROOM_DIR",
     "directory",
     resolvedPath,
     ready,
-    ready ? "Directory or executable found." : "Meshroom directory/executable not found.",
+    ready ? "Meshroom executable found." : "meshroom_batch.exe or Meshroom.exe not found.",
   );
 }
 
@@ -245,6 +286,7 @@ module.exports = {
   settingKeys,
   ensureDir,
   configuredPath,
+  configuredNumber,
   readLocalSettings,
   saveLocalSettings,
   getToolStatus,

@@ -169,7 +169,7 @@ export function Project() {
           </Button>
         </div>
         <div className="min-h-0 flex-1">
-          <ModelViewer modelUrl={modelUrl} />
+          <ModelViewer modelUrl={modelUrl} projectId={projectId} transformRevision={job?.finishedAt ?? null} />
         </div>
       </section>
     </main>

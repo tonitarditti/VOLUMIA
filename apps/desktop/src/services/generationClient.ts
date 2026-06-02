@@ -29,6 +29,7 @@ export type ProjectJob = {
   latestGlb?: string;
   inputFiles?: string[];
   logs?: string[];
+  finishedAt?: string | null;
 };
 
 export type ProjectPayload = {
@@ -48,7 +49,20 @@ export type ProjectStatusResponse = {
 };
 
 export type LocalSettings = Partial<Record<
-  "VOLUMIA_PYTHON" | "VOLUMIA_BLENDER" | "VOLUMIA_TRIPOSR_DIR" | "VOLUMIA_HUNYUAN_DIR" | "VOLUMIA_MESHROOM_DIR",
+  | "VOLUMIA_PYTHON"
+  | "VOLUMIA_BLENDER"
+  | "VOLUMIA_TRIPOSR_DIR"
+  | "VOLUMIA_HUNYUAN_DIR"
+  | "VOLUMIA_HUNYUAN_MODEL_PATH"
+  | "VOLUMIA_HUNYUAN_SHAPE_SUBFOLDER"
+  | "VOLUMIA_HUNYUAN_PAINT_SUBFOLDER"
+  | "VOLUMIA_MESHROOM_DIR"
+  | "VOLUMIA_QUICK_ROTATION_X"
+  | "VOLUMIA_QUICK_ROTATION_Y"
+  | "VOLUMIA_QUICK_ROTATION_Z"
+  | "VOLUMIA_HUNYUAN_ROTATION_X"
+  | "VOLUMIA_HUNYUAN_ROTATION_Y"
+  | "VOLUMIA_HUNYUAN_ROTATION_Z",
   string
 >>;
 

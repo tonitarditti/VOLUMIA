@@ -3,17 +3,66 @@ const path = require("path");
 const { spawn } = require("child_process");
 const {
   backendDir,
+  configuredNumber,
   desktopDir,
   ensureDir,
   ensureProjectLayout,
   getToolStatus,
   projectPaths,
+  readLocalSettings,
 } = require("../config/paths");
 
 const logDir = path.join(backendDir, "logs");
 const logPath = path.join(logDir, "volumia.log");
 const validModes = new Set(["demo", "quick", "textured", "photogrammetry"]);
 const glbMagic = Buffer.from([0x67, 0x6c, 0x54, 0x46]);
+const QUICK_CANONICAL_ROTATION = {
+  preset: "side_to_ground",
+  rotationXDeg: -90,
+  rotationYDeg: 0,
+  rotationZDeg: 0,
+};
+const PYTHON_OPENMP_ENV = [
+  ["KMP_DUPLICATE_LIB_OK", "VOLUMIA_KMP_DUPLICATE_LIB_OK", "TRUE"],
+  ["OMP_NUM_THREADS", "VOLUMIA_OMP_NUM_THREADS", "1"],
+  ["MKL_NUM_THREADS", "VOLUMIA_MKL_NUM_THREADS", "1"],
+  ["NUMEXPR_NUM_THREADS", "VOLUMIA_NUMEXPR_NUM_THREADS", "1"],
+];
+
+function configuredRotation(prefix, fallback) {
+  return {
+    preset: "settings",
+    rotationXDeg: configuredNumber(`${prefix}_X`, fallback.rotationXDeg),
+    rotationYDeg: configuredNumber(`${prefix}_Y`, fallback.rotationYDeg),
+    rotationZDeg: configuredNumber(`${prefix}_Z`, fallback.rotationZDeg),
+  };
+}
+
+function pythonGenerationEnv(extraEnv = {}) {
+  const localSettings = readLocalSettings();
+  const env = {};
+
+  // Windows/Conda workaround: TripoSR/Hunyuan can load duplicate OpenMP runtimes
+  // through torch, numpy, MKL or Intel libraries. Keep this scoped to Python
+  // generation processes instead of applying it to the whole Electron app.
+  for (const [targetKey, settingKey, fallback] of PYTHON_OPENMP_ENV) {
+    env[targetKey] =
+      process.env[settingKey] ??
+      localSettings[settingKey] ??
+      process.env[targetKey] ??
+      localSettings[targetKey] ??
+      fallback;
+  }
+
+  return { ...env, ...extraEnv };
+}
+
+function appendPythonEnvLogs(projectId, label, env) {
+  appendJobLog(projectId, `[${label}] spawning python with OpenMP compatibility env`);
+  for (const [targetKey] of PYTHON_OPENMP_ENV) {
+    appendJobLog(projectId, `[python-env] ${targetKey}=${env[targetKey]}`);
+  }
+}
 
 function nowIso() {
   return new Date().toISOString();
@@ -132,7 +181,7 @@ function spawnProcess(command, args, options = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       cwd: options.cwd,
-      env: { ...process.env, ...(options.env || {}) },
+      env: { ...process.env, ...readLocalSettings(), ...(options.env || {}) },
       shell: false,
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],
@@ -176,10 +225,20 @@ async function runDemo(projectId) {
   };
 }
 
-async function runBlenderOptimize(projectId, sourcePath) {
+async function runBlenderOptimize(projectId, sourcePath, options = {}) {
   const tools = getToolStatus();
   const paths = ensureProjectLayout(projectId);
+  const rotation = options.rotation || null;
+  const hasCanonicalRotation = Boolean(
+    rotation &&
+      (Math.abs(rotation.rotationXDeg || 0) > 0.0001 ||
+        Math.abs(rotation.rotationYDeg || 0) > 0.0001 ||
+        Math.abs(rotation.rotationZDeg || 0) > 0.0001)
+  );
   if (!tools.blender.exists) {
+    if (hasCanonicalRotation) {
+      throw new Error("Blender no configurado: se necesita para rotar el mesh antes del GLB final.");
+    }
     if (path.extname(sourcePath).toLowerCase() === ".glb" && isValidGlb(sourcePath)) {
       fs.copyFileSync(sourcePath, paths.latestGlb);
       return {
@@ -192,8 +251,14 @@ async function runBlenderOptimize(projectId, sourcePath) {
 
   writeJob(projectId, { status: "optimizing", message: "Optimizando y exportando con Blender..." });
   appendJobLog(projectId, `Blender optimize: ${sourcePath}`);
+  if (hasCanonicalRotation) {
+    appendJobLog(
+      projectId,
+      `Canonical mesh rotation before bake/export (${rotation.preset || "custom"}): X=${rotation.rotationXDeg} Y=${rotation.rotationYDeg} Z=${rotation.rotationZDeg}`
+    );
+  }
   const optimizedGlb = path.join(paths.output, "optimized.glb");
-  await spawnProcess(tools.blender.path, [
+  const blenderArgs = [
     "--background",
     "--python",
     path.join(backendDir, "tools", "blender_optimize.py"),
@@ -202,14 +267,25 @@ async function runBlenderOptimize(projectId, sourcePath) {
     sourcePath,
     "--output",
     optimizedGlb,
-  ], {
+  ];
+  if (hasCanonicalRotation) {
+    blenderArgs.push(
+      "--rotation-x-deg",
+      String(rotation.rotationXDeg || 0),
+      "--rotation-y-deg",
+      String(rotation.rotationYDeg || 0),
+      "--rotation-z-deg",
+      String(rotation.rotationZDeg || 0)
+    );
+  }
+  await spawnProcess(tools.blender.path, blenderArgs, {
     onOutput: (chunk) => appendJobLog(projectId, chunk.trim()),
   });
   if (!isValidGlb(optimizedGlb)) {
     throw new Error("Blender termino, pero output/optimized.glb no es un GLB valido.");
   }
   fs.copyFileSync(optimizedGlb, paths.latestGlb);
-  return { latestGlb: paths.latestGlb, optimizedGlb, warnings: [] };
+  return { latestGlb: paths.latestGlb, optimizedGlb, rotation, warnings: [] };
 }
 
 async function runQuick(projectId, inputFiles) {
@@ -229,6 +305,8 @@ async function runQuick(projectId, inputFiles) {
   fs.rmSync(triposrOutput, { recursive: true, force: true });
   ensureDir(triposrOutput);
   writeJob(projectId, { status: "running", message: "Ejecutando TripoSR..." });
+  const pythonEnv = pythonGenerationEnv();
+  appendPythonEnvLogs(projectId, "triposr", pythonEnv);
   try {
     await spawnProcess(tools.python.path, [
       path.join(backendDir, "tools", "triposr_runner.py"),
@@ -240,6 +318,7 @@ async function runQuick(projectId, inputFiles) {
       triposrOutput,
     ], {
       cwd: tools.triposr.path,
+      env: pythonEnv,
       onOutput: (chunk) => appendJobLog(projectId, chunk.trim()),
     });
   } catch (error) {
@@ -252,12 +331,15 @@ async function runQuick(projectId, inputFiles) {
     throw new Error("El runner no generó modelo.");
   }
   const raw = copyRawOutput(projectId, generated);
-  const optimized = await runBlenderOptimize(projectId, raw);
+  const optimized = await runBlenderOptimize(projectId, raw, {
+    rotation: configuredRotation("VOLUMIA_QUICK_ROTATION", QUICK_CANONICAL_ROTATION),
+  });
   return {
     latestGlb: optimized.latestGlb,
     raw,
     optimizedGlb: optimized.optimizedGlb,
     source: generated,
+    rotation: optimized.rotation,
     warnings: optimized.warnings,
   };
 }
@@ -274,6 +356,11 @@ async function runTextured(projectId, inputFiles) {
     throw new Error("No se encontró imagen de entrada.");
   }
   const paths = ensureProjectLayout(projectId);
+  const hunyuanOutput = path.join(paths.output, "hunyuan");
+  fs.rmSync(hunyuanOutput, { recursive: true, force: true });
+  ensureDir(hunyuanOutput);
+  const pythonEnv = pythonGenerationEnv();
+  appendPythonEnvLogs(projectId, "hunyuan", pythonEnv);
   await spawnProcess(tools.python.path, [
     path.join(backendDir, "tools", "hunyuan_runner.py"),
     "--hunyuan-dir",
@@ -281,21 +368,40 @@ async function runTextured(projectId, inputFiles) {
     "--input",
     inputFiles[0],
     "--output-dir",
-    paths.output,
+    hunyuanOutput,
   ], {
     cwd: tools.hunyuan.path,
+    env: pythonEnv,
     onOutput: (chunk) => appendJobLog(projectId, chunk.trim()),
   });
-  const generated = latestGeneratedAsset(paths.output);
+  const generated = latestGeneratedAsset(hunyuanOutput);
   if (!generated) {
     throw new Error("El runner no generó modelo.");
   }
   const raw = copyRawOutput(projectId, generated);
-  return await runBlenderOptimize(projectId, raw);
+  const optimized = await runBlenderOptimize(projectId, raw, {
+    rotation: configuredRotation("VOLUMIA_HUNYUAN_ROTATION", {
+      preset: "hunyuan_default",
+      rotationXDeg: 0,
+      rotationYDeg: 0,
+      rotationZDeg: 0,
+    }),
+  });
+  return {
+    latestGlb: optimized.latestGlb,
+    raw,
+    optimizedGlb: optimized.optimizedGlb,
+    source: generated,
+    rotation: optimized.rotation,
+    warnings: optimized.warnings,
+  };
 }
 
 async function runPhotogrammetry(projectId, inputFiles) {
   const tools = getToolStatus();
+  if (!tools.python.exists) {
+    throw new Error("Python no configurado: define VOLUMIA_PYTHON.");
+  }
   if (!tools.meshroom.exists) {
     throw new Error("Meshroom no configurado: define VOLUMIA_MESHROOM_DIR.");
   }
@@ -303,7 +409,9 @@ async function runPhotogrammetry(projectId, inputFiles) {
     throw new Error("El modo photogrammetry requiere multiples imagenes.");
   }
   const paths = ensureProjectLayout(projectId);
-  await spawnProcess(process.env.VOLUMIA_PYTHON || "python", [
+  const pythonEnv = pythonGenerationEnv();
+  appendPythonEnvLogs(projectId, "meshroom", pythonEnv);
+  await spawnProcess(tools.python.path, [
     path.join(backendDir, "tools", "meshroom_runner.py"),
     "--meshroom-dir",
     tools.meshroom.path,
@@ -313,6 +421,7 @@ async function runPhotogrammetry(projectId, inputFiles) {
     paths.output,
   ], {
     cwd: tools.meshroom.path,
+    env: pythonEnv,
     onOutput: (chunk) => appendJobLog(projectId, chunk.trim()),
   });
   const generated = latestGeneratedAsset(paths.output);

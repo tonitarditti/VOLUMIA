@@ -29,9 +29,57 @@ const fields: Array<{ key: keyof LocalSettings; label: string; placeholder: stri
     placeholder: "E:\\AI\\Hunyuan3D-2.1",
   },
   {
+    key: "VOLUMIA_HUNYUAN_MODEL_PATH",
+    label: "Hunyuan model path",
+    placeholder: "tencent/Hunyuan3D-2",
+  },
+  {
+    key: "VOLUMIA_HUNYUAN_SHAPE_SUBFOLDER",
+    label: "Hunyuan shape subfolder",
+    placeholder: "hunyuan3d-dit-v2-0",
+  },
+  {
+    key: "VOLUMIA_HUNYUAN_PAINT_SUBFOLDER",
+    label: "Hunyuan paint subfolder",
+    placeholder: "hunyuan3d-paint-v2-0-turbo",
+  },
+  {
     key: "VOLUMIA_MESHROOM_DIR",
     label: "Meshroom",
     placeholder: "E:\\AI\\Meshroom",
+  },
+];
+
+const rotationFields: Array<{ key: keyof LocalSettings; label: string; placeholder: string }> = [
+  {
+    key: "VOLUMIA_QUICK_ROTATION_X",
+    label: "Quick X grados",
+    placeholder: "0",
+  },
+  {
+    key: "VOLUMIA_QUICK_ROTATION_Y",
+    label: "Quick Y grados",
+    placeholder: "90",
+  },
+  {
+    key: "VOLUMIA_QUICK_ROTATION_Z",
+    label: "Quick Z grados",
+    placeholder: "0",
+  },
+  {
+    key: "VOLUMIA_HUNYUAN_ROTATION_X",
+    label: "Hunyuan X grados",
+    placeholder: "0",
+  },
+  {
+    key: "VOLUMIA_HUNYUAN_ROTATION_Y",
+    label: "Hunyuan Y grados",
+    placeholder: "0",
+  },
+  {
+    key: "VOLUMIA_HUNYUAN_ROTATION_Z",
+    label: "Hunyuan Z grados",
+    placeholder: "0",
   },
 ];
 
@@ -41,7 +89,16 @@ function emptySettings(): LocalSettings {
     VOLUMIA_BLENDER: "",
     VOLUMIA_TRIPOSR_DIR: "",
     VOLUMIA_HUNYUAN_DIR: "",
+    VOLUMIA_HUNYUAN_MODEL_PATH: "tencent/Hunyuan3D-2",
+    VOLUMIA_HUNYUAN_SHAPE_SUBFOLDER: "hunyuan3d-dit-v2-0",
+    VOLUMIA_HUNYUAN_PAINT_SUBFOLDER: "hunyuan3d-paint-v2-0-turbo",
     VOLUMIA_MESHROOM_DIR: "",
+    VOLUMIA_QUICK_ROTATION_X: "0",
+    VOLUMIA_QUICK_ROTATION_Y: "90",
+    VOLUMIA_QUICK_ROTATION_Z: "0",
+    VOLUMIA_HUNYUAN_ROTATION_X: "0",
+    VOLUMIA_HUNYUAN_ROTATION_Y: "0",
+    VOLUMIA_HUNYUAN_ROTATION_Z: "0",
   };
 }
 
@@ -67,6 +124,9 @@ export function Settings() {
     const next = emptySettings();
     for (const field of fields) {
       next[field.key] = response.settings[field.key] ?? fieldFromTools(field.key, response.tools);
+    }
+    for (const field of rotationFields) {
+      next[field.key] = response.settings[field.key] ?? next[field.key] ?? "";
     }
     setForm(next);
   };
@@ -156,6 +216,32 @@ export function Settings() {
             ))}
           </div>
           {message ? <p className="mt-4 text-sm text-[var(--text-muted)]">{message}</p> : null}
+        </section>
+
+        <section className="mt-5 rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface-1)] p-5">
+          <h2 className="text-sm font-medium text-[var(--text)]">Orientacion del pipeline</h2>
+          <p className="mt-1 text-xs text-[var(--text-muted)]">
+            Estos grados se aplican en Blender antes de exportar el GLB final.
+          </p>
+          <div className="mt-5 grid gap-4 md:grid-cols-3">
+            {rotationFields.map((field) => (
+              <label key={field.key} className="grid gap-2">
+                <span className="text-xs font-medium text-[var(--text-muted)]">{field.label}</span>
+                <input
+                  value={form[field.key] ?? ""}
+                  placeholder={field.placeholder}
+                  inputMode="decimal"
+                  onChange={(event) =>
+                    setForm((current) => ({
+                      ...current,
+                      [field.key]: event.target.value,
+                    }))
+                  }
+                  className="h-10 rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--surface-2)] px-3 text-sm text-[var(--text)] placeholder:text-[var(--text-faint)]"
+                />
+              </label>
+            ))}
+          </div>
         </section>
 
         <section className="mt-5 rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface-1)] p-5">
