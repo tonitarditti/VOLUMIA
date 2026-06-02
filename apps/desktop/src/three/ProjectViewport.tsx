@@ -1079,6 +1079,112 @@ function normalizeAndStabilizeModel(
   };
 }
 
+function normalizeModelToScene(root: THREE.Object3D, options: NormalizeAndStabilizeOptions): ModelStabilizationResult | null {
+  // Normalize position and scale but preserve user rotation
+  root.updateMatrixWorld(true);
+  const stripResult = hideLikelyEmbeddedBaseMeshes(root);
+  let bbox = computeVisibleBoundingBox(root);
+  if (!bbox || bbox.isEmpty()) {
+    return null;
+  }
+
+  const preScaleSize = bbox.getSize(new THREE.Vector3());
+  const preScaleDiagonal = preScaleSize.length();
+  let scaleApplied = 1;
+  const isScaleClearlyWrong =
+    preScaleDiagonal > 0 && (preScaleDiagonal < 0.02 || preScaleDiagonal > 200);
+  if (isScaleClearlyWrong) {
+    scaleApplied = THREE.MathUtils.clamp(
+      TARGET_MODEL_DIAGONAL / preScaleDiagonal,
+      0.001,
+      1000,
+    );
+    root.scale.multiplyScalar(scaleApplied);
+    root.updateMatrixWorld(true);
+    bbox = computeVisibleBoundingBox(root);
+    if (!bbox || bbox.isEmpty()) {
+      return null;
+    }
+  }
+
+  const center = bbox.getCenter(new THREE.Vector3());
+  // move object so its center is at origin (preserve rotation)
+  root.position.x -= center.x;
+  root.position.y -= center.y;
+  root.position.z -= center.z;
+  root.updateMatrixWorld(true);
+
+  const groundedBox = computeVisibleBoundingBox(root);
+  if (!groundedBox || groundedBox.isEmpty()) {
+    return null;
+  }
+
+  const groundedSize = groundedBox.getSize(new THREE.Vector3());
+  const radius = Math.max(groundedSize.length() * 0.5, 0.001);
+  const epsilonLift = Math.max(0.001, radius * 0.001);
+  const targetMinY = options.floorY + epsilonLift;
+  const minYBefore = groundedBox.min.y;
+  let minYTranslation = targetMinY - groundedBox.min.y;
+  if (Math.abs(minYTranslation) > MODEL_GROUND_TOLERANCE) {
+    root.position.y += minYTranslation;
+    root.updateMatrixWorld(true);
+  } else {
+    minYTranslation = 0;
+  }
+
+  let finalBox = computeVisibleBoundingBox(root);
+  if (!finalBox || finalBox.isEmpty()) {
+    return null;
+  }
+
+  const material = applyModelVisualSettings({ object: root, options: {
+    envMapIntensity: options.envMapIntensity,
+    wireframe: options.wireframe,
+    polygonOffset: options.forcePolygonOffsetAllMeshes || false,
+    fallbackMaterialColor: options.fallbackMaterialColor,
+    textureStatus: options.textureStatus,
+    textureValidation: options.textureValidation,
+  } });
+
+  const finalSize = finalBox.getSize(new THREE.Vector3());
+  const minYAfter = finalBox.min.y;
+  const diagonal = finalSize.length();
+  if (options.debugRender) {
+    console.debug("[ProjectViewport][normalizeModelToScene]", {
+      bbox: { x: finalSize.x, y: finalSize.y, z: finalSize.z },
+      radius,
+      diagonal,
+      epsilonLift,
+      scaleApplied,
+      minYBefore,
+      minYAfter,
+      minYTranslation,
+      coplanar: analyzeCoplanarRisk(root),
+      material,
+      polygonOffsetEngaged: options.forcePolygonOffsetAllMeshes,
+      removedBaseMeshes: stripResult.removed,
+    });
+  }
+
+  return {
+    bboxSize: finalSize,
+    minYTranslation,
+    minYBefore,
+    minYAfter,
+    centeredX: center.x,
+    centeredZ: center.z,
+    radius,
+    diagonal,
+    epsilonLift,
+    scaleApplied,
+    removedBaseMeshes: stripResult.removed,
+    coplanar: analyzeCoplanarRisk(root),
+    material,
+    polygonOffsetEngaged: options.forcePolygonOffsetAllMeshes,
+    viewerPolicy: material.policy,
+  };
+}
+
 function LoadedModel({
   glbPath,
   glbVersion,
@@ -2079,6 +2185,165 @@ export function ProjectViewport({
     emitCameraTelemetry();
   }, [emitCameraTelemetry]);
 
+  const rotateModel = useCallback((axis: "x" | "y" | "z", angleDeg: number) => {
+    const model = loadedModelRef.current;
+    if (!model) {
+      return;
+    }
+    const angle = THREE.MathUtils.degToRad(angleDeg);
+    console.info("[VOLUMIA][viewer] manual-rotate", { axis, angleDeg });
+    if (axis === "x") {
+      model.rotateX(angle);
+    } else if (axis === "y") {
+      model.rotateY(angle);
+    } else {
+      model.rotateZ(angle);
+    }
+
+    // Recenter/ground preserving rotation
+    const stabilization = normalizeModelToScene(model, {
+      floorY: FLOOR_Y,
+      envMapIntensity: themeConfig.envMapIntensity,
+      fallbackMaterialColor: themeConfig.fallbackMaterialColor,
+      wireframe,
+      debugRender: debugRenderEnabled,
+      forcePolygonOffsetAllMeshes: DEV_POLY_OFFSET_ALL_MESHES,
+      textureStatus,
+      textureValidation,
+    });
+    if (stabilization) {
+      setModelNormalizationDebug({
+        bboxSize: { x: stabilization.bboxSize.x, y: stabilization.bboxSize.y, z: stabilization.bboxSize.z },
+        minYTranslation: stabilization.minYTranslation,
+        minYBefore: stabilization.minYBefore,
+        minYAfter: stabilization.minYAfter,
+        centeredX: stabilization.centeredX,
+        centeredZ: stabilization.centeredZ,
+      });
+      setModelStats(collectModelViewportStats(model));
+      invalidateRef.current?.();
+    }
+  }, [themeConfig.envMapIntensity, themeConfig.fallbackMaterialColor, wireframe, debugRenderEnabled, textureStatus, textureValidation]);
+
+  const handleResetOrientation = useCallback(() => {
+    const model = loadedModelRef.current;
+    if (!model) return;
+    model.rotation.set(0, 0, 0);
+    console.info("[VOLUMIA][viewer] reset-orientation");
+    // recentre and ground
+    const stabilization = normalizeModelToScene(model, {
+      floorY: FLOOR_Y,
+      envMapIntensity: themeConfig.envMapIntensity,
+      fallbackMaterialColor: themeConfig.fallbackMaterialColor,
+      wireframe,
+      debugRender: debugRenderEnabled,
+      forcePolygonOffsetAllMeshes: DEV_POLY_OFFSET_ALL_MESHES,
+      textureStatus,
+      textureValidation,
+    });
+    if (stabilization) {
+      setModelNormalizationDebug({
+        bboxSize: { x: stabilization.bboxSize.x, y: stabilization.bboxSize.y, z: stabilization.bboxSize.z },
+        minYTranslation: stabilization.minYTranslation,
+        minYBefore: stabilization.minYBefore,
+        minYAfter: stabilization.minYAfter,
+        centeredX: stabilization.centeredX,
+        centeredZ: stabilization.centeredZ,
+      });
+      setModelStats(collectModelViewportStats(model));
+      invalidateRef.current?.();
+    }
+  }, [themeConfig.envMapIntensity, themeConfig.fallbackMaterialColor, wireframe, debugRenderEnabled, textureStatus, textureValidation]);
+
+  const handleRecenter = useCallback(() => {
+    const model = loadedModelRef.current;
+    if (!model) return;
+    console.info("[VOLUMIA][viewer] recentering model");
+    const stabilization = normalizeModelToScene(model, {
+      floorY: FLOOR_Y,
+      envMapIntensity: themeConfig.envMapIntensity,
+      fallbackMaterialColor: themeConfig.fallbackMaterialColor,
+      wireframe,
+      debugRender: debugRenderEnabled,
+      forcePolygonOffsetAllMeshes: DEV_POLY_OFFSET_ALL_MESHES,
+      textureStatus,
+      textureValidation,
+    });
+    if (stabilization) {
+      setModelNormalizationDebug({
+        bboxSize: { x: stabilization.bboxSize.x, y: stabilization.bboxSize.y, z: stabilization.bboxSize.z },
+        minYTranslation: stabilization.minYTranslation,
+        minYBefore: stabilization.minYBefore,
+        minYAfter: stabilization.minYAfter,
+        centeredX: stabilization.centeredX,
+        centeredZ: stabilization.centeredZ,
+      });
+      setModelStats(collectModelViewportStats(model));
+      invalidateRef.current?.();
+    }
+  }, [themeConfig.envMapIntensity, themeConfig.fallbackMaterialColor, wireframe, debugRenderEnabled, textureStatus, textureValidation]);
+
+  const handleAutoOrient = useCallback(() => {
+    const model = loadedModelRef.current;
+    if (!model) return;
+    model.updateMatrixWorld(true);
+    const before = computeVisibleBoundingBox(model);
+    if (!before) return;
+    console.info('[auto-orient] bbox before', before.getSize(new THREE.Vector3()));
+    const size = before.getSize(new THREE.Vector3());
+    const maxAxis = Math.max(size.x, size.y, size.z);
+    let applied = null as string | null;
+    // If height is not the largest axis, try to rotate so largest becomes Y
+    if (size.y < 0.9 * maxAxis) {
+      if (size.x >= size.z) {
+        // rotate around Z so X -> Y
+        model.rotateZ(THREE.MathUtils.degToRad(90));
+        applied = 'rotateZ+90';
+      } else {
+        // rotate around X so Z -> Y
+        model.rotateX(THREE.MathUtils.degToRad(-90));
+        applied = 'rotateX-90';
+      }
+      model.updateMatrixWorld(true);
+      const after = computeVisibleBoundingBox(model);
+      console.info('[auto-orient] rotation applied', applied);
+      console.info('[auto-orient] bbox after', after ? after.getSize(new THREE.Vector3()) : null);
+      // If after is worse (height decreased), revert
+      if (after) {
+        const afterSize = after.getSize(new THREE.Vector3());
+        if (afterSize.y < size.y * 0.9) {
+          // revert
+          if (applied === 'rotateZ+90') model.rotateZ(THREE.MathUtils.degToRad(-90));
+          if (applied === 'rotateX-90') model.rotateX(THREE.MathUtils.degToRad(90));
+          model.updateMatrixWorld(true);
+          console.info('[auto-orient] revert rotation, not beneficial');
+        } else {
+          // accept and recenter
+          const stabilization = normalizeModelToScene(model, {
+            floorY: FLOOR_Y,
+            envMapIntensity: themeConfig.envMapIntensity,
+            fallbackMaterialColor: themeConfig.fallbackMaterialColor,
+            wireframe,
+            debugRender: debugRenderEnabled,
+            forcePolygonOffsetAllMeshes: DEV_POLY_OFFSET_ALL_MESHES,
+            textureStatus,
+            textureValidation,
+          });
+          setModelNormalizationDebug(stabilization ? {
+            bboxSize: { x: stabilization.bboxSize.x, y: stabilization.bboxSize.y, z: stabilization.bboxSize.z },
+            minYTranslation: stabilization.minYTranslation,
+            minYBefore: stabilization.minYBefore,
+            minYAfter: stabilization.minYAfter,
+            centeredX: stabilization.centeredX,
+            centeredZ: stabilization.centeredZ,
+          } : null);
+          setModelStats(collectModelViewportStats(model));
+          invalidateRef.current?.();
+        }
+      }
+    }
+  }, [themeConfig.envMapIntensity, themeConfig.fallbackMaterialColor, wireframe, debugRenderEnabled, textureStatus, textureValidation]);
+
   const handleScreenshot = useCallback(() => {
     const renderer = rendererRef.current;
     if (!renderer) {
@@ -2448,6 +2713,73 @@ export function ProjectViewport({
                   >
                     Reset View
                   </button>
+                  <button
+                    type="button"
+                    onClick={() => rotateModel("x", 90)}
+                    className={utilityButtonBaseClass}
+                  >
+                    Rot X +90
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => rotateModel("x", -90)}
+                    className={utilityButtonBaseClass}
+                  >
+                    Rot X -90
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => rotateModel("y", 90)}
+                    className={utilityButtonBaseClass}
+                  >
+                    Rot Y +90
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => rotateModel("y", -90)}
+                    className={utilityButtonBaseClass}
+                  >
+                    Rot Y -90
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => rotateModel("z", 90)}
+                    className={utilityButtonBaseClass}
+                  >
+                    Rot Z +90
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => rotateModel("z", -90)}
+                    className={utilityButtonBaseClass}
+                  >
+                    Rot Z -90
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleResetOrientation}
+                    className={utilityButtonBaseClass}
+                  >
+                    Reset Ori
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleRecenter}
+                    className={utilityButtonBaseClass}
+                  >
+                    Recenter
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleAutoOrient}
+                    className={utilityButtonBaseClass}
+                  >
+                    Auto Orient
+                  </button>
+
                   <button
                     type="button"
                     onClick={handleToggleWireframe}
