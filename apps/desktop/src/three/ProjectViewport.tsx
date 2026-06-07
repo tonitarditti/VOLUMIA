@@ -4,6 +4,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type MutableRefObject,
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
@@ -34,6 +35,7 @@ type ViewportSize = {
 
 type FrameLimiterProps = {
   fpsLimit: 30 | 60 | 120;
+  isInteractingRef: MutableRefObject<boolean>;
 };
 
 type ViewportResizeSyncProps = {
@@ -173,6 +175,25 @@ type MaterialStabilityStats = {
   hasValidUv: boolean;
 };
 
+type ModelMaterialEntry = {
+  mesh: THREE.Mesh;
+  materials: THREE.Material[];
+};
+
+type MaterialVisualSettingsOptions = {
+  envMapIntensity: number;
+  wireframe: boolean;
+  polygonOffset: boolean;
+  fallbackMaterialColor: string;
+  textureStatus?: ProjectTextureStatus;
+  textureValidation?: ProjectTextureValidation;
+};
+
+type MaterialRuntimeSettingsOptions = Pick<
+  MaterialVisualSettingsOptions,
+  "envMapIntensity" | "wireframe" | "polygonOffset"
+>;
+
 type ModelStabilizationResult = {
   bboxSize: THREE.Vector3;
   minYTranslation: number;
@@ -187,6 +208,7 @@ type ModelStabilizationResult = {
   removedBaseMeshes: number;
   coplanar: CoplanarHeuristicStats;
   material: MaterialStabilityStats;
+  materialEntries: ModelMaterialEntry[];
   polygonOffsetEngaged: boolean;
   viewerPolicy: ViewerMaterialPolicyResult;
 };
@@ -540,6 +562,32 @@ function resolveFitKey(
   return "";
 }
 
+function resolveMaterialPolicyKey({
+  fallbackMaterialColor,
+  textureStatus,
+  textureValidation,
+}: {
+  fallbackMaterialColor: string;
+  textureStatus?: ProjectTextureStatus;
+  textureValidation?: ProjectTextureValidation;
+}) {
+  return JSON.stringify({
+    fallbackMaterialColor,
+    textureStatus: textureStatus ?? null,
+    textureValidation: textureValidation
+      ? {
+          ok: textureValidation.ok,
+          hasMaterials: textureValidation.hasMaterials,
+          hasImages: textureValidation.hasImages,
+          hasTextures: textureValidation.hasTextures,
+          hasMaterialTextureBinding:
+            textureValidation.hasMaterialTextureBinding,
+          reason: textureValidation.reason ?? null,
+        }
+      : null,
+  });
+}
+
 function deriveCameraPlanes(radius: number) {
   const safeRadius = Math.max(radius, 0.01);
   return {
@@ -655,18 +703,113 @@ function analyzeCoplanarRisk(root: THREE.Object3D): CoplanarHeuristicStats {
   };
 }
 
-function applyModelVisualSettings(
-{ object, options }: {
-  object: THREE.Object3D; options: {
-    envMapIntensity: number;
-    wireframe: boolean;
-    polygonOffset: boolean;
-    fallbackMaterialColor: string;
-    textureStatus?: ProjectTextureStatus;
-    textureValidation?: ProjectTextureValidation;
+function applyRuntimeMaterialSettings(
+  mesh: THREE.Mesh,
+  material: THREE.Material,
+  options: MaterialRuntimeSettingsOptions,
+  stats: MaterialStabilityStats,
+) {
+  if (material instanceof THREE.MeshStandardMaterial) {
+    material.envMapIntensity = options.envMapIntensity;
+  }
+
+  if ("wireframe" in material) {
+    const wireframeMaterial = material as THREE.Material & {
+      wireframe?: boolean;
+    };
+    if (typeof wireframeMaterial.wireframe === "boolean") {
+      wireframeMaterial.wireframe = options.wireframe;
+    }
+  }
+
+  const alphaMaterial = material as THREE.Material & {
+    transparent?: boolean;
+    opacity?: number;
+    depthWrite?: boolean;
+    depthTest?: boolean;
+    polygonOffset?: boolean;
+    polygonOffsetFactor?: number;
+    polygonOffsetUnits?: number;
   };
-},
-): MaterialStabilityStats & { policy: ViewerMaterialPolicyResult } {
+  const opacity =
+    typeof alphaMaterial.opacity === "number" ? alphaMaterial.opacity : 1;
+  const wasTransparent = alphaMaterial.transparent === true;
+  if (wasTransparent) {
+    stats.transparentMaterials += 1;
+  }
+  if (wasTransparent && opacity >= 0.99) {
+    alphaMaterial.transparent = false;
+    alphaMaterial.opacity = 1;
+    stats.forcedOpaqueMaterials += 1;
+  }
+
+  const isTranslucent =
+    alphaMaterial.transparent === true && (alphaMaterial.opacity ?? 1) < 0.99;
+  if (isTranslucent) {
+    stats.translucentMaterials += 1;
+  }
+  alphaMaterial.depthTest = true;
+  alphaMaterial.depthWrite = !isTranslucent;
+
+  const shouldOffsetMaterial = options.polygonOffset || isTranslucent;
+  alphaMaterial.polygonOffset = shouldOffsetMaterial;
+  alphaMaterial.polygonOffsetFactor = shouldOffsetMaterial ? 1 : 0;
+  alphaMaterial.polygonOffsetUnits = shouldOffsetMaterial ? 1 : 0;
+  if (shouldOffsetMaterial) {
+    stats.polygonOffsetMaterials += 1;
+  }
+
+  if (isTranslucent) {
+    mesh.renderOrder = Math.max(mesh.renderOrder, 1);
+  }
+  material.needsUpdate = true;
+}
+
+function createEmptyMaterialStabilityStats(
+  policy: ViewerMaterialPolicyResult,
+): MaterialStabilityStats {
+  return {
+    totalMaterials: 0,
+    transparentMaterials: 0,
+    forcedOpaqueMaterials: 0,
+    translucentMaterials: 0,
+    polygonOffsetMaterials: 0,
+    invalidMaterialsReplaced: policy.replacedMaterialCount,
+    fallbackClayApplied: policy.fallbackApplied,
+    missingNormalsFixed: policy.missingNormalCount,
+    renderState: policy.renderState,
+    hasTextureMaps: policy.hasTextureMaps,
+    hasValidUv: policy.hasValidUv,
+  };
+}
+
+function applyCachedModelVisualSettings(
+  materialEntries: ModelMaterialEntry[],
+  options: MaterialRuntimeSettingsOptions,
+  policy: ViewerMaterialPolicyResult,
+): MaterialStabilityStats {
+  const stats = createEmptyMaterialStabilityStats(policy);
+  for (const entry of materialEntries) {
+    entry.mesh.castShadow = true;
+    entry.mesh.receiveShadow = true;
+    for (const material of entry.materials) {
+      stats.totalMaterials += 1;
+      applyRuntimeMaterialSettings(entry.mesh, material, options, stats);
+    }
+  }
+  return stats;
+}
+
+function applyModelVisualSettings({
+  object,
+  options,
+}: {
+  object: THREE.Object3D;
+  options: MaterialVisualSettingsOptions;
+}): MaterialStabilityStats & {
+  policy: ViewerMaterialPolicyResult;
+  materialEntries: ModelMaterialEntry[];
+} {
   const policy = evaluateViewerMaterialPolicy(object, {
     textureStatus: options.textureStatus,
     textureValidation: options.textureValidation,
@@ -695,19 +838,8 @@ function applyModelVisualSettings(
     });
   }
 
-  const stats: MaterialStabilityStats = {
-    totalMaterials: 0,
-    transparentMaterials: 0,
-    forcedOpaqueMaterials: 0,
-    translucentMaterials: 0,
-    polygonOffsetMaterials: 0,
-    invalidMaterialsReplaced: policy.replacedMaterialCount,
-    fallbackClayApplied: policy.fallbackApplied,
-    missingNormalsFixed: policy.missingNormalCount,
-    renderState: policy.renderState,
-    hasTextureMaps: policy.hasTextureMaps,
-    hasValidUv: policy.hasValidUv,
-  };
+  const stats = createEmptyMaterialStabilityStats(policy);
+  const materialEntries: ModelMaterialEntry[] = [];
 
   object.traverse((child) => {
     if (!(child instanceof THREE.Mesh)) {
@@ -801,73 +933,26 @@ function applyModelVisualSettings(
       child.material = normalizedMaterials[0]!;
     }
 
-    for (const material of normalizedMaterials) {
-      if (!material) {
-        continue;
-      }
+    const activeMaterials = Array.isArray(child.material)
+      ? child.material
+      : [child.material];
+    const materials = activeMaterials.filter(
+      (material): material is THREE.Material => Boolean(material),
+    );
+    if (materials.length > 0) {
+      materialEntries.push({ mesh: child, materials });
+    }
+
+    for (const material of materials) {
       stats.totalMaterials += 1;
-
-      if (material instanceof THREE.MeshStandardMaterial) {
-        material.envMapIntensity = options.envMapIntensity;
-      }
-
-      if ("wireframe" in material) {
-        const wireframeMaterial = material as THREE.Material & {
-          wireframe?: boolean;
-        };
-        if (typeof wireframeMaterial.wireframe === "boolean") {
-          wireframeMaterial.wireframe = options.wireframe;
-        }
-      }
-
-      const alphaMaterial = material as THREE.Material & {
-        transparent?: boolean;
-        opacity?: number;
-        depthWrite?: boolean;
-        depthTest?: boolean;
-        polygonOffset?: boolean;
-        polygonOffsetFactor?: number;
-        polygonOffsetUnits?: number;
-      };
-      const opacity =
-        typeof alphaMaterial.opacity === "number" ? alphaMaterial.opacity : 1;
-      const wasTransparent = alphaMaterial.transparent === true;
-      if (wasTransparent) {
-        stats.transparentMaterials += 1;
-      }
-      if (wasTransparent && opacity >= 0.99) {
-        alphaMaterial.transparent = false;
-        alphaMaterial.opacity = 1;
-        stats.forcedOpaqueMaterials += 1;
-      }
-
-      const isTranslucent =
-        alphaMaterial.transparent === true &&
-        (alphaMaterial.opacity ?? 1) < 0.99;
-      if (isTranslucent) {
-        stats.translucentMaterials += 1;
-      }
-      alphaMaterial.depthTest = true;
-      alphaMaterial.depthWrite = !isTranslucent;
-
-      const shouldOffsetMaterial = options.polygonOffset || isTranslucent;
-      alphaMaterial.polygonOffset = shouldOffsetMaterial;
-      alphaMaterial.polygonOffsetFactor = shouldOffsetMaterial ? 1 : 0;
-      alphaMaterial.polygonOffsetUnits = shouldOffsetMaterial ? 1 : 0;
-      if (shouldOffsetMaterial) {
-        stats.polygonOffsetMaterials += 1;
-      }
-
-      if (isTranslucent) {
-        child.renderOrder = Math.max(child.renderOrder, 1);
-      }
-      material.needsUpdate = true;
+      applyRuntimeMaterialSettings(child, material, options, stats);
     }
   });
 
   return {
     ...stats,
     policy,
+    materialEntries,
   };
 }
 
@@ -1029,15 +1114,16 @@ function normalizeAndStabilizeModel(
   const polygonOffsetEngaged =
     options.forcePolygonOffsetAllMeshes || coplanar.suspicious;
   const material = applyModelVisualSettings({
-      object: root, options: {
-        envMapIntensity: options.envMapIntensity,
-        wireframe: options.wireframe,
-        polygonOffset: polygonOffsetEngaged,
-        fallbackMaterialColor: options.fallbackMaterialColor,
-        textureStatus: options.textureStatus,
-        textureValidation: options.textureValidation,
-      }
-    });
+    object: root,
+    options: {
+      envMapIntensity: options.envMapIntensity,
+      wireframe: options.wireframe,
+      polygonOffset: polygonOffsetEngaged,
+      fallbackMaterialColor: options.fallbackMaterialColor,
+      textureStatus: options.textureStatus,
+      textureValidation: options.textureValidation,
+    },
+  });
 
   const finalSize = finalBox.getSize(new THREE.Vector3());
   const minYAfter = finalBox.min.y;
@@ -1074,6 +1160,7 @@ function normalizeAndStabilizeModel(
     removedBaseMeshes: stripResult.removed,
     coplanar,
     material,
+    materialEntries: material.materialEntries,
     polygonOffsetEngaged,
     viewerPolicy: material.policy,
   };
@@ -1136,6 +1223,11 @@ function LoadedModel({
   const cameraFitKeyRef = useRef<string | null>(null);
   const loadSeqRef = useRef(0);
   const invalidateRef = useRef(invalidate);
+  const materialEntriesRef = useRef<ModelMaterialEntry[]>([]);
+  const materialPolicyKeyRef = useRef<string | null>(null);
+  const materialPolicyResultRef = useRef<ViewerMaterialPolicyResult | null>(
+    null,
+  );
   const envMapIntensityRef = useRef(envMapIntensity);
   const fallbackMaterialColorRef = useRef(fallbackMaterialColor);
   const wireframeRef = useRef(wireframe);
@@ -1193,6 +1285,9 @@ function LoadedModel({
       }
       setLoadedModel(null);
       setStabilization(null);
+      materialEntriesRef.current = [];
+      materialPolicyKeyRef.current = null;
+      materialPolicyResultRef.current = null;
       onLoadErrorRef.current(null);
       onModelNormalizationDebugRef.current(null);
       onViewerMaterialPolicyRef.current(null);
@@ -1353,6 +1448,13 @@ function LoadedModel({
           }
           return;
         }
+        materialEntriesRef.current = stabilized.materialEntries;
+        materialPolicyKeyRef.current = resolveMaterialPolicyKey({
+          fallbackMaterialColor: fallbackMaterialColorRef.current,
+          textureStatus,
+          textureValidation,
+        });
+        materialPolicyResultRef.current = stabilized.viewerPolicy;
 
         const normalizationDebug: ModelNormalizationDebug = {
           bboxSize: {
@@ -1369,6 +1471,9 @@ function LoadedModel({
         onViewerMaterialPolicyRef.current(stabilized.viewerPolicy);
         if (stabilized.viewerPolicy.renderState === "invalid_asset") {
           disposeObject3D(nextModel);
+          materialEntriesRef.current = [];
+          materialPolicyKeyRef.current = null;
+          materialPolicyResultRef.current = null;
           if (seq === loadSeqRef.current) {
             onLoadErrorRef.current(stabilized.viewerPolicy.message);
             onModelNormalizationDebugRef.current(normalizationDebug);
@@ -1531,11 +1636,11 @@ function LoadedModel({
       radius * 2.2,
     );
     const { near, far } = deriveCameraPlanes(radius);
-    const nextTarget = new THREE.Vector3(0, 0, 0);
+    const nextTarget = new THREE.Vector3(0, size.y * 0.3, 0);
     const nextPosition = new THREE.Vector3(
-      0,
-      Math.max(size.y * 0.5, radius * 0.9),
-      cameraDistance,
+      cameraDistance * 0.7,
+      Math.max(size.y * 0.5, maxDim * 0.35),
+      cameraDistance * 0.7,
     );
     const snapshot: CameraSnapshot = {
       position: nextPosition,
@@ -1546,8 +1651,6 @@ function LoadedModel({
 
     const controlsFromThree = asOrbitControls(controls);
     applyCameraSnapshot(camera, controlsRef, snapshot, controlsFromThree);
-    controlsRef.current?.target.set(0, 0, 0);
-    controlsRef.current?.update();
     onCameraFit({
       position: snapshot.position.clone(),
       target: snapshot.target.clone(),
@@ -1596,16 +1699,49 @@ function LoadedModel({
       return;
     }
 
-    const materialRefresh = applyModelVisualSettings({
-        object: loadedModel, options: {
+    const nextPolicyKey = resolveMaterialPolicyKey({
+      fallbackMaterialColor,
+      textureStatus,
+      textureValidation,
+    });
+    const polygonOffset =
+      stabilization?.polygonOffsetEngaged ?? DEV_POLY_OFFSET_ALL_MESHES;
+
+    if (
+      stabilization &&
+      materialPolicyKeyRef.current === nextPolicyKey &&
+      materialEntriesRef.current.length > 0
+    ) {
+      const currentPolicy =
+        materialPolicyResultRef.current ?? stabilization.viewerPolicy;
+      applyCachedModelVisualSettings(
+        materialEntriesRef.current,
+        {
           envMapIntensity,
           wireframe,
-          polygonOffset: stabilization?.polygonOffsetEngaged ?? DEV_POLY_OFFSET_ALL_MESHES,
-          fallbackMaterialColor,
-          textureStatus,
-          textureValidation,
-        }
-      });
+          polygonOffset,
+        },
+        currentPolicy,
+      );
+      onViewerMaterialPolicyRef.current(currentPolicy);
+      invalidate();
+      return;
+    }
+
+    const materialRefresh = applyModelVisualSettings({
+      object: loadedModel,
+      options: {
+        envMapIntensity,
+        wireframe,
+        polygonOffset,
+        fallbackMaterialColor,
+        textureStatus,
+        textureValidation,
+      },
+    });
+    materialEntriesRef.current = materialRefresh.materialEntries;
+    materialPolicyKeyRef.current = nextPolicyKey;
+    materialPolicyResultRef.current = materialRefresh.policy;
     onViewerMaterialPolicyRef.current(materialRefresh.policy);
     invalidate();
   }, [
@@ -1622,7 +1758,7 @@ function LoadedModel({
   return <group ref={modelRef} />;
 }
 
-function FrameLimiter({ fpsLimit }: FrameLimiterProps) {
+function FrameLimiter({ fpsLimit, isInteractingRef }: FrameLimiterProps) {
   const { invalidate } = useThree();
 
   useEffect(() => {
@@ -1630,13 +1766,15 @@ function FrameLimiter({ fpsLimit }: FrameLimiterProps) {
     invalidate();
 
     const interval = window.setInterval(() => {
-      invalidate();
+      if (isInteractingRef.current) {
+        invalidate();
+      }
     }, frameDurationMs);
 
     return () => {
       window.clearInterval(interval);
     };
-  }, [fpsLimit, invalidate]);
+  }, [fpsLimit, invalidate, isInteractingRef]);
 
   return null;
 }
@@ -1882,7 +2020,8 @@ export function ProjectViewport({
     useState<ModelNormalizationDebug | null>(null);
   const [modelStats, setModelStats] = useState<ModelViewportStats | null>(null);
   const wireframe = wireframeProp ?? wireframeInternal;
-  const isOrbitingRef = useRef(false);
+  const isInteractingRef = useRef(false);
+  const interactionEndTimerRef = useRef<number | null>(null);
   const lastTelemetryKeyRef = useRef("");
   const url = useMemo(
     () =>
@@ -2672,13 +2811,37 @@ export function ProjectViewport({
     setDebugRenderEnabled((current) => !current);
   }, []);
 
+  const beginInteracting = useCallback(() => {
+    if (interactionEndTimerRef.current !== null) {
+      window.clearTimeout(interactionEndTimerRef.current);
+      interactionEndTimerRef.current = null;
+    }
+    isInteractingRef.current = true;
+    document.body.classList.add("is-orbiting");
+    invalidateRef.current?.();
+  }, []);
+
   const stopOrbiting = useCallback(() => {
-    if (!isOrbitingRef.current) {
+    if (interactionEndTimerRef.current !== null) {
+      window.clearTimeout(interactionEndTimerRef.current);
+      interactionEndTimerRef.current = null;
+    }
+    if (!isInteractingRef.current) {
       return;
     }
-    isOrbitingRef.current = false;
+    isInteractingRef.current = false;
     document.body.classList.remove("is-orbiting");
   }, []);
+
+  const scheduleStopInteracting = useCallback(() => {
+    if (interactionEndTimerRef.current !== null) {
+      window.clearTimeout(interactionEndTimerRef.current);
+    }
+    interactionEndTimerRef.current = window.setTimeout(() => {
+      interactionEndTimerRef.current = null;
+      stopOrbiting();
+    }, 300);
+  }, [stopOrbiting]);
 
   const handleViewportPointerDown = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -2691,15 +2854,14 @@ export function ProjectViewport({
       if (VIEWPORT_EVENT_DEBUG) {
         console.debug("[ProjectViewport][events] pointerdown on canvas");
       }
-      isOrbitingRef.current = true;
-      document.body.classList.add("is-orbiting");
+      beginInteracting();
     },
-    [],
+    [beginInteracting],
   );
 
   const handleViewportPointerUp = useCallback(() => {
-    stopOrbiting();
-  }, [stopOrbiting]);
+    scheduleStopInteracting();
+  }, [scheduleStopInteracting]);
 
   const handleViewportPointerCancel = useCallback(() => {
     stopOrbiting();
@@ -2707,6 +2869,10 @@ export function ProjectViewport({
 
   useEffect(() => {
     return () => {
+      if (interactionEndTimerRef.current !== null) {
+        window.clearTimeout(interactionEndTimerRef.current);
+      }
+      isInteractingRef.current = false;
       document.body.classList.remove("is-orbiting");
     };
   }, []);
@@ -2968,7 +3134,10 @@ export function ProjectViewport({
                 }}
               >
                 <ViewportResizeSync width={size.width} height={size.height} />
-                <FrameLimiter fpsLimit={settings.fpsLimit} />
+                <FrameLimiter
+                  fpsLimit={settings.fpsLimit}
+                  isInteractingRef={isInteractingRef}
+                />
                 <color attach="background" args={[themeConfig.background]} />
                 <Environment
                   preset={themeConfig.environmentPreset}
@@ -3079,7 +3248,7 @@ export function ProjectViewport({
                   enableZoom={true}
                   enablePan={true}
                   makeDefault
-                  target={[0, 0, 0]}
+                  target={[0, VIEW_TARGET.y, 0]}
                   enableDamping
                   dampingFactor={0.08}
                   mouseButtons={{
@@ -3093,6 +3262,7 @@ export function ProjectViewport({
                   maxPolarAngle={Math.PI * 0.49}
                   screenSpacePanning={false}
                   onStart={() => {
+                    beginInteracting();
                     if (VIEWPORT_EVENT_DEBUG) {
                       console.debug("[ProjectViewport][controls] start");
                     }
@@ -3109,8 +3279,10 @@ export function ProjectViewport({
                       };
                     }
                     emitCameraTelemetry();
+                    invalidateRef.current?.();
                   }}
                   onEnd={() => {
+                    scheduleStopInteracting();
                     if (VIEWPORT_EVENT_DEBUG) {
                       console.debug("[ProjectViewport][controls] end");
                     }

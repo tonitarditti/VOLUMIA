@@ -184,6 +184,20 @@ def _try_remove_background(rgba_image):
 
 
 def _largest_component_numpy(mask_uint8):
+    try:
+        from scipy import ndimage  # type: ignore
+
+        labeled, component_count = ndimage.label(mask_uint8)
+        if int(component_count) == 0:
+            return mask_uint8
+        sizes = ndimage.sum(mask_uint8, labeled, range(1, int(component_count) + 1))
+        largest_label = int(np.argmax(sizes)) + 1
+        return (labeled == largest_label).astype(np.uint8)
+    except ImportError:
+        pass
+    except Exception as error:
+        log(f"[MASK] scipy largest component fallback failed: {error}")
+
     height, width = mask_uint8.shape
     visited = np.zeros((height, width), dtype=np.uint8)
     best_component = []
@@ -1198,9 +1212,7 @@ def quality_gate(glb_path: str) -> Dict[str, Any]:
 
 def _normalize_exported_glb(glb_path: str, target_size: float = 2.0) -> None:
     mesh, trimesh = _load_glb_mesh_for_gate(glb_path)
-    scene = trimesh.Scene()
-    scene.add_geometry(mesh, node_name="normalized_mesh", geom_name="normalized_mesh")
-    normalized = normalize_scene_mesh_for_export(scene, target_size=target_size)
+    normalized = _normalize_mesh_for_export(mesh, trimesh, target_size=target_size)
     normalized.export(glb_path, file_type="glb")
 
 
@@ -3132,19 +3144,150 @@ def _cleanup_degenerate_faces_compat(mesh) -> None:
         pass
 
 
-def normalize_scene_mesh_for_export(scene, target_size: float = 2.0):
+def _clamp01(value: float) -> float:
+    return float(max(0.0, min(1.0, value)))
+
+
+def _safe_band_density(vertices: np.ndarray, mask: np.ndarray) -> float:
+    selected = vertices[mask]
+    if selected.shape[0] == 0:
+        return 0.0
+    spans = np.ptp(selected, axis=0)
+    volume = float(np.prod(np.maximum(spans, 1e-6)))
+    return float(selected.shape[0]) / volume
+
+
+def _upright_flip_confidence(mesh) -> Dict[str, float | bool]:
+    vertices = np.asarray(mesh.vertices, dtype=np.float64)
+    faces = np.asarray(mesh.faces, dtype=np.int64)
+    if vertices.ndim != 2 or vertices.shape[0] < 16 or faces.ndim != 2 or faces.shape[0] < 8:
+        return {"confidence": 0.0, "furniture_like": False}
+
+    finite = np.isfinite(vertices).all(axis=1)
+    if not np.all(finite):
+        vertices = vertices[finite]
+    if vertices.shape[0] < 16:
+        return {"confidence": 0.0, "furniture_like": False}
+
+    bounds = np.asarray(mesh.bounds, dtype=np.float64)
+    if bounds.shape != (2, 3) or not np.isfinite(bounds).all():
+        return {"confidence": 0.0, "furniture_like": False}
+
+    size = bounds[1] - bounds[0]
+    width_x = float(size[0])
+    height_y = float(size[1])
+    depth_z = float(size[2])
+    if min(width_x, height_y, depth_z) <= 1e-8:
+        return {"confidence": 0.0, "furniture_like": False}
+
+    furniture_like = height_y < width_x * 0.8 and height_y < depth_z * 0.8
+    if not furniture_like:
+        return {"confidence": 0.0, "furniture_like": False}
+
+    y_values = vertices[:, 1]
+    min_y = float(bounds[0][1])
+    max_y = float(bounds[1][1])
+    mid_y = min_y + height_y * 0.5
+    bottom_threshold = min_y + height_y * 0.1
+    top_threshold = max_y - height_y * 0.1
+
+    upper_count = int(np.count_nonzero(y_values >= mid_y))
+    lower_count = int(np.count_nonzero(y_values < mid_y))
+    top_mask = y_values >= top_threshold
+    bottom_mask = y_values <= bottom_threshold
+    top_density = _safe_band_density(vertices, top_mask)
+    bottom_density = _safe_band_density(vertices, bottom_mask)
+    mass_ratio = float(upper_count + 1) / float(lower_count + 1)
+    density_ratio = float(top_density + 1e-9) / float(bottom_density + 1e-9)
+
+    face_vertices = vertices[faces]
+    centroids = np.mean(face_vertices, axis=1)
+    top_faces = centroids[:, 1] >= top_threshold
+    planarity_score = 0.0
+    inverted_normal_score = 0.0
+    normal_variance = 1.0
+    mean_normal_y = 0.0
+    top_face_count = int(np.count_nonzero(top_faces))
+    if top_face_count >= 4:
+        try:
+            normals = np.asarray(mesh.face_normals, dtype=np.float64)[top_faces]
+            normal_lengths = np.linalg.norm(normals, axis=1)
+            normals = normals[normal_lengths > 1e-8]
+            if normals.shape[0] >= 4:
+                normals = normals / np.linalg.norm(normals, axis=1, keepdims=True)
+                mean_normal = np.mean(normals, axis=0)
+                mean_length = float(np.linalg.norm(mean_normal))
+                normal_variance = float(1.0 - _clamp01(mean_length))
+                if mean_length > 1e-8:
+                    mean_normal_y = float(mean_normal[1] / mean_length)
+                normal_coherence = _clamp01((0.35 - normal_variance) / 0.35)
+                vertical_alignment = _clamp01((abs(mean_normal_y) - 0.35) / 0.55)
+                planarity_score = normal_coherence * vertical_alignment
+                inverted_normal_score = _clamp01((-mean_normal_y - 0.2) / 0.65)
+        except Exception:
+            pass
+
+    top_vertices = vertices[top_mask]
+    if top_vertices.shape[0] >= 4:
+        top_y_std = float(np.std(top_vertices[:, 1]))
+        flat_band_score = _clamp01((height_y * 0.05 - top_y_std) / max(height_y * 0.05, 1e-8))
+        planarity_score = max(planarity_score, flat_band_score * 0.65)
+
+    mass_score = _clamp01((mass_ratio - 1.08) / 1.25)
+    density_score = _clamp01((density_ratio - 1.15) / 2.0)
+    top_heavy = mass_ratio > 1.08 and density_ratio > 1.15
+    confidence = (
+        0.25 * mass_score
+        + 0.20 * density_score
+        + 0.25 * planarity_score
+        + 0.30 * inverted_normal_score
+    )
+    if not top_heavy or planarity_score < 0.45 or inverted_normal_score < 0.45:
+        confidence *= 0.5
+
+    return {
+        "confidence": float(confidence),
+        "furniture_like": furniture_like,
+        "top_heavy": bool(top_heavy),
+        "mass_ratio": float(mass_ratio),
+        "density_ratio": float(density_ratio),
+        "planarity_score": float(planarity_score),
+        "normal_variance": float(normal_variance),
+        "mean_normal_y": float(mean_normal_y),
+        "top_density": float(top_density),
+        "bottom_density": float(bottom_density),
+    }
+
+
+def _apply_upright_orientation_if_needed(mesh) -> bool:
+    stats = _upright_flip_confidence(mesh)
+    confidence = float(stats.get("confidence", 0.0))
+    if confidence <= 0.65:
+        return False
+
     import trimesh
 
-    meshes = [geom for geom in scene.geometry.values() if isinstance(geom, trimesh.Trimesh)]
-    if not meshes:
-        raise RuntimeError("No mesh primitives to normalize")
+    mesh.apply_transform(trimesh.transformations.rotation_matrix(np.pi, [1.0, 0.0, 0.0]))
+    min_y = float(mesh.bounds[0][1])
+    mesh.apply_translation([0.0, -min_y, 0.0])
+    print(
+        "[ORIENT] applied upright X-flip "
+        f"confidence={confidence:.3f} "
+        f"mass_ratio={float(stats.get('mass_ratio', 0.0)):.3f} "
+        f"density_ratio={float(stats.get('density_ratio', 0.0)):.3f} "
+        f"planarity={float(stats.get('planarity_score', 0.0)):.3f} "
+        f"mean_normal_y={float(stats.get('mean_normal_y', 0.0)):.3f}",
+        flush=True,
+    )
+    return True
 
-    mesh = trimesh.util.concatenate([m.copy() for m in meshes])
-    mesh = _sanitize_invalid_mesh(mesh, trimesh)
+
+def _normalize_mesh_for_export(mesh, trimesh_module, target_size: float = 2.0):
+    mesh = _sanitize_invalid_mesh(mesh, trimesh_module)
 
     # 1) Keep only the largest connected component.
     try:
-        mesh = _largest_connected_component(mesh, trimesh)
+        mesh = _largest_connected_component(mesh, trimesh_module)
     except Exception as e:
         print(f"[WARN] largest component cleanup failed: {e}", flush=True)
 
@@ -3156,8 +3299,8 @@ def normalize_scene_mesh_for_export(scene, target_size: float = 2.0):
     except Exception as e:
         print(f"[WARN] cleanup skipped: {e}", flush=True)
 
-    # 6) Remove NaN/invalid vertices if present.
-    mesh = _sanitize_invalid_mesh(mesh, trimesh)
+    # Remove NaN/invalid vertices if present.
+    mesh = _sanitize_invalid_mesh(mesh, trimesh_module)
 
     # 3) Center mesh at origin.
     bbox = mesh.bounds
@@ -3168,7 +3311,10 @@ def normalize_scene_mesh_for_export(scene, target_size: float = 2.0):
     min_y = float(mesh.bounds[0][1])
     mesh.apply_translation([0.0, -min_y, 0.0])
 
-    # 5) Uniform scale normalization.
+    # 5) Correct likely upside-down wide furniture before scale normalization.
+    _apply_upright_orientation_if_needed(mesh)
+
+    # 6) Uniform scale normalization.
     bbox = mesh.bounds
     size = bbox[1] - bbox[0]
     max_dim = float(np.max(size))
@@ -3176,13 +3322,18 @@ def normalize_scene_mesh_for_export(scene, target_size: float = 2.0):
         scale_factor = float(target_size) / max_dim
         mesh.apply_scale(scale_factor)
 
-    mesh = _sanitize_invalid_mesh(mesh, trimesh)
-    try:
-        _cleanup_degenerate_faces_compat(mesh)
-        mesh.fix_normals()
-    except Exception as e:
-        print(f"[WARN] cleanup skipped: {e}", flush=True)
     return mesh
+
+
+def normalize_scene_mesh_for_export(scene, target_size: float = 2.0):
+    import trimesh
+
+    meshes = [geom for geom in scene.geometry.values() if isinstance(geom, trimesh.Trimesh)]
+    if not meshes:
+        raise RuntimeError("No mesh primitives to normalize")
+
+    mesh = trimesh.util.concatenate([m.copy() for m in meshes])
+    return _normalize_mesh_for_export(mesh, trimesh, target_size=target_size)
 
 
 def export_scene_with_metadata(
