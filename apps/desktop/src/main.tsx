@@ -18,3 +18,12 @@ createRoot(container).render(
     <App />
   </StrictMode>
 );
+
+// Remove the static fallback splash inserted in index.html once React mounts
+const fallback = document.getElementById("fallback-splash");
+if (fallback) {
+  // slight delay to ensure users see the micro-animation
+  setTimeout(() => {
+    fallback.remove();
+  }, 250);
+}
