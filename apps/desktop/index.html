@@ -4,6 +4,18 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>VOLUMIA</title>
+    <style>
+      /* Minimal theme fallbacks to avoid a fully blank screen before JS theme loads */
+      :root{
+        --bg: #111318;
+        --surface-1: #1A1D24;
+        --text: #F3F0EA;
+        --accent: #C9A45D;
+        --boot-glow: radial-gradient(circle at 50% 38%, rgba(201,164,93,0.14), transparent 33%);
+      }
+      html,body,#root{height:100%;}
+      body{background:var(--bg);color:var(--text);}
+    </style>
   </head>
   <body>
     <div id="root"></div>
