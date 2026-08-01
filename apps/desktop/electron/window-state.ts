@@ -238,6 +238,15 @@ export function createWindowStateController(): WindowStateController {
       applyModeToWindow(persisted.mode, window);
     },
     attachTracking: (window) => {
+        // Avoid attaching the same listeners multiple times to the same window instance.
+      // Some callers may call attachTracking(window) more than once (e.g., during re-creation).
+      // Mark the window to make this idempotent.
+      const markerKey = "__volumia_window_tracking_attached";
+      if ((window as any)[markerKey]) {
+        return;
+      }
+      (window as any)[markerKey] = true;
+
       const persistWhenNeeded = () => {
         if (window.isDestroyed()) {
           return;

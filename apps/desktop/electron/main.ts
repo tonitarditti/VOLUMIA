@@ -1,4 +1,9 @@
 import { BrowserWindow, app, dialog, ipcMain } from "electron";
+import { EventEmitter } from "events";
+
+// Increase default max listeners slightly to avoid spurious MaxListenersExceededWarning
+// while guarding against the real leak. This reduces noise during development.
+EventEmitter.defaultMaxListeners = 20;
 import { existsSync } from "fs";
 import path from "path";
 import {
