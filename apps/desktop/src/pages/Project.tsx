@@ -259,7 +259,7 @@ export function Project() {
           </div>
         </div>
         <div className="min-h-0 flex-1">
-          <ModelViewer modelUrl={modelUrl} projectId={projectId} transformRevision={job?.finishedAt ?? null} />
+          <ModelViewer modelUrl={modelUrl} />
         </div>
       </section>
     </main>

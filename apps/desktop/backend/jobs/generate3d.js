@@ -18,10 +18,18 @@ const logPath = path.join(logDir, "volumia.log");
 const validModes = new Set(["demo", "quick", "textured", "photogrammetry"]);
 const glbMagic = Buffer.from([0x67, 0x6c, 0x54, 0x46]);
 const QUICK_CANONICAL_ROTATION = {
-  preset: "side_to_ground",
+  preset: "triposr_z_up_to_volumia_y_up",
   rotationXDeg: -90,
   rotationYDeg: 0,
   rotationZDeg: 0,
+};
+const QUICK_AXIS_NORMALIZATION = {
+  applied: true,
+  source: "TripoSR Z-up",
+  target: "VOLUMIA Y-up",
+  rotationXDeg: -90,
+  centered: true,
+  grounded: true,
 };
 const PYTHON_OPENMP_ENV = [
   ["KMP_DUPLICATE_LIB_OK", "VOLUMIA_KMP_DUPLICATE_LIB_OK", "TRUE"],
@@ -346,6 +354,7 @@ async function runBlenderOptimize(projectId, sourcePath, options = {}) {
   const tools = getToolStatus();
   const paths = ensureProjectLayout(projectId);
   const rotation = options.rotation || null;
+  const normalizeToGround = options.normalizeToGround === true;
   const hasCanonicalRotation = Boolean(
     rotation &&
       (Math.abs(rotation.rotationXDeg || 0) > 0.0001 ||
@@ -353,8 +362,8 @@ async function runBlenderOptimize(projectId, sourcePath, options = {}) {
         Math.abs(rotation.rotationZDeg || 0) > 0.0001)
   );
   if (!tools.blender.exists) {
-    if (hasCanonicalRotation) {
-      throw new Error("Blender no configurado: se necesita para rotar el mesh antes del GLB final.");
+    if (hasCanonicalRotation || normalizeToGround) {
+      throw new Error("Blender no configurado: se necesita para normalizar el mesh antes del GLB final.");
     }
     if (path.extname(sourcePath).toLowerCase() === ".glb" && isValidGlb(sourcePath)) {
       fs.copyFileSync(sourcePath, paths.latestGlb);
@@ -373,6 +382,9 @@ async function runBlenderOptimize(projectId, sourcePath, options = {}) {
       projectId,
       `Canonical mesh rotation before bake/export (${rotation.preset || "custom"}): X=${rotation.rotationXDeg} Y=${rotation.rotationYDeg} Z=${rotation.rotationZDeg}`
     );
+  }
+  if (normalizeToGround) {
+    appendJobLog(projectId, "Centering normalized mesh and placing its base on the ground plane.");
   }
   const optimizedGlb = path.join(paths.output, "optimized.glb");
   const blenderArgs = [
@@ -395,6 +407,9 @@ async function runBlenderOptimize(projectId, sourcePath, options = {}) {
       String(rotation.rotationZDeg || 0)
     );
   }
+  if (normalizeToGround) {
+    blenderArgs.push("--normalize-to-ground");
+  }
   await spawnProcess(tools.blender.path, blenderArgs, {
     projectId,
     onOutput: (chunk) => appendJobLog(projectId, chunk.trim()),
@@ -403,7 +418,7 @@ async function runBlenderOptimize(projectId, sourcePath, options = {}) {
     throw new Error("Blender termino, pero output/optimized.glb no es un GLB valido.");
   }
   fs.copyFileSync(optimizedGlb, paths.latestGlb);
-  return { latestGlb: paths.latestGlb, optimizedGlb, rotation, warnings: [] };
+  return { latestGlb: paths.latestGlb, optimizedGlb, rotation, normalizeToGround, warnings: [] };
 }
 
 async function runQuick(projectId, inputFiles) {
@@ -453,8 +468,10 @@ async function runQuick(projectId, inputFiles) {
     throw new Error("El runner no generó modelo.");
   }
   const raw = copyRawOutput(projectId, generated);
+  appendJobLog(projectId, "Quick axis normalization applied: TripoSR Z-up → VOLUMIA Y-up");
   const optimized = await runBlenderOptimize(projectId, raw, {
-    rotation: configuredRotation("VOLUMIA_QUICK_ROTATION", QUICK_CANONICAL_ROTATION),
+    rotation: QUICK_CANONICAL_ROTATION,
+    normalizeToGround: true,
   });
   return {
     latestGlb: optimized.latestGlb,
@@ -462,6 +479,7 @@ async function runQuick(projectId, inputFiles) {
     optimizedGlb: optimized.optimizedGlb,
     source: generated,
     rotation: optimized.rotation,
+    axisNormalization: QUICK_AXIS_NORMALIZATION,
     warnings: optimized.warnings,
   };
 }

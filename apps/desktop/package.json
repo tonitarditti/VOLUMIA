@@ -21,9 +21,9 @@
   "build": {
     "appId": "com.volumia.desktop",
     "productName": "Volumia",
-    "icon": "src/assets/branding/VOLUMIA-V-dorado.ico",
+    "icon": "src/assets/branding/VOLUMIA-V-dorado-final.ico",
     "win": {
-      "icon": "src/assets/branding/VOLUMIA-V-dorado.ico"
+      "icon": "src/assets/branding/VOLUMIA-V-dorado-final.ico"
     },
     "linux": {
       "icon": "src/assets/branding/VOLUMIA-dorado-transparente.png"

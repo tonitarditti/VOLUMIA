@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 
 import bpy
-from mathutils import Euler
+from mathutils import Euler, Matrix, Vector
 
 
 def clear_scene() -> None:
@@ -26,6 +26,12 @@ def import_asset(source: Path) -> None:
 
 def scene_mesh_objects() -> list[bpy.types.Object]:
     return [obj for obj in bpy.context.scene.objects if obj.type == "MESH"]
+
+
+def select_only(obj: bpy.types.Object) -> None:
+    bpy.ops.object.select_all(action="DESELECT")
+    obj.select_set(True)
+    bpy.context.view_layer.objects.active = obj
 
 
 def apply_canonical_rotation(rotation_x_deg: float, rotation_y_deg: float, rotation_z_deg: float) -> None:
@@ -51,11 +57,12 @@ def apply_canonical_rotation(rotation_x_deg: float, rotation_y_deg: float, rotat
     # This preserves UVs and keeps texture coordinates aligned with the mesh.
     for obj in scene_mesh_objects():
         try:
-            bpy.context.view_layer.objects.active = obj
-            obj.select_set(True)
-            # transform object's world matrix by the canonical rotation
+            select_only(obj)
+            # Rotate in Blender's Z-up working space. export_yup=True converts that
+            # result to VOLUMIA/glTF Y-up during the final GLB export.
             obj.matrix_world = rotation @ obj.matrix_world
-            # bake rotation into object (applies to mesh while preserving UVs)
+            # Bake the rotation into the mesh data; the final GLB has no viewer-only
+            # correction and therefore keeps the same orientation in other apps.
             bpy.ops.object.transform_apply(location=False, rotation=True, scale=False)
             # try to ensure normals are consistent after transform
             try:
@@ -69,6 +76,69 @@ def apply_canonical_rotation(rotation_x_deg: float, rotation_y_deg: float, rotat
                 obj.select_set(False)
             except Exception:
                 pass
+
+    bpy.context.view_layer.update()
+
+
+def scene_world_bounds() -> tuple[Vector, Vector]:
+    meshes = scene_mesh_objects()
+    if not meshes:
+        raise RuntimeError("Imported asset contains no mesh objects.")
+
+    minimum = Vector((float("inf"), float("inf"), float("inf")))
+    maximum = Vector((float("-inf"), float("-inf"), float("-inf")))
+    for obj in meshes:
+        for corner in obj.bound_box:
+            world_corner = obj.matrix_world @ Vector(corner)
+            minimum.x = min(minimum.x, world_corner.x)
+            minimum.y = min(minimum.y, world_corner.y)
+            minimum.z = min(minimum.z, world_corner.z)
+            maximum.x = max(maximum.x, world_corner.x)
+            maximum.y = max(maximum.y, world_corner.y)
+            maximum.z = max(maximum.z, world_corner.z)
+    return minimum, maximum
+
+
+def center_and_ground_scene() -> None:
+    """Center on Blender X/Y and put the base on Z=0 before Y-up GLB export."""
+    minimum, maximum = scene_world_bounds()
+    offset = Vector(
+        (
+            -(minimum.x + maximum.x) * 0.5,
+            -(minimum.y + maximum.y) * 0.5,
+            -minimum.z,
+        )
+    )
+    translation = Matrix.Translation(offset)
+
+    for obj in scene_mesh_objects():
+        try:
+            select_only(obj)
+            obj.matrix_world = translation @ obj.matrix_world
+            # Bake the centering/grounding into geometry as well. This keeps the
+            # exported node transforms neutral and makes the result portable.
+            bpy.ops.object.transform_apply(location=True, rotation=False, scale=False)
+        finally:
+            try:
+                obj.select_set(False)
+            except Exception:
+                pass
+
+    bpy.context.view_layer.update()
+    grounded_minimum, grounded_maximum = scene_world_bounds()
+    center_x = (grounded_minimum.x + grounded_maximum.x) * 0.5
+    center_y = (grounded_minimum.y + grounded_maximum.y) * 0.5
+    print(
+        "[blender-transform] normalized bounds "
+        f"min=({grounded_minimum.x:.6f}, {grounded_minimum.y:.6f}, {grounded_minimum.z:.6f}) "
+        f"max=({grounded_maximum.x:.6f}, {grounded_maximum.y:.6f}, {grounded_maximum.z:.6f}) "
+        f"horizontal_center=({center_x:.6f}, {center_y:.6f}) ground_z={grounded_minimum.z:.6f}",
+        flush=True,
+    )
+
+    tolerance = 1e-5
+    if abs(center_x) > tolerance or abs(center_y) > tolerance or abs(grounded_minimum.z) > tolerance:
+        raise RuntimeError("Failed to center and ground the normalized mesh.")
 
 
 def optimize_scene() -> None:
@@ -197,6 +267,7 @@ def main() -> int:
     parser.add_argument("--rotation-x-deg", type=float, default=0.0)
     parser.add_argument("--rotation-y-deg", type=float, default=0.0)
     parser.add_argument("--rotation-z-deg", type=float, default=0.0)
+    parser.add_argument("--normalize-to-ground", action="store_true")
     args = parser.parse_args(sys.argv[sys.argv.index("--") + 1 :] if "--" in sys.argv else None)
 
     source = Path(args.input).resolve()
@@ -207,6 +278,8 @@ def main() -> int:
     clear_scene()
     import_asset(source)
     apply_canonical_rotation(args.rotation_x_deg, args.rotation_y_deg, args.rotation_z_deg)
+    if args.normalize_to_ground:
+        center_and_ground_scene()
     optimize_scene()
     export_glb(target)
     print(f"Exported GLB: {target}")
