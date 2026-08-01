@@ -1,41 +1,29 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none">
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" aria-hidden>
   <defs>
-    <linearGradient id="vSolid" x1="324" y1="248" x2="564" y2="742" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#7C8DB9"/>
-      <stop offset="0.42" stop-color="#35466A"/>
-      <stop offset="1" stop-color="#0A122B"/>
-    </linearGradient>
-    <linearGradient id="edgeCyan" x1="310" y1="248" x2="560" y2="742" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#00D4FF"/>
-      <stop offset="0.58" stop-color="#3AC8FF"/>
-      <stop offset="1" stop-color="#0A84FF"/>
-    </linearGradient>
-    <linearGradient id="meshStroke" x1="552" y1="280" x2="822" y2="760" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#8EF3FF"/>
-      <stop offset="0.62" stop-color="#46CBFF"/>
-      <stop offset="1" stop-color="#9B70FF"/>
-    </linearGradient>
-    <linearGradient id="meshFill" x1="596" y1="292" x2="692" y2="758" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#8EF3FF" stop-opacity="0.32"/>
-      <stop offset="0.5" stop-color="#58D7FF" stop-opacity="0.2"/>
-      <stop offset="1" stop-color="#6C4DFF" stop-opacity="0.28"/>
-    </linearGradient>
     <clipPath id="meshClip">
       <path d="M546 624C646 538 746 466 812 286C714 304 654 368 590 456C560 496 544 548 526 620C572 680 616 730 664 764C646 712 604 668 546 624Z"/>
     </clipPath>
-    <filter id="softGlow" x="270" y="210" width="590" height="610" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
-      <feGaussianBlur stdDeviation="10" result="blur"/>
-      <feBlend in="SourceGraphic" in2="blur" mode="screen"/>
+    <filter id="softGlow" x="200" y="160" width="640" height="700" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="14" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
     </filter>
   </defs>
 
   <g filter="url(#softGlow)">
-    <path d="M318 248H478L558 624H470L318 248Z" fill="url(#vSolid)"/>
-    <path d="M318 248L558 624" stroke="url(#edgeCyan)" stroke-width="6"/>
+    <!-- Solid V body, uses currentColor to allow theming (e.g., gold via CSS var(--accent)) -->
+    <path d="M318 248H478L558 624H470L318 248Z" fill="currentColor" fill-opacity="0.96"/>
 
-    <path d="M546 624C646 538 746 466 812 286C714 304 654 368 590 456C560 496 544 548 526 620C572 680 616 730 664 764C646 712 604 668 546 624Z" fill="url(#meshFill)"/>
+    <!-- Strong edge line -->
+    <path d="M318 248L558 624" stroke="currentColor" stroke-width="10" stroke-opacity="0.98"/>
 
-    <g clip-path="url(#meshClip)" stroke="url(#meshStroke)" stroke-width="2.4" stroke-linecap="round" opacity="0.9">
+    <!-- Subtle mesh fill inside the V -->
+    <path d="M546 624C646 538 746 466 812 286C714 304 654 368 590 456C560 496 544 548 526 620C572 680 616 730 664 764C646 712 604 668 546 624Z" fill="currentColor" fill-opacity="0.14"/>
+
+    <!-- Technical mesh lines clipped inside the mesh area -->
+    <g clip-path="url(#meshClip)" stroke="currentColor" stroke-width="3" stroke-linecap="round" opacity="0.56">
       <path d="M520 620C584 660 636 708 672 768"/>
       <path d="M530 596C604 644 666 700 710 764"/>
       <path d="M542 572C622 622 690 686 740 758"/>
@@ -57,8 +45,9 @@
       <path d="M644 756C674 700 708 646 734 586C758 528 772 446 752 360"/>
     </g>
 
-    <path d="M478 248L558 624" stroke="#E5ECFF" stroke-opacity="0.76" stroke-width="4"/>
-    <path d="M558 624L664 764" stroke="#6C4DFF" stroke-opacity="0.8" stroke-width="4"/>
+    <!-- Accent stroke detail on edges (slightly lighter) -->
+    <path d="M478 248L558 624" stroke="currentColor" stroke-opacity="0.86" stroke-width="5"/>
+    <path d="M558 624L664 764" stroke="currentColor" stroke-opacity="0.7" stroke-width="5"/>
   </g>
 </svg>
 
