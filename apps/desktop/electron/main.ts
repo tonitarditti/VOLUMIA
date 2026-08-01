@@ -4,6 +4,18 @@ import { EventEmitter } from "events";
 // Increase default max listeners slightly to avoid spurious MaxListenersExceededWarning
 // while guarding against the real leak. This reduces noise during development.
 EventEmitter.defaultMaxListeners = 20;
+
+// Capture Node 'warning' events (like MaxListenersExceededWarning) and print stack traces
+process.on("warning", (warning) => {
+  try {
+    console.warn("[VOLUMIA][warning]", warning.name, warning.message);
+    if (warning.stack) {
+      console.warn(warning.stack);
+    }
+  } catch (err) {
+    // swallow
+  }
+});
 import { existsSync } from "fs";
 import path from "path";
 import {
