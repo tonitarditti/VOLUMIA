@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import type {
   BackendStatusResponse,
   ComfyStatusResponse,
 } from "@/electron/channels";
-import { BrandLogo } from "@/components/branding";
+import { StartupSplash } from "@/components/branding/StartupSplash";
 import { desktopApi, hasDesktopBridge } from "@/electron/desktopApi";
 
 type StartupStage =
@@ -23,16 +23,6 @@ type StageSpec = {
   label: string;
 };
 
-const STARTUP_STAGE_ORDER: StartupStage[] = [
-  "initializing_shell",
-  "loading_workspace",
-  "launching_comfyui",
-  "connecting_local_engine",
-  "loading_nodes_and_models",
-  "verifying_engine_ready",
-  "finalizing_ui",
-  "ready",
-];
 
 const STARTUP_STAGE_SPEC: Record<StartupStage, StageSpec> = {
   initializing_shell: {
@@ -142,24 +132,6 @@ export function BootScreen() {
   const displayedProgressRef = useRef(0);
   const actualProgressRef = useRef(boot.actualProgress);
 
-  const steps = useMemo(() => {
-    const currentIndex = STARTUP_STAGE_ORDER.indexOf(boot.stage);
-    return STARTUP_STAGE_ORDER.filter((stage) => stage !== "ready").map(
-      (stage) => {
-        const index = STARTUP_STAGE_ORDER.indexOf(stage);
-        const isCurrent = index === currentIndex;
-        const done = boot.stage === "ready" || index < currentIndex;
-        const active = isCurrent && !boot.error;
-        return {
-          id: stage,
-          text: STARTUP_STAGE_SPEC[stage].label,
-          done,
-          active,
-          error: isCurrent && Boolean(boot.error),
-        };
-      },
-    );
-  }, [boot.error, boot.stage]);
 
   useEffect(() => {
     displayedProgressRef.current = displayedProgress;
@@ -462,72 +434,18 @@ export function BootScreen() {
 
   return (
     <div className="relative flex h-screen w-screen items-center justify-center overflow-hidden bg-[var(--bg)] px-6 text-[var(--text)]">
-      <div
-        className="absolute inset-0"
-        style={{ backgroundImage: "var(--boot-glow)" }}
-      />
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-0"
-        style={{
-          background:
-            "radial-gradient(circle at 50% 34%, color-mix(in srgb, var(--accent-2) 12%, transparent), transparent 44%)",
-        }}
-      />
+      <div className="absolute inset-0" style={{ backgroundImage: "var(--boot-glow)" }} />
 
-      <div className="relative flex w-full max-w-[560px] flex-col items-center">
-        <BrandLogo size={28} emphasis="glow" label="VOLUMIA" />
-        <p className="mt-3 text-[10px] uppercase tracking-[0.18em] text-[var(--text-faint)]">
-          Spatial Intelligence Engine
-        </p>
+      <div className="relative flex w-full max-w-[720px] flex-col items-center px-6">
+        <StartupSplash />
 
-        <div className="mt-10 w-full max-w-[360px]">
-          <div className="h-px overflow-hidden bg-[color:color-mix(in_srgb,var(--border)_72%,transparent)]">
-            <div
-              className="h-full bg-[linear-gradient(90deg,var(--accent),var(--accent-2))]"
-              style={{ width: `${clamp(displayedProgress, 0, 100)}%` }}
-            />
-          </div>
-          <div className="mt-2 flex items-center justify-between text-[9px] font-semibold uppercase tracking-[0.12em] text-[var(--text-faint)]">
-            <span>
-              {boot.error
-                ? `error - ${STARTUP_STAGE_SPEC[boot.stage].label}`
-                : STARTUP_STAGE_SPEC[boot.stage].label}
-            </span>
-            <span>{Math.floor(clamp(displayedProgress, 0, 100))}%</span>
-          </div>
-        </div>
-
-        <div className="mt-6 w-full max-w-[360px] space-y-1.5 opacity-75">
-          {steps.map((step) => (
-            <div key={step.id} className="flex items-center gap-2.5">
-              <div className="grid h-3.5 w-3.5 place-items-center">
-                {step.error ? (
-                  <div className="h-1.5 w-1.5 rounded-full bg-[var(--danger)]" />
-                ) : step.done ? (
-                  <div className="h-1.5 w-1.5 rounded-full bg-[var(--success)]" />
-                ) : (
-                  <div
-                    className={`h-1.5 w-1.5 rounded-full ${step.active ? "bg-[var(--accent)]" : "bg-[var(--border)]"}`}
-                  />
-                )}
-              </div>
-              <p
-                className={`text-[11px] ${step.error ? "text-[var(--danger)]" : step.active ? "text-[var(--text-muted)]" : "text-[var(--text-faint)]"}`}
-              >
-                {step.text}
-              </p>
-            </div>
-          ))}
-        </div>
-
-        <p className="mt-5 max-w-[360px] text-center text-[11px] leading-5 text-[var(--text-muted)]">
+        <p className="mt-5 max-w-[640px] text-center text-[12px] leading-5 text-[var(--text-muted)]">
           {boot.detail}
         </p>
+
         {boot.error ? (
-          <p className="mt-2 max-w-[360px] text-center text-[11px] leading-5 text-[var(--danger)]">
-            Startup stopped. Open diagnostics from Dashboard once engine is
-            reachable.
+          <p className="mt-3 max-w-[640px] text-center text-[12px] leading-5 text-[var(--danger)]">
+            Startup stopped. Open diagnostics from Dashboard once engine is reachable.
           </p>
         ) : null}
       </div>

@@ -119,6 +119,35 @@ app.post("/api/settings", (req, res) => {
   });
 });
 
+app.get("/api/projects", (_req, res) => {
+  try {
+    ensureDir(projectsRoot);
+    const entries = fs.readdirSync(projectsRoot);
+    const projects = entries
+      .filter((entry) => {
+        const fullPath = path.join(projectsRoot, entry);
+        try {
+          return fs.statSync(fullPath).isDirectory();
+        } catch {
+          return false;
+        }
+      })
+      .map((id) => projectPayload(id))
+      .sort((a, b) => {
+        const aTime = a.job.createdAt ? new Date(a.job.createdAt).getTime() : 0;
+        const bTime = b.job.createdAt ? new Date(b.job.createdAt).getTime() : 0;
+        return bTime - aTime;
+      });
+    res.json({
+      ok: true,
+      projects,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    res.status(500).json({ ok: false, error: message });
+  }
+});
+
 app.post("/api/projects", (req, res) => {
   const id = safeProjectId(req.body?.id || `project_${Date.now()}`);
   ensureProjectLayout(id);

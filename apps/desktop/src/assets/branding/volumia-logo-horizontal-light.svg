@@ -1,21 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="980" height="240" viewBox="0 0 980 240" fill="none">
-  <defs>
-    <linearGradient id="logoEdgeLight" x1="70" y1="38" x2="150" y2="190" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#66E8FF"/>
-      <stop offset="0.58" stop-color="#2EB8FF"/>
-      <stop offset="1" stop-color="#0A84FF"/>
-    </linearGradient>
-    <linearGradient id="logoMeshLight" x1="130" y1="52" x2="188" y2="204" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#82ECFF"/>
-      <stop offset="1" stop-color="#6C4DFF"/>
-    </linearGradient>
-  </defs>
+  <!-- Monochrome horizontal logo that inherits currentColor. -->
+  <path d="M70 38H116L144 178H116L70 38Z" fill="currentColor"/>
+  <path d="M70 38L144 178" stroke="currentColor" stroke-width="3.5"/>
+  <path d="M146 178C176 152 204 126 222 54C194 62 176 78 160 98C152 112 148 132 142 176C154 194 166 206 182 220C176 202 164 190 146 178Z" fill="currentColor" fill-opacity="0.12" stroke="currentColor" stroke-opacity="0.86" stroke-width="2.4"/>
 
-  <path d="M70 38H116L144 178H116L70 38Z" fill="#253765"/>
-  <path d="M70 38L144 178" stroke="url(#logoEdgeLight)" stroke-width="3.5"/>
-  <path d="M146 178C176 152 204 126 222 54C194 62 176 78 160 98C152 112 148 132 142 176C154 194 166 206 182 220C176 202 164 190 146 178Z" fill="#2A3F70" stroke="url(#logoMeshLight)" stroke-width="2.4"/>
-
-  <text x="272" y="128" font-family="Aptos, 'Segoe UI Variable Text', 'Segoe UI', sans-serif" font-size="78" letter-spacing="0.18em" font-weight="600" fill="#0A1329">VOLUMIA</text>
-  <text x="274" y="170" font-family="Aptos, 'Segoe UI Variable Text', 'Segoe UI', sans-serif" font-size="16" letter-spacing="0.24em" font-weight="600" fill="#5E6F95">SPATIAL INTELLIGENCE</text>
+  <text x="272" y="128" font-family="Aptos, 'Segoe UI Variable Text', 'Segoe UI', sans-serif" font-size="78" letter-spacing="0.18em" font-weight="600" fill="currentColor">VOLUMIA</text>
+  <text x="274" y="170" font-family="Aptos, 'Segoe UI Variable Text', 'Segoe UI', sans-serif" font-size="16" letter-spacing="0.24em" font-weight="600" fill="currentColor" fill-opacity="0.68">SPATIAL INTELLIGENCE</text>
 </svg>
 

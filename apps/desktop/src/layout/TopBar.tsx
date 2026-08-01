@@ -43,7 +43,7 @@ export function TopBar() {
   return (
     <header className={headerClass}>
       <div className="flex min-w-0 items-center gap-3">
-        <BrandLogo size={16} label="VOLUMIA" />
+        <BrandLogo size={16} label="VOLUMIA" tone="accent" emphasis="glow" />
         <div className={dividerClass} />
         <h1 className="truncate text-sm font-normal tracking-[0.04em] text-[var(--text)]">
           {pageTitle}

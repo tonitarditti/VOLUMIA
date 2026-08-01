@@ -1,6 +1,6 @@
-import brandIcon from "@/assets/branding/volumia-icon-final.svg";
+import brandIcon from "@/assets/branding/volumia-icon-mono.svg";
 
-type BrandLogoTone = "default" | "muted" | "inverse";
+type BrandLogoTone = "default" | "muted" | "inverse" | "accent";
 type BrandLogoEmphasis = "none" | "soft" | "glow";
 
 export type BrandLogoProps = {
@@ -18,6 +18,7 @@ const toneColor: Record<BrandLogoTone, string> = {
   default: "var(--text)",
   muted: "var(--text-muted)",
   inverse: "var(--text-inverse)",
+  accent: "var(--accent)",
 };
 
 const emphasisShadow: Record<BrandLogoEmphasis, string | undefined> = {
@@ -54,7 +55,7 @@ export function BrandLogo({
         "inline-flex min-w-0 items-center align-middle",
         className,
       )}
-      style={{ gap: `${gap}px` }}
+      style={{ gap: `${gap}px`, color: textColor }}
       aria-label={label}
       role={label ? "img" : undefined}
     >

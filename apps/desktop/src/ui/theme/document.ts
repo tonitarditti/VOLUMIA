@@ -217,6 +217,51 @@ function getColorwayExpressions(theme: Theme, colorway: Colorway) {
     } as const;
   }
 
+  if (colorway === "warm") {
+    return {
+      "--app-bg": "#F8F5F1",
+      "--app-background-image":
+        "radial-gradient(circle at top, color-mix(in srgb, #B59A76 4%, transparent) 0%, transparent 48%), linear-gradient(180deg, color-mix(in srgb, #B59A76 2%, transparent), transparent 58%)",
+      "--panel-bg": "#FFFCF8",
+      "--panel-bg-soft": "color-mix(in srgb, #FFFCF8 92%, #B59A76 8%)",
+      "--panel-border": "rgba(181, 154, 118, 0.14)",
+      "--panel-border-strong": "rgba(181, 154, 118, 0.22)",
+      "--bg-app": "var(--app-bg)",
+      "--bg": "var(--app-bg)",
+      "--bg-surface-1": "var(--panel-bg)",
+      "--bg-surface-2": "var(--panel-bg-soft)",
+      "--bg-panel-dark": "#F0EAE0",
+      "--surface-1": "var(--panel-bg)",
+      "--surface-2": "var(--panel-bg-soft)",
+      "--surface-3": "color-mix(in srgb, var(--panel-bg-soft) 88%, white 12%)",
+      "--surface-raised": "white",
+      "--input-bg": "color-mix(in srgb, var(--panel-bg-soft) 90%, white 10%)",
+      "--input-border": "rgba(181, 154, 118, 0.18)",
+      "--border": "rgba(181, 154, 118, 0.14)",
+      "--border-strong": "rgba(181, 154, 118, 0.22)",
+      "--text": "#4D4842",
+      "--text-muted": "#8F877E",
+      "--text-faint": "rgba(77, 72, 66, 0.58)",
+      "--accent-primary": "#B59A76",
+      "--accent-primary-hover": "color-mix(in srgb, #B59A76 88%, #8B6F47 12%)",
+      "--accent-primary-soft": "rgba(181, 154, 118, 0.16)",
+      "--accent": "var(--accent-primary)",
+      "--accent-hover": "var(--accent-primary-hover)",
+      "--accent-2": "#C8AD87",
+      "--accent-soft": "var(--accent-primary-soft)",
+      "--glass-bg": "rgba(255, 252, 248, 0.72)",
+      "--glass-bg-strong": "rgba(255, 252, 248, 0.86)",
+      "--glass-border": "rgba(181, 154, 118, 0.2)",
+      "--shell-topbar": "color-mix(in srgb, var(--panel-bg-soft) 92%, white 8%)",
+      "--shell-toolbar": "color-mix(in srgb, var(--panel-bg) 94%, white 6%)",
+      "--shell-panel": "var(--panel-bg)",
+      "--shell-contrast-panel": "#F0EAE0",
+      "--shell-contrast-surface": "rgba(77, 72, 66, 0.08)",
+      "--shell-contrast-border": "rgba(181, 154, 118, 0.16)",
+      "--shell-contrast-tag": "rgba(181, 154, 118, 0.1)",
+    } as const;
+  }
+
   return {
     "--app-bg": `color-mix(in srgb, var(--theme-bg-app) ${isDark ? 92 : 94}%, ${brightRef} ${isDark ? 8 : 6}%)`,
     "--app-background-image":

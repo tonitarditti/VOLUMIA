@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none">
-  <path d="M318 248H478L558 624H470L318 248Z" fill="#FFFFFF" fill-opacity="0.9"/>
-  <path d="M318 248L558 624" stroke="#FFFFFF" stroke-width="6" stroke-opacity="0.95"/>
-  <path d="M546 624C646 538 746 466 812 286C714 304 654 368 590 456C560 496 544 548 526 620C572 680 616 730 664 764C646 712 604 668 546 624Z" fill="#FFFFFF" fill-opacity="0.12" stroke="#FFFFFF" stroke-opacity="0.86" stroke-width="4"/>
-  <path d="M478 248L558 624" stroke="#FFFFFF" stroke-opacity="0.78" stroke-width="4"/>
-  <path d="M558 624L664 764" stroke="#FFFFFF" stroke-opacity="0.7" stroke-width="4"/>
+  <path d="M318 248H478L558 624H470L318 248Z" fill="currentColor" fill-opacity="0.9"/>
+  <path d="M318 248L558 624" stroke="currentColor" stroke-width="6" stroke-opacity="0.95"/>
+  <path d="M546 624C646 538 746 466 812 286C714 304 654 368 590 456C560 496 544 548 526 620C572 680 616 730 664 764C646 712 604 668 546 624Z" fill="currentColor" fill-opacity="0.12" stroke="currentColor" stroke-opacity="0.86" stroke-width="4"/>
+  <path d="M478 248L558 624" stroke="currentColor" stroke-opacity="0.78" stroke-width="4"/>
+  <path d="M558 624L664 764" stroke="currentColor" stroke-opacity="0.7" stroke-width="4"/>
 </svg>

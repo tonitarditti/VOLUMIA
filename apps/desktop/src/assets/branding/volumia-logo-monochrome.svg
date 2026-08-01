@@ -1,8 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="980" height="240" viewBox="0 0 980 240" fill="none">
-  <path d="M70 38H116L144 178H116L70 38Z" fill="#FFFFFF" fill-opacity="0.9"/>
-  <path d="M70 38L144 178" stroke="#FFFFFF" stroke-opacity="0.9" stroke-width="3.5"/>
-  <path d="M146 178C176 152 204 126 222 54C194 62 176 78 160 98C152 112 148 132 142 176C154 194 166 206 182 220C176 202 164 190 146 178Z" fill="#FFFFFF" fill-opacity="0.14" stroke="#FFFFFF" stroke-opacity="0.82" stroke-width="2.4"/>
+  <!-- Monochrome logo that inherits currentColor. -->
+  <path d="M70 38H116L144 178H116L70 38Z" fill="currentColor" fill-opacity="0.9"/>
+  <path d="M70 38L144 178" stroke="currentColor" stroke-opacity="0.9" stroke-width="3.5"/>
+  <path d="M146 178C176 152 204 126 222 54C194 62 176 78 160 98C152 112 148 132 142 176C154 194 166 206 182 220C176 202 164 190 146 178Z" fill="currentColor" fill-opacity="0.14" stroke="currentColor" stroke-opacity="0.82" stroke-width="2.4"/>
 
-  <text x="272" y="128" font-family="Aptos, 'Segoe UI Variable Text', 'Segoe UI', sans-serif" font-size="78" letter-spacing="0.18em" font-weight="600" fill="#FFFFFF">VOLUMIA</text>
-  <text x="274" y="170" font-family="Aptos, 'Segoe UI Variable Text', 'Segoe UI', sans-serif" font-size="16" letter-spacing="0.24em" font-weight="600" fill="#FFFFFF" fill-opacity="0.72">SPATIAL INTELLIGENCE</text>
+  <text x="272" y="128" font-family="Aptos, 'Segoe UI Variable Text', 'Segoe UI', sans-serif" font-size="78" letter-spacing="0.18em" font-weight="600" fill="currentColor">VOLUMIA</text>
+  <text x="274" y="170" font-family="Aptos, 'Segoe UI Variable Text', 'Segoe UI', sans-serif" font-size="16" letter-spacing="0.24em" font-weight="600" fill="currentColor" fill-opacity="0.72">SPATIAL INTELLIGENCE</text>
 </svg>
