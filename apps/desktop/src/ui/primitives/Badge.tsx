@@ -29,13 +29,13 @@ export function Badge({
 }: BadgeProps) {
   return (
     <span
-      className={`inline-flex h-[28px] items-center gap-[var(--space-4)] rounded-[var(--radius-lg)] border px-[var(--space-12)] text-[10px] font-semibold uppercase tracking-[0.08em] ${toneClasses[tone]} ${className}`}
+      className={`inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-[11px] font-semibold leading-none ${toneClasses[tone]} ${className}`}
       {...props}
     >
       {dot ? (
         <span
           aria-hidden="true"
-          className="h-1.5 w-1.5 rounded-full bg-current opacity-75"
+          className="h-1.5 w-1.5 rounded-full bg-current"
         />
       ) : null}
       <span>{children}</span>

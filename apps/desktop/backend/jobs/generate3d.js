@@ -18,16 +18,22 @@ const logPath = path.join(logDir, "volumia.log");
 const validModes = new Set(["demo", "quick", "textured", "photogrammetry"]);
 const glbMagic = Buffer.from([0x67, 0x6c, 0x54, 0x46]);
 const QUICK_CANONICAL_ROTATION = {
-  preset: "triposr_z_up_to_volumia_y_up",
+  preset: "triposr_to_volumia_y_up_grounded_front_positive_z",
   rotationXDeg: -90,
-  rotationYDeg: 0,
-  rotationZDeg: 0,
+  // Blender's OBJ importer already performs its own Y-up -> Z-up conversion.
+  // TripoSR's OBJ is camera-oriented, so the two remaining quarter turns are
+  // required to put the real support side on Blender Z=0 and face VOLUMIA +Z.
+  rotationYDeg: -90,
+  rotationZDeg: -90,
 };
 const QUICK_AXIS_NORMALIZATION = {
   applied: true,
   source: "TripoSR Z-up",
   target: "VOLUMIA Y-up",
   rotationXDeg: -90,
+  rotationYDeg: -90,
+  rotationZDeg: -90,
+  forwardAxis: "+Z",
   centered: true,
   grounded: true,
 };
@@ -253,6 +259,58 @@ function isValidGlb(filePath) {
   return header.equals(glbMagic);
 }
 
+function readGlbJson(filePath) {
+  const buffer = fs.readFileSync(filePath);
+  if (buffer.length < 20 || !buffer.subarray(0, 4).equals(glbMagic)) {
+    throw new Error(`Invalid GLB header: ${filePath}`);
+  }
+  const jsonLength = buffer.readUInt32LE(12);
+  const jsonType = buffer.readUInt32LE(16);
+  if (jsonType !== 0x4e4f534a || 20 + jsonLength > buffer.length) {
+    throw new Error(`Invalid GLB JSON chunk: ${filePath}`);
+  }
+  return JSON.parse(buffer.subarray(20, 20 + jsonLength).toString("utf8").replace(/\0+$/u, ""));
+}
+
+function verifyGroundedYUpGlb(filePath) {
+  const gltf = readGlbJson(filePath);
+  const positionAccessorIndexes = new Set();
+  for (const mesh of gltf.meshes || []) {
+    for (const primitive of mesh.primitives || []) {
+      const positionAccessor = primitive.attributes?.POSITION;
+      if (Number.isInteger(positionAccessor)) {
+        positionAccessorIndexes.add(positionAccessor);
+      }
+    }
+  }
+
+  const bounds = [...positionAccessorIndexes]
+    .map((index) => gltf.accessors?.[index])
+    .filter(
+      (accessor) =>
+        accessor?.type === "VEC3" &&
+        Array.isArray(accessor.min) &&
+        Array.isArray(accessor.max) &&
+        accessor.min.length === 3 &&
+        accessor.max.length === 3
+    );
+  if (bounds.length === 0) {
+    throw new Error("El GLB normalizado no contiene bounds POSITION verificables.");
+  }
+
+  const minimumY = Math.min(...bounds.map((accessor) => Number(accessor.min[1])));
+  const maximumY = Math.max(...bounds.map((accessor) => Number(accessor.max[1])));
+  const height = maximumY - minimumY;
+  const tolerance = Math.max(1, Math.abs(height)) * 1e-4;
+  if (!Number.isFinite(minimumY) || !Number.isFinite(maximumY) || height <= tolerance) {
+    throw new Error("El GLB normalizado no tiene una altura Y válida.");
+  }
+  if (Math.abs(minimumY) > tolerance) {
+    throw new Error(`El GLB normalizado no quedó apoyado en Y=0 (minY=${minimumY}).`);
+  }
+  return { minimumY, maximumY, height };
+}
+
 function listFilesRecursive(root) {
   if (!fs.existsSync(root)) {
     return [];
@@ -417,8 +475,23 @@ async function runBlenderOptimize(projectId, sourcePath, options = {}) {
   if (!isValidGlb(optimizedGlb)) {
     throw new Error("Blender termino, pero output/optimized.glb no es un GLB valido.");
   }
+  let canonicalBounds = null;
+  if (normalizeToGround) {
+    canonicalBounds = verifyGroundedYUpGlb(optimizedGlb);
+    appendJobLog(
+      projectId,
+      `Canonical GLB verified: Y-up minY=${canonicalBounds.minimumY.toFixed(6)} height=${canonicalBounds.height.toFixed(6)}`
+    );
+  }
   fs.copyFileSync(optimizedGlb, paths.latestGlb);
-  return { latestGlb: paths.latestGlb, optimizedGlb, rotation, normalizeToGround, warnings: [] };
+  return {
+    latestGlb: paths.latestGlb,
+    optimizedGlb,
+    rotation,
+    normalizeToGround,
+    canonicalBounds,
+    warnings: [],
+  };
 }
 
 async function runQuick(projectId, inputFiles) {
@@ -468,7 +541,10 @@ async function runQuick(projectId, inputFiles) {
     throw new Error("El runner no generó modelo.");
   }
   const raw = copyRawOutput(projectId, generated);
-  appendJobLog(projectId, "Quick axis normalization applied: TripoSR Z-up → VOLUMIA Y-up");
+  appendJobLog(
+    projectId,
+    "Quick axis normalization applied: TripoSR → VOLUMIA Y-up; support side grounded and canonical front aligned to +Z"
+  );
   const optimized = await runBlenderOptimize(projectId, raw, {
     rotation: QUICK_CANONICAL_ROTATION,
     normalizeToGround: true,
@@ -480,6 +556,7 @@ async function runQuick(projectId, inputFiles) {
     source: generated,
     rotation: optimized.rotation,
     axisNormalization: QUICK_AXIS_NORMALIZATION,
+    canonicalBounds: optimized.canonicalBounds,
     warnings: optimized.warnings,
   };
 }
@@ -667,6 +744,9 @@ function startGeneration(projectId, mode) {
 }
 
 module.exports = {
+  QUICK_CANONICAL_ROTATION,
+  QUICK_AXIS_NORMALIZATION,
+  verifyGroundedYUpGlb,
   logPath,
   validModes,
   isValidGlb,

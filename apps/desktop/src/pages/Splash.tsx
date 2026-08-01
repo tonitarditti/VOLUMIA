@@ -85,7 +85,7 @@ export function Splash({ onComplete }: SplashProps) {
             style={{
               animation: "fadeInUp 0.8s ease-out 0.4s both",
               textShadow:
-                "0 2px 8px rgba(0, 0, 0, 0.15), 0 0 20px rgba(201, 164, 93, 0.1)",
+                "0 2px 8px rgba(0, 0, 0, 0.15), 0 0 20px rgba(76, 111, 255, 0.18)",
             }}
           >
             VOLUMIA
@@ -97,7 +97,7 @@ export function Splash({ onComplete }: SplashProps) {
               letterSpacing: "0.15em",
             }}
           >
-            Creative 3D Assistant
+            Tu asistente creativo 3D
           </p>
         </div>
 
@@ -114,7 +114,7 @@ export function Splash({ onComplete }: SplashProps) {
               width: `${progress}%`,
               background:
                 "linear-gradient(90deg, var(--accent), var(--accent-2))",
-              boxShadow: "0 0 12px rgba(201, 164, 93, 0.5)",
+              boxShadow: "0 0 12px rgba(76, 111, 255, 0.45)",
             }}
           />
         </div>
@@ -126,7 +126,7 @@ export function Splash({ onComplete }: SplashProps) {
             animation: "fadeIn 0.8s ease-out 0.7s both",
           }}
         >
-          Initializing workspace...
+          Inicializando espacio de trabajo...
         </p>
       </div>
 

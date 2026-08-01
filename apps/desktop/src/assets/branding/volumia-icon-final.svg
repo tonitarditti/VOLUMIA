@@ -1,5 +1,14 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" aria-hidden>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none">
   <defs>
+    <linearGradient id="volumiaBrandGradient" x1="286" y1="236" x2="778" y2="764" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#4C6FFF"/>
+      <stop offset="0.52" stop-color="#16C7E3"/>
+      <stop offset="1" stop-color="#7C5CFC"/>
+    </linearGradient>
+    <linearGradient id="volumiaMeshGradient" x1="526" y1="286" x2="742" y2="754" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#16C7E3"/>
+      <stop offset="1" stop-color="#7C5CFC"/>
+    </linearGradient>
     <clipPath id="meshClip">
       <path d="M546 624C646 538 746 466 812 286C714 304 654 368 590 456C560 496 544 548 526 620C572 680 616 730 664 764C646 712 604 668 546 624Z"/>
     </clipPath>
@@ -13,17 +22,16 @@
   </defs>
 
   <g filter="url(#softGlow)">
-    <!-- Solid V body, uses currentColor to allow theming (e.g., gold via CSS var(--accent)) -->
-    <path d="M318 248H478L558 624H470L318 248Z" fill="currentColor" fill-opacity="0.96"/>
+    <path d="M318 248H478L558 624H470L318 248Z" fill="url(#volumiaBrandGradient)" fill-opacity="0.98"/>
 
     <!-- Strong edge line -->
-    <path d="M318 248L558 624" stroke="currentColor" stroke-width="10" stroke-opacity="0.98"/>
+    <path d="M318 248L558 624" stroke="#B9F4FF" stroke-width="10" stroke-opacity="0.9"/>
 
     <!-- Subtle mesh fill inside the V -->
-    <path d="M546 624C646 538 746 466 812 286C714 304 654 368 590 456C560 496 544 548 526 620C572 680 616 730 664 764C646 712 604 668 546 624Z" fill="currentColor" fill-opacity="0.14"/>
+    <path d="M546 624C646 538 746 466 812 286C714 304 654 368 590 456C560 496 544 548 526 620C572 680 616 730 664 764C646 712 604 668 546 624Z" fill="url(#volumiaMeshGradient)" fill-opacity="0.2"/>
 
     <!-- Technical mesh lines clipped inside the mesh area -->
-    <g clip-path="url(#meshClip)" stroke="currentColor" stroke-width="3" stroke-linecap="round" opacity="0.56">
+    <g clip-path="url(#meshClip)" stroke="url(#volumiaMeshGradient)" stroke-width="3" stroke-linecap="round" opacity="0.8">
       <path d="M520 620C584 660 636 708 672 768"/>
       <path d="M530 596C604 644 666 700 710 764"/>
       <path d="M542 572C622 622 690 686 740 758"/>
@@ -46,8 +54,8 @@
     </g>
 
     <!-- Accent stroke detail on edges (slightly lighter) -->
-    <path d="M478 248L558 624" stroke="currentColor" stroke-opacity="0.86" stroke-width="5"/>
-    <path d="M558 624L664 764" stroke="currentColor" stroke-opacity="0.7" stroke-width="5"/>
+    <path d="M478 248L558 624" stroke="#16C7E3" stroke-opacity="0.92" stroke-width="5"/>
+    <path d="M558 624L664 764" stroke="#7C5CFC" stroke-opacity="0.9" stroke-width="5"/>
   </g>
 </svg>
 

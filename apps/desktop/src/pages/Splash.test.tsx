@@ -16,7 +16,7 @@ describe("Splash", () => {
 
     render(<Splash onComplete={onComplete} />);
 
-    expect(screen.getByText("Initializing workspace...")).toBeInTheDocument();
+    expect(screen.getByText("Inicializando espacio de trabajo...")).toBeInTheDocument();
 
     act(() => {
       vi.advanceTimersByTime(2800);

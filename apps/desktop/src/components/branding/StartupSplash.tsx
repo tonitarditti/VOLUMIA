@@ -10,7 +10,7 @@ export function StartupSplash() {
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          filter: "drop-shadow(0 6px 18px rgba(201,164,93,0.14))",
+          filter: "drop-shadow(0 6px 18px rgba(76,111,255,0.2))",
         }}
       >
         {/* Inline monochrome V icon using currentColor so it adapts to theme accent */}
@@ -44,7 +44,7 @@ export function StartupSplash() {
           </h1>
         </div>
 
-        <p className="mt-2 text-sm text-[var(--text-muted)]">Your Creative 3D Assistant</p>
+        <p className="mt-2 text-sm text-[var(--text-muted)]">Tu asistente creativo 3D</p>
 
         <div className="mt-6">
           <LoadingDots />

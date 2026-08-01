@@ -52,6 +52,7 @@ const cssVariableMap: Record<keyof ThemeTokens, string> = {
   badgeDangerText: "--badge-danger-text",
   shadow: "--shadow",
   shadowPanel: "--shadow-panel",
+  shadowBrand: "--shadow-brand",
   focusRing: "--focus-ring",
   glassBg: "--glass-bg",
   glassBgStrong: "--glass-bg-strong",
@@ -172,7 +173,6 @@ function applyThemeVariables(root: HTMLElement, theme: Theme) {
 function getColorwayExpressions(theme: Theme, colorway: Colorway) {
   const isDark = theme === "dark";
   const brightRef = isDark ? "white" : "var(--text-inverse)";
-  const dimRef = isDark ? "var(--theme-text-muted)" : "black";
 
   if (colorway === "atelier") {
     return {
@@ -218,97 +218,47 @@ function getColorwayExpressions(theme: Theme, colorway: Colorway) {
   }
 
   if (colorway === "warm") {
-    return {
-      "--app-bg": "#F8F5F1",
-      "--app-background-image":
-        "radial-gradient(circle at top, color-mix(in srgb, #B59A76 4%, transparent) 0%, transparent 48%), linear-gradient(180deg, color-mix(in srgb, #B59A76 2%, transparent), transparent 58%)",
-      "--panel-bg": "#FFFCF8",
-      "--panel-bg-soft": "color-mix(in srgb, #FFFCF8 92%, #B59A76 8%)",
-      "--panel-border": "rgba(181, 154, 118, 0.14)",
-      "--panel-border-strong": "rgba(181, 154, 118, 0.22)",
-      "--bg-app": "var(--app-bg)",
-      "--bg": "var(--app-bg)",
-      "--bg-surface-1": "var(--panel-bg)",
-      "--bg-surface-2": "var(--panel-bg-soft)",
-      "--bg-panel-dark": "#F0EAE0",
-      "--surface-1": "var(--panel-bg)",
-      "--surface-2": "var(--panel-bg-soft)",
-      "--surface-3": "color-mix(in srgb, var(--panel-bg-soft) 88%, white 12%)",
-      "--surface-raised": "white",
-      "--input-bg": "color-mix(in srgb, var(--panel-bg-soft) 90%, white 10%)",
-      "--input-border": "rgba(181, 154, 118, 0.18)",
-      "--border": "rgba(181, 154, 118, 0.14)",
-      "--border-strong": "rgba(181, 154, 118, 0.22)",
-      "--text": "#4D4842",
-      "--text-muted": "#8F877E",
-      "--text-faint": "rgba(77, 72, 66, 0.58)",
-      "--accent-primary": "#B59A76",
-      "--accent-primary-hover": "color-mix(in srgb, #B59A76 88%, #8B6F47 12%)",
-      "--accent-primary-soft": "rgba(181, 154, 118, 0.16)",
-      "--accent": "var(--accent-primary)",
-      "--accent-hover": "var(--accent-primary-hover)",
-      "--accent-2": "#C8AD87",
-      "--accent-soft": "var(--accent-primary-soft)",
-      "--glass-bg": "rgba(255, 252, 248, 0.72)",
-      "--glass-bg-strong": "rgba(255, 252, 248, 0.86)",
-      "--glass-border": "rgba(181, 154, 118, 0.2)",
-      "--shell-topbar": "color-mix(in srgb, var(--panel-bg-soft) 92%, white 8%)",
-      "--shell-toolbar": "color-mix(in srgb, var(--panel-bg) 94%, white 6%)",
-      "--shell-panel": "var(--panel-bg)",
-      "--shell-contrast-panel": "#F0EAE0",
-      "--shell-contrast-surface": "rgba(77, 72, 66, 0.08)",
-      "--shell-contrast-border": "rgba(181, 154, 118, 0.16)",
-      "--shell-contrast-tag": "rgba(181, 154, 118, 0.1)",
-    } as const;
+    return getColorwayExpressions(theme, "neutral");
   }
 
   return {
-    "--app-bg": `color-mix(in srgb, var(--theme-bg-app) ${isDark ? 92 : 94}%, ${brightRef} ${isDark ? 8 : 6}%)`,
-    "--app-background-image":
-      `radial-gradient(circle at top, color-mix(in srgb, ${brightRef} 10%, transparent) 0%, transparent 48%), linear-gradient(180deg, color-mix(in srgb, ${brightRef} 4%, transparent), transparent 56%)`,
-    "--panel-bg": `color-mix(in srgb, var(--theme-bg-surface-1) ${isDark ? 90 : 92}%, ${brightRef} ${isDark ? 10 : 8}%)`,
-    "--panel-bg-soft": `color-mix(in srgb, var(--theme-bg-surface-2) ${isDark ? 86 : 89}%, ${brightRef} ${isDark ? 14 : 11}%)`,
-    "--panel-border": isDark
-      ? `color-mix(in srgb, var(--theme-border) 80%, ${dimRef} 20%)`
-      : "var(--theme-border)",
-    "--panel-border-strong": isDark
-      ? `color-mix(in srgb, var(--theme-border-strong) 76%, ${dimRef} 24%)`
-      : "var(--theme-border-strong)",
+    "--app-bg": "var(--theme-bg-app)",
+    "--app-background-image": "var(--body-background-image)",
+    "--panel-bg": "var(--theme-bg-surface-1)",
+    "--panel-bg-soft": "var(--theme-bg-surface-2)",
+    "--panel-border": "var(--theme-border)",
+    "--panel-border-strong": "var(--theme-border-strong)",
     "--bg-app": "var(--app-bg)",
     "--bg": "var(--app-bg)",
     "--bg-surface-1": "var(--panel-bg)",
     "--bg-surface-2": "var(--panel-bg-soft)",
-    "--bg-panel-dark": `color-mix(in srgb, var(--theme-bg-panel-dark) 96%, ${brightRef} 4%)`,
+    "--bg-panel-dark": "var(--theme-bg-panel-dark)",
     "--surface-1": "var(--panel-bg)",
     "--surface-2": "var(--panel-bg-soft)",
-    "--surface-3": `color-mix(in srgb, var(--panel-bg-soft) 90%, ${brightRef} 10%)`,
-    "--surface-raised": `color-mix(in srgb, var(--panel-bg) 84%, ${brightRef} 16%)`,
-    "--input-bg": `color-mix(in srgb, var(--panel-bg-soft) 88%, ${brightRef} 12%)`,
+    "--surface-3": "var(--theme-surface-3)",
+    "--surface-raised": "var(--theme-surface-raised)",
+    "--input-bg": "var(--theme-input-bg)",
     "--input-border": "var(--panel-border)",
     "--border": "var(--panel-border)",
     "--border-strong": "var(--panel-border-strong)",
-    "--text-muted": `color-mix(in srgb, var(--theme-text-muted) 90%, ${brightRef} 10%)`,
-    "--accent-primary": isDark
-      ? `color-mix(in srgb, var(--theme-accent-primary) 62%, ${dimRef} 38%)`
-      : "color-mix(in srgb, var(--theme-accent-primary) 88%, white 12%)",
-    "--accent-primary-hover": isDark
-      ? `color-mix(in srgb, var(--theme-accent-primary-hover) 64%, ${brightRef} 36%)`
-      : "color-mix(in srgb, var(--theme-accent-primary-hover) 92%, #8B6F47 8%)",
-    "--accent-primary-soft": `color-mix(in srgb, var(--theme-accent-primary) 9%, transparent)`,
+    "--text-muted": "var(--theme-text-muted)",
+    "--accent-primary": "var(--theme-accent-primary)",
+    "--accent-primary-hover": "var(--theme-accent-primary-hover)",
+    "--accent-primary-soft": "var(--theme-accent-primary-soft)",
     "--accent": "var(--accent-primary)",
     "--accent-hover": "var(--accent-primary-hover)",
-    "--accent-2": `color-mix(in srgb, var(--accent-primary) 76%, ${brightRef} 24%)`,
+    "--accent-2": "var(--theme-accent-2)",
     "--accent-soft": "var(--accent-primary-soft)",
-    "--glass-bg": `color-mix(in srgb, var(--theme-glass-bg) 84%, var(--panel-bg) 16%)`,
-    "--glass-bg-strong": `color-mix(in srgb, var(--theme-glass-bg-strong) 80%, var(--panel-bg) 20%)`,
-    "--glass-border": `color-mix(in srgb, var(--theme-glass-border) 74%, var(--panel-border) 26%)`,
-    "--shell-topbar": `color-mix(in srgb, var(--panel-bg-soft) 92%, ${brightRef} 8%)`,
-    "--shell-toolbar": `color-mix(in srgb, var(--panel-bg) 94%, ${brightRef} 6%)`,
+    "--glass-bg": "var(--theme-glass-bg)",
+    "--glass-bg-strong": "var(--theme-glass-bg-strong)",
+    "--glass-border": "var(--theme-glass-border)",
+    "--shell-topbar": "var(--theme-shell-topbar)",
+    "--shell-toolbar": "var(--theme-shell-toolbar)",
     "--shell-panel": "var(--panel-bg)",
-    "--shell-contrast-panel": `color-mix(in srgb, var(--theme-shell-contrast-panel) 94%, ${brightRef} 6%)`,
-    "--shell-contrast-surface": `color-mix(in srgb, var(--theme-shell-contrast-surface) 78%, ${brightRef} 22%)`,
-    "--shell-contrast-border": `color-mix(in srgb, var(--theme-shell-contrast-border) 74%, ${brightRef} 26%)`,
-    "--shell-contrast-tag": `color-mix(in srgb, var(--theme-shell-contrast-tag) 78%, ${brightRef} 22%)`,
+    "--shell-contrast-panel": "var(--theme-shell-contrast-panel)",
+    "--shell-contrast-surface": "var(--theme-shell-contrast-surface)",
+    "--shell-contrast-border": "var(--theme-shell-contrast-border)",
+    "--shell-contrast-tag": "var(--theme-shell-contrast-tag)",
   } as const;
 }
 

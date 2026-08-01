@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { generationClient, type ProjectPayload } from "@/services/generationClient";
-import brandIcon from "@/assets/branding/VOLUMIA-dorado-transparente.png";
 import { WelcomeSection } from "./WelcomeSection";
 import { RecentProjects } from "./RecentProjects";
 
@@ -110,46 +109,8 @@ export function HomeDashboard() {
   };
 
   return (
-    <main className="h-full min-h-0 overflow-y-auto">
-      {/* Header */}
-      <header className="sticky top-0 z-10 border-b border-[var(--border)] bg-[var(--surface-1)] backdrop-blur-sm">
-        <div className="flex h-16 items-center justify-between px-8">
-          <div className="flex min-h-[48px] items-center gap-3 border-0 bg-transparent shadow-none">
-            <img
-              src={brandIcon}
-              alt="VOLUMIA"
-              className="h-9 w-9 shrink-0 border-0 bg-transparent object-contain opacity-100 shadow-none mix-blend-normal [filter:brightness(1.38)_saturate(1.12)]"
-              style={{
-                background: "transparent",
-                border: "none",
-                boxShadow: "none",
-                filter: "brightness(1.38) saturate(1.12)",
-                mixBlendMode: "normal",
-                opacity: 1,
-              }}
-              draggable={false}
-            />
-            <div className="flex flex-col justify-center gap-1">
-              <p className="text-[17px] font-semibold uppercase leading-none tracking-[0.06em] text-[var(--accent)]">
-                VOLUMIA
-              </p>
-              <p className="text-[10px] leading-none text-[var(--text-muted)]">
-                Your Creative 3D Assistant
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-[var(--surface-2)] text-xs text-[var(--text-muted)]">
-              <span className="w-2 h-2 rounded-full bg-green-500" />
-              LOCAL ENGINE: READY
-            </div>
-          </div>
-        </div>
-      </header>
-
-      {/* Content */}
-      <div className="bg-[var(--app-bg)]">
+    <main className="h-full min-h-0 overflow-y-auto overflow-x-hidden bg-[var(--background)]">
+      <div>
         <WelcomeSection
           onNewProject={createNewProject}
           onImportImages={() => {

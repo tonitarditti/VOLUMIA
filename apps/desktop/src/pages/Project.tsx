@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Dropzone } from "@/components/Dropzone";
 import { GenerateButton } from "@/components/GenerateButton";
@@ -57,7 +57,7 @@ export function Project() {
     return null;
   }, [job?.status, modelVersion, project?.modelUrl, projectId]);
 
-  const refresh = async () => {
+  const refresh = useCallback(async () => {
     const [status, toolStatus] = await Promise.all([
       generationClient.status(projectId),
       generationClient.toolsStatus(),
@@ -68,7 +68,7 @@ export function Project() {
     if (status.job.status === "complete") {
       setModelVersion((value) => value + 1);
     }
-  };
+  }, [projectId]);
 
   useEffect(() => {
     let active = true;
@@ -99,7 +99,7 @@ export function Project() {
       void refresh().catch((error) => setMessage(error instanceof Error ? error.message : "No se pudo refrescar el job."));
     }, 1000);
     return () => window.clearInterval(timer);
-  }, [running]);
+  }, [refresh, running]);
 
   const upload = async (nextFiles: File[]) => {
     setFiles(nextFiles);
@@ -226,7 +226,7 @@ export function Project() {
           ) : null}
           <JobStatus job={job} />
           <div>
-            <p className="mb-2 text-sm font-medium text-[var(--text)]">Configuracion real</p>
+            <p className="mb-2 text-sm font-medium text-[var(--text)]">Configuración real</p>
             <ToolStatusGrid tools={tools} />
           </div>
           {message ? <p className="text-sm leading-5 text-[var(--text-muted)]">{message}</p> : null}
@@ -236,7 +236,7 @@ export function Project() {
       <section className="flex min-h-0 flex-col bg-[var(--shell-viewport)] p-5">
         <div className="mb-4 flex items-center justify-between gap-3">
           <div>
-            <p className="text-xs uppercase tracking-[0.14em] text-[var(--text-faint)]">Viewer</p>
+            <p className="text-xs uppercase tracking-[0.14em] text-[var(--text-faint)]">Visor</p>
             <h2 className="mt-1 text-xl font-medium text-[var(--text)]">latest.glb</h2>
           </div>
           <div className="flex items-center gap-2">

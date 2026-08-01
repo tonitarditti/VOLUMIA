@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import { bootstrapDocumentTheme } from "@/ui/theme";
+import { SettingsProvider } from "@/volumia/settings/context";
 import "./ui/theme/theme.css";
 import "./index.css";
 
@@ -15,7 +16,9 @@ bootstrapDocumentTheme();
 
 createRoot(container).render(
   <StrictMode>
-    <App />
+    <SettingsProvider>
+      <App />
+    </SettingsProvider>
   </StrictMode>
 );
 

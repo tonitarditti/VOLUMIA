@@ -44,18 +44,18 @@ export function Dropzone({ files, disabled = false, onFiles }: DropzoneProps) {
         }}
         onDragLeave={() => setDragging(false)}
         onDrop={onDrop}
-        className={`flex min-h-[152px] w-full flex-col items-center justify-center rounded-[var(--radius-md)] border border-dashed p-5 text-center transition-colors ${
+        className={`flex min-h-[152px] w-full flex-col items-center justify-center rounded-2xl border border-dashed p-5 text-center transition-[background-color,border-color,box-shadow] duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] disabled:cursor-not-allowed disabled:opacity-50 ${
           dragging
             ? "border-[var(--accent)] bg-[var(--accent-soft)]"
-            : "border-[var(--border-strong)] bg-[var(--surface-2)] hover:border-[var(--accent)]"
+            : "border-[var(--border)] bg-[var(--surface)] hover:border-[var(--accent)] hover:bg-[var(--accent-soft)] hover:shadow-[var(--shadow-sm)]"
         }`}
       >
         <span className="grid h-9 w-9 place-items-center rounded-[var(--radius-sm)] border border-[var(--accent)] text-lg text-[var(--accent)]" aria-hidden="true">
           +
         </span>
-        <span className="mt-3 text-sm font-medium text-[var(--text)]">Subir imagenes</span>
+        <span className="mt-3 text-sm font-medium text-[var(--text)]">Subir imágenes</span>
         <span className="mt-1 max-w-sm text-xs leading-5 text-[var(--text-muted)]">
-          Arrastra imagenes o selecciona archivos. Demo acepta cualquier imagen; quick usa la primera.
+          Arrastrá imágenes o seleccioná archivos. Demo acepta cualquier imagen; Quick usa la primera.
         </span>
       </button>
       {files.length > 0 ? (

@@ -6,7 +6,7 @@ import {
   type ProjectPayload,
   type JobStatus,
 } from "@/services/generationClient";
-import { Button } from "@/ui/primitives";
+import { Badge, Button, type BadgeTone } from "@/ui/primitives";
 
 export interface ProjectCardProps {
   project: ProjectPayload;
@@ -134,26 +134,27 @@ function ModelPreview({ projectId }: { projectId: string }) {
   );
 }
 
-function getStatusColor(status: JobStatus): string {
+function getStatusTone(status: JobStatus): BadgeTone {
   switch (status) {
     case "complete":
-      return "text-green-600";
+      return "success";
     case "cancelled":
-      return "text-[var(--text-muted)]";
+      return "danger";
     case "error":
-      return "text-red-600";
+      return "danger";
     case "running":
     case "queued":
-      return "text-amber-600";
+    case "optimizing":
+      return "warning";
     default:
-      return "text-gray-500";
+      return "neutral";
   }
 }
 
 function getStatusLabel(status: JobStatus): string {
   switch (status) {
     case "idle":
-      return "Listo";
+      return "Pendiente";
     case "queued":
     case "running":
       return "Procesando";
@@ -167,22 +168,6 @@ function getStatusLabel(status: JobStatus): string {
       return "Error";
     default:
       return "Desconocido";
-  }
-}
-
-function getStatusBgColor(status: JobStatus): string {
-  switch (status) {
-    case "complete":
-      return "bg-green-600";
-    case "cancelled":
-      return "bg-[var(--text-muted)]";
-    case "error":
-      return "bg-red-600";
-    case "running":
-    case "queued":
-      return "bg-amber-600";
-    default:
-      return "bg-gray-400";
   }
 }
 
@@ -213,21 +198,21 @@ export function ProjectCard({
       )
     : [];
 
-  const statusColorClass = getStatusColor(project.job.status);
-  const statusBgClass = getStatusBgColor(project.job.status);
+  const statusTone = getStatusTone(project.job.status);
   const isProcessing = ["queued", "running", "optimizing"].includes(
     project.job.status,
   );
 
   return (
-    <div className="group rounded-xl overflow-hidden border border-[var(--border)] bg-[var(--surface-1)] transition-all hover:shadow-lg hover:border-[var(--border-strong)]">
+    <article className="group overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)] shadow-[var(--shadow-sm)] transition-[border-color,box-shadow,transform] duration-200 ease-out hover:-translate-y-0.5 hover:border-[var(--border-strong)] hover:shadow-[var(--shadow-md)] motion-reduce:hover:translate-y-0">
       {/* Preview area */}
       <div
         className="relative h-48 overflow-hidden"
         style={{
-          background: hasModel
-            ? "var(--project-preview-gradient)"
-            : "var(--panel-bg-soft)",
+          backgroundColor: "var(--viewer-start)",
+          backgroundImage:
+            "linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px), linear-gradient(145deg, var(--viewer-start), var(--viewer-end))",
+          backgroundSize: "24px 24px, 24px 24px, 100% 100%",
         }}
       >
         {hasModel ? (
@@ -253,40 +238,43 @@ export function ProjectCard({
         )}
 
         {/* Status badge */}
-        <div className="absolute top-3 right-3 px-3 py-1 rounded-full bg-[var(--surface-1)] border border-[var(--border)] text-xs font-medium">
-          <span className={`inline-flex items-center gap-1 ${statusColorClass}`}>
-            <span className={`w-2 h-2 rounded-full ${statusBgClass}`} />
-            {getStatusLabel(project.job.status)}
-          </span>
-        </div>
+        <Badge className="absolute right-3 top-3 shadow-[var(--shadow-sm)]" tone={statusTone} dot>
+          {getStatusLabel(project.job.status)}
+        </Badge>
       </div>
 
       {/* Content */}
-      <div className="p-4 space-y-3">
+      <div className="space-y-3 p-4">
         <div>
-          <h3 className="text-sm font-semibold text-[var(--text)] truncate">
-            {project.id.replace(/^project_/, "").slice(0, 20)}
+          <h3 className="truncate text-sm font-semibold text-[var(--text-primary)]" title={project.id}>
+            Proyecto {project.id.replace(/^project_/, "").slice(0, 20)}
           </h3>
-          <p className="text-xs text-[var(--text-muted)] mt-1">
+          <p className="mt-1 text-xs text-[var(--text-secondary)]">
             {formattedDate}
           </p>
         </div>
 
         {inputFiles.length > 0 && (
-          <p className="text-xs text-[var(--text-faint)]">
+          <p className="text-xs text-[var(--text-muted)]">
             {inputFiles.length} {inputFiles.length === 1 ? "imagen" : "imágenes"}
           </p>
         )}
 
         {project.job.message && (
-          <p className="text-xs text-[var(--text-muted)] line-clamp-2">
+          <p className={`line-clamp-2 text-xs ${
+            project.job.status === "error" || project.job.status === "cancelled"
+              ? "text-[var(--danger)]"
+              : project.job.status === "complete"
+                ? "text-[var(--success)]"
+                : "text-[var(--text-secondary)]"
+          }`}>
             {project.job.message}
           </p>
         )}
 
         {isProcessing ? (
           <Button
-            variant="secondary"
+            variant="danger"
             className="h-9 w-full px-2 text-sm"
             onClick={() => void onCancel(project)}
             disabled={isCancelling || isDeleting}
@@ -297,7 +285,7 @@ export function ProjectCard({
         <div className="grid grid-cols-2 gap-2">
           <Button
             variant="secondary"
-            className="h-9 px-2 text-sm"
+            className="h-9 border-[var(--open-button-border)] px-2 text-sm text-[var(--volumia-blue)] dark:text-[var(--volumia-cyan)]"
             onClick={() => onOpen(project.id)}
             disabled={isDeleting || isCancelling}
           >
@@ -313,6 +301,6 @@ export function ProjectCard({
           </Button>
         </div>
       </div>
-    </div>
+    </article>
   );
 }

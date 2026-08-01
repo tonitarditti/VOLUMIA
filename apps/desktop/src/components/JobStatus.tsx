@@ -13,6 +13,14 @@ function statusTone(status?: string): BadgeTone {
   return "neutral";
 }
 
+function statusLabel(status?: string) {
+  if (status === "complete") return "Completado";
+  if (status === "cancelled") return "Interrumpido";
+  if (status === "error") return "Error";
+  if (status === "running" || status === "optimizing" || status === "queued") return "Procesando";
+  return "Pendiente";
+}
+
 function StatusIcon({ status }: { status?: string }) {
   if (status === "complete") return <span className="text-[var(--status-success)]" aria-hidden="true">OK</span>;
   if (status === "cancelled") return <span className="text-[var(--text-muted)]" aria-hidden="true">--</span>;
@@ -32,14 +40,14 @@ export function JobStatus({ job }: JobStatusProps) {
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <StatusIcon status={status} />
-          <span className="text-sm font-medium text-[var(--text)]">Job</span>
+          <span className="text-sm font-medium text-[var(--text)]">Trabajo</span>
         </div>
         <Badge tone={statusTone(status)} dot>
-          {status}
+          {statusLabel(status)}
         </Badge>
       </div>
       <p className="mt-3 text-sm leading-5 text-[var(--text-muted)]">
-        {job?.error?.message || job?.message || "Sin jobs activos."}
+        {job?.error?.message || job?.message || "Sin trabajos activos."}
       </p>
       {warnings.length > 0 ? (
         <div className="mt-3 rounded-[var(--radius-sm)] border border-[var(--badge-warning-border)] bg-[var(--badge-warning-bg)] p-3">
@@ -51,7 +59,7 @@ export function JobStatus({ job }: JobStatusProps) {
         </div>
       ) : null}
       <div className="mt-4">
-        <div className="text-xs font-medium uppercase tracking-[0.12em] text-[var(--text-faint)]">Logs</div>
+        <div className="text-xs font-medium uppercase tracking-[0.12em] text-[var(--text-faint)]">Registro</div>
         <div className="mt-2 max-h-44 overflow-y-auto rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--surface-2)] p-3">
           {logs.length > 0 ? (
             logs.slice(-30).map((line, index) => (
@@ -60,7 +68,7 @@ export function JobStatus({ job }: JobStatusProps) {
               </p>
             ))
           ) : (
-            <p className="text-xs text-[var(--text-muted)]">Sin logs todavia.</p>
+            <p className="text-xs text-[var(--text-muted)]">Sin registros todavía.</p>
           )}
         </div>
       </div>

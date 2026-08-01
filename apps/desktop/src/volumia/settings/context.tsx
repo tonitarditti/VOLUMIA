@@ -135,7 +135,14 @@ export function SettingsProvider({ children }: PropsWithChildren) {
     if (!hasDesktopBridge()) {
       setSystemLocale(detectBrowserLocale());
       setSystemTheme(detectBrowserTheme());
-      return;
+      if (typeof window.matchMedia !== "function") {
+        return undefined;
+      }
+
+      const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+      const handleThemeChange = () => setSystemTheme(detectBrowserTheme());
+      mediaQuery.addEventListener("change", handleThemeChange);
+      return () => mediaQuery.removeEventListener("change", handleThemeChange);
     }
 
     let active = true;

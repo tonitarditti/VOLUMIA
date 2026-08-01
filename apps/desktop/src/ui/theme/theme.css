@@ -1,4 +1,30 @@
 :root {
+  color-scheme: light;
+  --volumia-blue: #4c6fff;
+  --volumia-blue-hover: #3954d9;
+  --volumia-cyan: #16c7e3;
+  --volumia-violet: #7c5cfc;
+  --brand-gradient: linear-gradient(135deg, #4c6fff 0%, #7c5cfc 100%);
+  --background: var(--bg);
+  --surface: var(--surface-1);
+  --surface-secondary: var(--surface-2);
+  --surface-hover: var(--surface-3);
+  --text-primary: var(--text);
+  --text-secondary: var(--text-muted);
+  --text-disabled: #aab3c1;
+  --viewer-start: #171c2b;
+  --viewer-end: #2a354d;
+  --success-soft: var(--success-bg);
+  --warning-soft: var(--warning-bg);
+  --danger-soft: var(--danger-bg);
+  --info-soft: #e8f9fc;
+  --shadow-sm: var(--shadow);
+  --shadow-md: var(--shadow-panel);
+  --engine-info-text: #087f92;
+  --button-secondary-text: #39445a;
+  --button-secondary-border: #c9d3e1;
+  --open-button-border: #bfcbe0;
+  --danger-border: rgba(217, 74, 90, 0.42);
   --app-bg: var(--bg);
   --app-background-image: var(--body-background-image);
   --panel-bg: var(--surface-1);
@@ -102,18 +128,29 @@
 }
 
 :root[data-colorway="warm"] {
-  --app-bg: var(--theme-warm-bg);
-  --app-background-image:
-    radial-gradient(circle at top, color-mix(in srgb, var(--theme-warm-accent) 4%, transparent) 0%, transparent 48%),
-    linear-gradient(180deg, color-mix(in srgb, var(--theme-warm-accent) 2%, transparent), transparent 58%);
-  --panel-bg: var(--theme-warm-panel);
-  --panel-bg-soft: color-mix(in srgb, var(--theme-warm-panel) 92%, var(--theme-warm-accent) 8%);
-  --panel-border: rgba(181, 154, 118, 0.14);
-  --panel-border-strong: rgba(181, 154, 118, 0.22);
-  --accent: var(--theme-warm-accent);
-  --accent-primary: var(--accent);
-  --accent-primary-hover: color-mix(in srgb, var(--theme-warm-accent) 88%, #8B6F47 12%);
-  --accent-primary-soft: rgba(181, 154, 118, 0.16);
+  --app-bg: var(--theme-bg-app);
+  --app-background-image: var(--body-background-image);
+  --panel-bg: var(--theme-bg-surface-1);
+  --panel-bg-soft: var(--theme-bg-surface-2);
+  --panel-border: var(--theme-border);
+  --panel-border-strong: var(--theme-border-strong);
+  --accent: var(--theme-accent-primary);
+  --accent-primary: var(--theme-accent-primary);
+  --accent-primary-hover: var(--theme-accent-primary-hover);
+  --accent-primary-soft: var(--theme-accent-primary-soft);
+}
+
+:root.dark {
+  color-scheme: dark;
+  --text-disabled: #596477;
+  --viewer-start: #090d15;
+  --viewer-end: #1b2639;
+  --info-soft: rgba(22, 199, 227, 0.14);
+  --engine-info-text: #6fe8fa;
+  --button-secondary-text: var(--text-primary);
+  --button-secondary-border: var(--border-strong);
+  --open-button-border: var(--border-strong);
+  --danger-border: rgba(217, 74, 90, 0.5);
 }
 
 :root.dark[data-colorway="neutral"] {

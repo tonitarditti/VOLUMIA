@@ -12,21 +12,24 @@ export function WelcomeSection({
   loading,
 }: WelcomeSectionProps) {
   return (
-    <section className="space-y-6 px-8 py-12">
-      <div className="max-w-2xl space-y-3">
-        <h1 className="text-5xl font-light tracking-tight text-[var(--text)]">
+    <section className="px-5 py-10 sm:px-8 sm:py-12">
+      <div className="max-w-3xl space-y-3">
+        <p className="text-xs font-semibold uppercase tracking-[0.16em] text-[var(--volumia-cyan)]">
+          Diseño 3D impulsado por IA
+        </p>
+        <h1 className="text-3xl font-semibold tracking-[-0.02em] text-[var(--text-primary)] sm:text-4xl">
           Bienvenido a VOLUMIA
         </h1>
-        <p className="text-lg leading-relaxed text-[var(--text-muted)]">
+        <p className="max-w-2xl text-base leading-7 text-[var(--text-secondary)] sm:text-lg">
           Convertí imágenes de referencia en modelos 3D editables para tus
           proyectos de arquitectura e interiorismo.
         </p>
       </div>
 
-      <div className="flex flex-wrap gap-3">
+      <div className="mt-7 flex flex-wrap gap-3">
         <Button
           variant="primary"
-          className="px-8 h-12 text-base"
+          className="h-12 px-7 text-sm sm:text-base"
           disabled={loading}
           onClick={onNewProject}
         >
@@ -34,7 +37,7 @@ export function WelcomeSection({
         </Button>
         <Button
           variant="secondary"
-          className="px-8 h-12 text-base"
+          className="h-12 px-7 text-sm sm:text-base"
           disabled={loading}
           onClick={onImportImages}
         >
@@ -42,15 +45,21 @@ export function WelcomeSection({
         </Button>
       </div>
 
-      <div className="mt-8 pt-6 border-t border-[rgba(181,154,118,0.12)]">
+      <button
+        type="button"
+        aria-label="Importar imágenes de referencia"
+        onClick={onImportImages}
+        disabled={loading}
+        className="group mt-9 flex min-h-32 w-full items-center justify-center overflow-hidden rounded-2xl border border-dashed border-[var(--border)] bg-[var(--surface)] transition-[background-color,border-color,box-shadow] duration-200 hover:border-[var(--volumia-blue)] hover:bg-[var(--accent-soft)] hover:shadow-[var(--shadow-sm)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--focus-ring)] disabled:cursor-not-allowed disabled:opacity-50"
+      >
         <svg
-          className="w-48 h-32 opacity-20 text-[var(--accent)]"
+          className="h-20 w-32 text-[var(--text-muted)] transition-colors duration-200 group-hover:text-[var(--volumia-blue)]"
           viewBox="0 0 200 160"
           fill="none"
           xmlns="http://www.w3.org/2000/svg"
         >
-          <g strokeWidth="1.5" stroke="currentColor">
-            <rect x="20" y="20" width="160" height="120" rx="2" />
+          <g strokeWidth="1.5" stroke="currentColor" opacity="0.68">
+            <rect x="20" y="20" width="160" height="120" rx="12" />
             <line x1="30" y1="35" x2="170" y2="35" />
             <line x1="35" y1="50" x2="165" y2="50" />
             <line x1="30" y1="65" x2="170" y2="65" />
@@ -60,7 +69,7 @@ export function WelcomeSection({
             <line x1="30" y1="115" x2="170" y2="115" />
           </g>
         </svg>
-      </div>
+      </button>
     </section>
   );
 }

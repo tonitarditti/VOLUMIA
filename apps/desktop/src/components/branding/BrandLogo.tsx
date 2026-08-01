@@ -1,4 +1,4 @@
-import brandIcon from "@/assets/branding/VOLUMIA-dorado-transparente.png";
+import brandIcon from "@/assets/branding/volumia-icon-final.svg";
 
 type BrandLogoTone = "default" | "muted" | "inverse" | "accent";
 type BrandLogoEmphasis = "none" | "soft" | "glow";
@@ -23,9 +23,9 @@ const toneColor: Record<BrandLogoTone, string> = {
 
 const emphasisShadow: Record<BrandLogoEmphasis, string | undefined> = {
   none: undefined,
-  soft: "drop-shadow(0 8px 20px rgba(200, 173, 135, 0.24))",
+  soft: "drop-shadow(0 8px 20px rgba(76, 111, 255, 0.22))",
   glow:
-    "drop-shadow(0 0 24px rgba(200, 173, 135, 0.3)) drop-shadow(0 14px 32px rgba(181, 154, 118, 0.2))",
+    "drop-shadow(0 0 22px rgba(22, 199, 227, 0.28)) drop-shadow(0 14px 30px rgba(76, 111, 255, 0.2))",
 };
 
 const BRAND_FONT_STACK =

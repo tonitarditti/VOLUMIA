@@ -1,22 +1,13 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { desktopApi, hasDesktopBridge } from "@/electron/desktopApi";
-import { Button } from "@/ui/primitives";
+import { Badge, Button } from "@/ui/primitives";
 import {
   generationClient,
   type LocalSettings,
   type ToolsStatusResponse,
 } from "@/services/generationClient";
-import { applyResolvedThemeToDocument } from "@/ui/theme";
-import { resolveTheme } from "@/volumia/settings/resolvers";
-import {
-  loadAppSettings as loadAppearanceSettings,
-  saveAppSettings as saveAppearanceSettings,
-} from "@/volumia/settings/storage";
-import type {
-  AppSettings as AppearanceSettings,
-  Theme as AppearanceTheme,
-} from "@/volumia/settings/types";
+import { useSettings } from "@/volumia/settings/context";
+import type { Theme as AppearanceTheme } from "@/volumia/settings/types";
 
 const fields: Array<{ key: keyof LocalSettings; label: string; placeholder: string }> = [
   {
@@ -46,17 +37,17 @@ const fields: Array<{ key: keyof LocalSettings; label: string; placeholder: stri
   },
   {
     key: "VOLUMIA_HUNYUAN_MODEL_PATH",
-    label: "Hunyuan model path",
+    label: "Ruta del modelo Hunyuan",
     placeholder: "tencent/Hunyuan3D-2",
   },
   {
     key: "VOLUMIA_HUNYUAN_SHAPE_SUBFOLDER",
-    label: "Hunyuan shape subfolder",
+    label: "Subcarpeta shape de Hunyuan",
     placeholder: "hunyuan3d-dit-v2-0",
   },
   {
     key: "VOLUMIA_HUNYUAN_PAINT_SUBFOLDER",
-    label: "Hunyuan paint subfolder",
+    label: "Subcarpeta paint de Hunyuan",
     placeholder: "hunyuan3d-paint-v2-0-turbo",
   },
   {
@@ -119,86 +110,57 @@ function emptySettings(): LocalSettings {
   };
 }
 
-function detectSystemTheme(): AppearanceTheme {
-  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
-    return "light";
-  }
-
-  return window.matchMedia("(prefers-color-scheme: dark)").matches
-    ? "dark"
-    : "light";
-}
-
 function fieldFromTools(key: keyof LocalSettings, tools: ToolsStatusResponse["tools"] | null) {
   if (!tools) return "";
   const entry = Object.values(tools).find((tool) => tool.env === key);
   return entry?.path ?? "";
 }
 
+function ThemeIcon({ kind }: { kind: "light" | "dark" | "system" }) {
+  if (kind === "light") {
+    return (
+      <svg aria-hidden="true" className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+        <circle cx="12" cy="12" r="3.5" />
+        <path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.65 17.65l1.42 1.42M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.65 6.35l1.42-1.42" />
+      </svg>
+    );
+  }
+  if (kind === "dark") {
+    return (
+      <svg aria-hidden="true" className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+        <path d="M20.5 15.2A8.5 8.5 0 0 1 8.8 3.5 8.5 8.5 0 1 0 20.5 15.2Z" />
+      </svg>
+    );
+  }
+  return (
+    <svg aria-hidden="true" className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <rect x="3" y="4" width="18" height="12" rx="2" />
+      <path d="M8 20h8M12 16v4" />
+    </svg>
+  );
+}
+
 export function Settings() {
   const navigate = useNavigate();
+  const {
+    settings: appearanceSettings,
+    resolvedTheme,
+    systemTheme,
+    setTheme,
+    setThemeMode,
+  } = useSettings();
   const [tools, setTools] = useState<ToolsStatusResponse["tools"] | null>(null);
   const [form, setForm] = useState<LocalSettings>(emptySettings());
   const [settingsPath, setSettingsPath] = useState("");
   const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
   const [detecting, setDetecting] = useState(false);
-  const [appearanceSettings, setAppearanceSettings] =
-    useState<AppearanceSettings>(() => loadAppearanceSettings());
-  const [systemTheme, setSystemTheme] = useState<AppearanceTheme>(() =>
-    detectSystemTheme(),
-  );
-
-  const resolvedTheme = useMemo(
-    () => resolveTheme(appearanceSettings, systemTheme, new Date()),
-    [appearanceSettings, systemTheme],
-  );
-
-  useEffect(() => {
-    saveAppearanceSettings(appearanceSettings);
-    applyResolvedThemeToDocument(resolvedTheme, {
-      colorway: appearanceSettings.colorway,
-      glassStyle: appearanceSettings.glassStyle,
-      reduceMotion: appearanceSettings.reduceMotion,
-    });
-  }, [appearanceSettings, resolvedTheme]);
-
-  useEffect(() => {
-    if (!hasDesktopBridge()) {
-      const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
-      const handleChange = () => setSystemTheme(detectSystemTheme());
-      mediaQuery.addEventListener("change", handleChange);
-      return () => mediaQuery.removeEventListener("change", handleChange);
-    }
-
-    let active = true;
-    const unsubscribe = desktopApi.onSystemThemeChanged(setSystemTheme);
-    void desktopApi
-      .getSystemTheme()
-      .then((theme) => {
-        if (active) setSystemTheme(theme);
-      })
-      .catch(() => undefined);
-
-    return () => {
-      active = false;
-      unsubscribe();
-    };
-  }, []);
-
   const setThemePreference = (theme: AppearanceTheme) => {
-    setAppearanceSettings((current) => ({
-      ...current,
-      themeMode: "manual",
-      theme,
-    }));
+    setTheme(theme);
   };
 
   const followSystemTheme = () => {
-    setAppearanceSettings((current) => ({
-      ...current,
-      themeMode: "system",
-    }));
+    setThemeMode("system");
   };
 
   const load = async () => {
@@ -251,47 +213,32 @@ export function Settings() {
   const toolItems = tools ? Object.entries(tools) : [];
 
   return (
-    <main className="h-full min-h-0 overflow-y-auto p-8">
+    <main className="h-full min-h-0 overflow-y-auto overflow-x-hidden bg-[var(--background)] p-5 sm:p-8">
       <div className="mx-auto max-w-5xl">
         <div className="flex items-center justify-between gap-4">
           <div>
-            <p className="text-xs uppercase tracking-[0.14em] text-[var(--text-faint)]">Settings</p>
-            <h1 className="mt-2 text-3xl font-medium text-[var(--text)]">Configuracion local</h1>
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--volumia-cyan)]">Configuración</p>
+            <h1 className="mt-2 text-3xl font-semibold text-[var(--text-primary)]">Configuración local</h1>
           </div>
           <Button variant="secondary" onClick={() => navigate("/")}>
             Inicio
           </Button>
         </div>
 
-        <section className="mt-8 rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface-1)] p-5">
+        <section className="mt-8 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-5 shadow-[var(--shadow-sm)]">
           <div>
             <p className="text-xs uppercase tracking-[0.14em] text-[var(--text-faint)]">
               Apariencia
             </p>
-            <h2 className="mt-1 text-lg font-medium text-[var(--text)]">
+            <h2 className="mt-1 text-lg font-semibold text-[var(--text-primary)]">
               Tema de la interfaz
             </h2>
-            <p className="mt-1 text-xs text-[var(--text-muted)]">
+            <p className="mt-1 text-xs leading-5 text-[var(--text-secondary)]">
               Elegí cómo se muestra VOLUMIA. La opción del sistema se actualiza automáticamente.
             </p>
           </div>
 
           <div className="mt-4 grid gap-2 sm:grid-cols-3">
-            <Button
-              variant={
-                appearanceSettings.themeMode === "manual" &&
-                appearanceSettings.theme === "dark"
-                  ? "primary"
-                  : "secondary"
-              }
-              aria-pressed={
-                appearanceSettings.themeMode === "manual" &&
-                appearanceSettings.theme === "dark"
-              }
-              onClick={() => setThemePreference("dark")}
-            >
-              Oscuro
-            </Button>
             <Button
               variant={
                 appearanceSettings.themeMode === "manual" &&
@@ -305,7 +252,24 @@ export function Settings() {
               }
               onClick={() => setThemePreference("light")}
             >
-              Claro
+              <ThemeIcon kind="light" />
+              <span className="ml-2">Claro</span>
+            </Button>
+            <Button
+              variant={
+                appearanceSettings.themeMode === "manual" &&
+                appearanceSettings.theme === "dark"
+                  ? "primary"
+                  : "secondary"
+              }
+              aria-pressed={
+                appearanceSettings.themeMode === "manual" &&
+                appearanceSettings.theme === "dark"
+              }
+              onClick={() => setThemePreference("dark")}
+            >
+              <ThemeIcon kind="dark" />
+              <span className="ml-2">Oscuro</span>
             </Button>
             <Button
               variant={
@@ -316,22 +280,23 @@ export function Settings() {
               aria-pressed={appearanceSettings.themeMode === "system"}
               onClick={followSystemTheme}
             >
-              Igual al sistema
+              <ThemeIcon kind="system" />
+              <span className="ml-2">Sistema</span>
             </Button>
           </div>
 
-          <p className="mt-3 text-xs text-[var(--text-muted)]">
+          <p className="mt-3 text-xs text-[var(--text-secondary)]">
             {appearanceSettings.themeMode === "system"
               ? `Tema del sistema: ${systemTheme === "dark" ? "Oscuro" : "Claro"}`
               : `Tema aplicado: ${resolvedTheme === "dark" ? "Oscuro" : "Claro"}`}
           </p>
         </section>
 
-        <section className="mt-8 rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface-1)] p-5">
+        <section className="mt-8 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-5 shadow-[var(--shadow-sm)]">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h2 className="text-sm font-medium text-[var(--text)]">Rutas reales</h2>
-              <p className="mt-1 text-xs text-[var(--text-muted)]">
+              <h2 className="text-sm font-semibold text-[var(--text-primary)]">Rutas y herramientas</h2>
+              <p className="mt-1 text-xs text-[var(--text-secondary)]">
                 Se guardan en {settingsPath || "apps/desktop/backend/config/local.settings.json"}.
               </p>
             </div>
@@ -348,7 +313,7 @@ export function Settings() {
           <div className="mt-5 grid gap-4">
             {fields.map((field) => (
               <label key={field.key} className="grid gap-2">
-                <span className="text-xs font-medium text-[var(--text-muted)]">{field.label}</span>
+                <span className="text-xs font-medium text-[var(--text-secondary)]">{field.label}</span>
                 <input
                   value={form[field.key] ?? ""}
                   placeholder={field.placeholder}
@@ -358,23 +323,23 @@ export function Settings() {
                       [field.key]: event.target.value,
                     }))
                   }
-                  className="h-10 rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--surface-2)] px-3 text-sm text-[var(--text)] placeholder:text-[var(--text-faint)]"
+                  className="h-10 rounded-lg border border-[var(--border)] bg-[var(--surface-secondary)] px-3 font-mono text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--volumia-blue)] focus:outline-none focus:ring-2 focus:ring-[var(--focus-ring)]"
                 />
               </label>
             ))}
           </div>
-          {message ? <p className="mt-4 text-sm text-[var(--text-muted)]">{message}</p> : null}
+          {message ? <p className="mt-4 text-sm text-[var(--text-secondary)]">{message}</p> : null}
         </section>
 
-        <section className="mt-5 rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface-1)] p-5">
-          <h2 className="text-sm font-medium text-[var(--text)]">Orientacion del pipeline</h2>
-          <p className="mt-1 text-xs text-[var(--text-muted)]">
+        <section className="mt-5 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-5 shadow-[var(--shadow-sm)]">
+          <h2 className="text-sm font-semibold text-[var(--text-primary)]">Orientación del pipeline</h2>
+          <p className="mt-1 text-xs text-[var(--text-secondary)]">
             Estos grados se aplican en Blender antes de exportar el GLB final.
           </p>
           <div className="mt-5 grid gap-4 md:grid-cols-3">
             {rotationFields.map((field) => (
               <label key={field.key} className="grid gap-2">
-                <span className="text-xs font-medium text-[var(--text-muted)]">{field.label}</span>
+                <span className="text-xs font-medium text-[var(--text-secondary)]">{field.label}</span>
                 <input
                   value={form[field.key] ?? ""}
                   placeholder={field.placeholder}
@@ -385,29 +350,27 @@ export function Settings() {
                       [field.key]: event.target.value,
                     }))
                   }
-                  className="h-10 rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--surface-2)] px-3 text-sm text-[var(--text)] placeholder:text-[var(--text-faint)]"
+                  className="h-10 rounded-lg border border-[var(--border)] bg-[var(--surface-secondary)] px-3 font-mono text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:border-[var(--volumia-blue)] focus:outline-none focus:ring-2 focus:ring-[var(--focus-ring)]"
                 />
               </label>
             ))}
           </div>
         </section>
 
-        <section className="mt-5 rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface-1)] p-5">
-          <h2 className="text-sm font-medium text-[var(--text)]">Estado real</h2>
+        <section className="mt-5 rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-5 shadow-[var(--shadow-sm)]">
+          <h2 className="text-sm font-semibold text-[var(--text-primary)]">Estado de herramientas</h2>
           <div className="mt-4 grid gap-3 md:grid-cols-2">
             {toolItems.map(([key, tool]) => (
-              <div key={key} className="rounded-[var(--radius-sm)] border border-[var(--border)] bg-[var(--surface-2)] p-3">
+              <div key={key} className="rounded-xl border border-[var(--border)] bg-[var(--surface-secondary)] p-4">
                 <div className="flex items-center justify-between gap-3">
-                  <span className="text-sm font-medium text-[var(--text)]">{tool.name}</span>
-                  <span className={tool.exists ? "text-xs text-[var(--status-success)]" : "text-xs text-[var(--text-faint)]"}>
-                    {tool.status}
-                  </span>
+                  <span className="text-sm font-semibold text-[var(--text-primary)]">{tool.name}</span>
+                  <Badge tone={tool.exists ? "success" : "neutral"} dot>{tool.exists ? "Configurada" : "No configurada"}</Badge>
                 </div>
-                <p className="mt-2 break-all text-xs text-[var(--text-muted)]">{tool.env}: {tool.path ?? "sin configurar"}</p>
-                {tool.details ? <p className="mt-1 text-xs text-[var(--text-faint)]">{tool.details}</p> : null}
+                <p className="mt-3 break-all font-mono text-xs leading-5 text-[var(--text-secondary)]">{tool.env}: {tool.path ?? "sin configurar"}</p>
+                {tool.details ? <p className="mt-1 text-xs text-[var(--text-muted)]">{tool.details}</p> : null}
               </div>
             ))}
-            {!tools && <p className="text-sm text-[var(--text-muted)]">{message || "Cargando..."}</p>}
+            {!tools && <p className="text-sm text-[var(--text-secondary)]">{message || "Cargando..."}</p>}
           </div>
         </section>
       </div>

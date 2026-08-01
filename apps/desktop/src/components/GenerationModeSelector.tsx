@@ -9,8 +9,8 @@ type GenerationModeSelectorProps = {
 const modes: Array<{ id: GenerationMode; label: string; detail: string }> = [
   { id: "demo", label: "Demo", detail: "GLB de ejemplo" },
   { id: "quick", label: "Quick", detail: "TripoSR" },
-  { id: "textured", label: "Textured", detail: "Hunyuan3D" },
-  { id: "photogrammetry", label: "Photogrammetry", detail: "Meshroom" },
+  { id: "textured", label: "Texturizado", detail: "Hunyuan3D" },
+  { id: "photogrammetry", label: "Fotogrametría", detail: "Meshroom" },
 ];
 
 export function GenerationModeSelector({ value, disabled = false, onChange }: GenerationModeSelectorProps) {
