@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { generationClient, type ProjectPayload } from "@/services/generationClient";
+import { BrandLogo } from "@/components/branding";
 import { WelcomeSection } from "./WelcomeSection";
 import { RecentProjects } from "./RecentProjects";
 

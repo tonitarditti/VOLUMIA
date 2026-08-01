@@ -1,0 +1,21 @@
+{
+  "projectId": "project_1785553163617",
+  "status": "complete",
+  "createdAt": "2026-08-01T02:59:23.618Z",
+  "updatedAt": "2026-08-01T02:59:42.550Z",
+  "warnings": [],
+  "logs": [],
+  "id": "job_1785553182544",
+  "mode": "demo",
+  "message": "Modelo listo.",
+  "error": null,
+  "startedAt": "2026-08-01T02:59:42.546Z",
+  "finishedAt": "2026-08-01T02:59:42.549Z",
+  "inputFiles": [],
+  "latestGlb": "E:\\VOLUMIA\\apps\\desktop\\projects\\project_1785553163617\\latest.glb",
+  "output": {
+    "latestGlb": "E:\\VOLUMIA\\apps\\desktop\\projects\\project_1785553163617\\latest.glb",
+    "source": "E:\\VOLUMIA\\apps\\desktop\\assets\\templates\\box.glb",
+    "warnings": []
+  }
+}

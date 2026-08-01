@@ -1,7 +1,9 @@
 import { HashRouter, Navigate, Route, Routes, useNavigate } from "react-router-dom";
+import { useCallback, useState } from "react";
 import { Home } from "@/pages/Home";
 import { Project } from "@/pages/Project";
 import { Settings } from "@/pages/Settings";
+import { Splash } from "@/pages/Splash";
 import { desktopApi, hasDesktopBridge } from "@/electron/desktopApi";
 
 function WindowBar() {
@@ -42,20 +44,38 @@ function WindowBar() {
   );
 }
 
+function AppContent() {
+  const navigate = useNavigate();
+  const [showSplash, setShowSplash] = useState(true);
+
+  const handleSplashComplete = useCallback(() => {
+    navigate("/", { replace: true });
+    setShowSplash(false);
+  }, [navigate]);
+
+  if (showSplash) {
+    return <Splash onComplete={handleSplashComplete} />;
+  }
+
+  return (
+    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-[var(--app-bg)] text-[var(--text)]">
+      <WindowBar />
+      <div className="min-h-0 flex-1 overflow-hidden">
+        <Routes>
+          <Route path="/" element={<Home />} />
+          <Route path="/project/:projectId" element={<Project />} />
+          <Route path="/settings" element={<Settings />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   return (
     <HashRouter>
-      <div className="flex h-full min-h-0 flex-col overflow-hidden bg-[var(--app-bg)] text-[var(--text)]">
-        <WindowBar />
-        <div className="min-h-0 flex-1 overflow-hidden">
-          <Routes>
-            <Route path="/" element={<Home />} />
-            <Route path="/project/:projectId" element={<Project />} />
-            <Route path="/settings" element={<Settings />} />
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
-        </div>
-      </div>
+      <AppContent />
     </HashRouter>
   );
 }

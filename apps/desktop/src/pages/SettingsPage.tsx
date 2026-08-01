@@ -135,6 +135,7 @@ export function SettingsPage({
   const colorwayLabels: Record<AppSettings["colorway"], string> = {
     atelier: t("settings.option.colorway.atelier"),
     neutral: t("settings.option.colorway.neutral"),
+    warm: t("settings.option.colorway.warm"),
   };
   const studioProfileLabels: Record<AppSettings["studioProfile"], string> = {
     neutral: t("settings.option.studioProfile.neutral"),

@@ -29,6 +29,7 @@ export type ProjectJob = {
   latestGlb?: string;
   inputFiles?: string[];
   logs?: string[];
+  createdAt?: string | null;
   finishedAt?: string | null;
 };
 
