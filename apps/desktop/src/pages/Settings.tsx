@@ -54,12 +54,12 @@ const rotationFields: Array<{ key: keyof LocalSettings; label: string; placehold
   {
     key: "VOLUMIA_QUICK_ROTATION_X",
     label: "Quick X grados",
-    placeholder: "0",
+    placeholder: "-90",
   },
   {
     key: "VOLUMIA_QUICK_ROTATION_Y",
     label: "Quick Y grados",
-    placeholder: "90",
+    placeholder: "0",
   },
   {
     key: "VOLUMIA_QUICK_ROTATION_Z",
@@ -93,8 +93,8 @@ function emptySettings(): LocalSettings {
     VOLUMIA_HUNYUAN_SHAPE_SUBFOLDER: "hunyuan3d-dit-v2-0",
     VOLUMIA_HUNYUAN_PAINT_SUBFOLDER: "hunyuan3d-paint-v2-0-turbo",
     VOLUMIA_MESHROOM_DIR: "",
-    VOLUMIA_QUICK_ROTATION_X: "0",
-    VOLUMIA_QUICK_ROTATION_Y: "90",
+    VOLUMIA_QUICK_ROTATION_X: "-90",
+    VOLUMIA_QUICK_ROTATION_Y: "0",
     VOLUMIA_QUICK_ROTATION_Z: "0",
     VOLUMIA_HUNYUAN_ROTATION_X: "0",
     VOLUMIA_HUNYUAN_ROTATION_Y: "0",
