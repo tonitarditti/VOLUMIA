@@ -42,26 +42,21 @@ import {
   type WindowStateSnapshot,
 } from "./channels";
 
-const systemThemeListeners = new Map<(theme: Theme) => void, (_event: Electron.IpcRendererEvent, payload: SystemThemeChangedPayload) => void>();
-const generationProgressListeners = new Map<
-  (payload: GenerationProgressPayload) => void,
-  (_event: Electron.IpcRendererEvent, payload: GenerationProgressPayload) => void
->();
-const generationDoneListeners = new Map<
-  (payload: GenerationDonePayload) => void,
-  (_event: Electron.IpcRendererEvent, payload: GenerationDonePayload) => void
->();
-const generationErrorListeners = new Map<
-  (payload: GenerationErrorPayload) => void,
-  (_event: Electron.IpcRendererEvent, payload: GenerationErrorPayload) => void
->();
-const pythonInstallLogListeners = new Map<
-  (line: string) => void,
-  (_event: Electron.IpcRendererEvent, payload: PythonInstallLogPayload) => void
->();
+// Use Sets and single ipcRenderer handlers per channel to avoid registering many ipcRenderer listeners
+const systemThemeListeners = new Set<(theme: Theme) => void>();
+const generationProgressListeners = new Set<(payload: GenerationProgressPayload) => void>();
+const generationDoneListeners = new Set<(payload: GenerationDonePayload) => void>();
+const generationErrorListeners = new Set<(payload: GenerationErrorPayload) => void>();
+const pythonInstallLogListeners = new Set<(line: string) => void>();
 let viewportMultiviewCaptureHandler:
   | ((payload: GenerationCaptureViewportMultiviewPayload) => Promise<string[]> | string[])
   | null = null;
+
+let _systemThemeIpcAttached = false;
+let _generationProgressIpcAttached = false;
+let _generationDoneIpcAttached = false;
+let _generationErrorIpcAttached = false;
+let _pythonInstallLogIpcAttached = false;
 
 const bridge = {
   exportJson: (payload: ProjectsExportEnvelope) =>
@@ -88,17 +83,21 @@ const bridge = {
     getLocale: () => ipcRenderer.invoke(IPC_CHANNELS.getSystemLocale) as Promise<string>,
     getTheme: () => ipcRenderer.invoke(IPC_CHANNELS.getSystemTheme) as Promise<Theme>,
     onThemeChanged: (callback: (theme: Theme) => void) => {
-      const wrapped = (_event: Electron.IpcRendererEvent, payload: SystemThemeChangedPayload) => {
-        callback(payload.theme);
-      };
-
-      systemThemeListeners.set(callback, wrapped);
-      ipcRenderer.on(IPC_CHANNELS.systemThemeChanged, wrapped);
+      systemThemeListeners.add(callback);
+      if (!_systemThemeIpcAttached) {
+        _systemThemeIpcAttached = true;
+        ipcRenderer.on(IPC_CHANNELS.systemThemeChanged, (_event, payload: SystemThemeChangedPayload) => {
+          for (const cb of systemThemeListeners) {
+            try {
+              cb(payload.theme);
+            } catch {
+              // swallow
+            }
+          }
+        });
+      }
     },
     offThemeChanged: (callback: (theme: Theme) => void) => {
-      const wrapped = systemThemeListeners.get(callback);
-      if (!wrapped) return;
-      ipcRenderer.off(IPC_CHANNELS.systemThemeChanged, wrapped);
       systemThemeListeners.delete(callback);
     },
   },
@@ -141,60 +140,57 @@ const bridge = {
     openOutputFolder: (glbPath: string) =>
       ipcRenderer.invoke("gen:open-output-folder", { glbPath }) as Promise<{ ok: boolean; path: string; error?: string }>,
     onProgress: (callback: (payload: GenerationProgressPayload) => void) => {
-      const existing = generationProgressListeners.get(callback);
-      if (existing) {
-        ipcRenderer.off(IPC_CHANNELS.generationProgress, existing);
-        generationProgressListeners.delete(callback);
+      generationProgressListeners.add(callback);
+      if (!_generationProgressIpcAttached) {
+        _generationProgressIpcAttached = true;
+        ipcRenderer.on(IPC_CHANNELS.generationProgress, (_event, payload: GenerationProgressPayload) => {
+          for (const cb of generationProgressListeners) {
+            try {
+              cb(payload);
+            } catch {
+              // swallow
+            }
+          }
+        });
       }
-      const wrapped = (_event: Electron.IpcRendererEvent, payload: GenerationProgressPayload) => {
-        callback(payload);
-      };
-
-      generationProgressListeners.set(callback, wrapped);
-      ipcRenderer.on(IPC_CHANNELS.generationProgress, wrapped);
     },
     offProgress: (callback: (payload: GenerationProgressPayload) => void) => {
-      const wrapped = generationProgressListeners.get(callback);
-      if (!wrapped) return;
-      ipcRenderer.off(IPC_CHANNELS.generationProgress, wrapped);
       generationProgressListeners.delete(callback);
     },
     onDone: (callback: (payload: GenerationDonePayload) => void) => {
-      const existing = generationDoneListeners.get(callback);
-      if (existing) {
-        ipcRenderer.off(IPC_CHANNELS.generationDone, existing);
-        generationDoneListeners.delete(callback);
+      generationDoneListeners.add(callback);
+      if (!_generationDoneIpcAttached) {
+        _generationDoneIpcAttached = true;
+        ipcRenderer.on(IPC_CHANNELS.generationDone, (_event, payload: GenerationDonePayload) => {
+          for (const cb of generationDoneListeners) {
+            try {
+              cb(payload);
+            } catch {
+              // swallow
+            }
+          }
+        });
       }
-      const wrapped = (_event: Electron.IpcRendererEvent, payload: GenerationDonePayload) => {
-        callback(payload);
-      };
-
-      generationDoneListeners.set(callback, wrapped);
-      ipcRenderer.on(IPC_CHANNELS.generationDone, wrapped);
     },
     offDone: (callback: (payload: GenerationDonePayload) => void) => {
-      const wrapped = generationDoneListeners.get(callback);
-      if (!wrapped) return;
-      ipcRenderer.off(IPC_CHANNELS.generationDone, wrapped);
       generationDoneListeners.delete(callback);
     },
     onError: (callback: (payload: GenerationErrorPayload) => void) => {
-      const existing = generationErrorListeners.get(callback);
-      if (existing) {
-        ipcRenderer.off(IPC_CHANNELS.generationError, existing);
-        generationErrorListeners.delete(callback);
+      generationErrorListeners.add(callback);
+      if (!_generationErrorIpcAttached) {
+        _generationErrorIpcAttached = true;
+        ipcRenderer.on(IPC_CHANNELS.generationError, (_event, payload: GenerationErrorPayload) => {
+          for (const cb of generationErrorListeners) {
+            try {
+              cb(payload);
+            } catch {
+              // swallow
+            }
+          }
+        });
       }
-      const wrapped = (_event: Electron.IpcRendererEvent, payload: GenerationErrorPayload) => {
-        callback(payload);
-      };
-
-      generationErrorListeners.set(callback, wrapped);
-      ipcRenderer.on(IPC_CHANNELS.generationError, wrapped);
     },
     offError: (callback: (payload: GenerationErrorPayload) => void) => {
-      const wrapped = generationErrorListeners.get(callback);
-      if (!wrapped) return;
-      ipcRenderer.off(IPC_CHANNELS.generationError, wrapped);
       generationErrorListeners.delete(callback);
     },
   },
@@ -206,17 +202,21 @@ const bridge = {
     installTorchCuda: (pythonPath: string) =>
       ipcRenderer.invoke(IPC_CHANNELS.pyInstallTorchCuda, { pythonPath }) as Promise<PythonInstallTorchCudaResult>,
     onInstallLog: (callback: (line: string) => void) => {
-      const wrapped = (_event: Electron.IpcRendererEvent, payload: PythonInstallLogPayload) => {
-        callback(payload.line);
-      };
-
-      pythonInstallLogListeners.set(callback, wrapped);
-      ipcRenderer.on(IPC_CHANNELS.pyInstallLog, wrapped);
+      pythonInstallLogListeners.add(callback);
+      if (!_pythonInstallLogIpcAttached) {
+        _pythonInstallLogIpcAttached = true;
+        ipcRenderer.on(IPC_CHANNELS.pyInstallLog, (_event, payload: PythonInstallLogPayload) => {
+          for (const cb of pythonInstallLogListeners) {
+            try {
+              cb(payload.line);
+            } catch {
+              // swallow
+            }
+          }
+        });
+      }
     },
     offInstallLog: (callback: (line: string) => void) => {
-      const wrapped = pythonInstallLogListeners.get(callback);
-      if (!wrapped) return;
-      ipcRenderer.off(IPC_CHANNELS.pyInstallLog, wrapped);
       pythonInstallLogListeners.delete(callback);
     },
   },
