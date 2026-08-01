@@ -21,6 +21,7 @@ describe("Quick canonical orientation", () => {
       rotationYDeg: -90,
       rotationZDeg: -90,
       forwardAxis: "+Z",
+      supportPlaneLeveling: true,
       centered: true,
       grounded: true,
     });

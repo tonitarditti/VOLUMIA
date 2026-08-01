@@ -34,6 +34,7 @@ const QUICK_AXIS_NORMALIZATION = {
   rotationYDeg: -90,
   rotationZDeg: -90,
   forwardAxis: "+Z",
+  supportPlaneLeveling: true,
   centered: true,
   grounded: true,
 };
@@ -413,6 +414,7 @@ async function runBlenderOptimize(projectId, sourcePath, options = {}) {
   const paths = ensureProjectLayout(projectId);
   const rotation = options.rotation || null;
   const normalizeToGround = options.normalizeToGround === true;
+  const levelSupportPlane = options.levelSupportPlane === true;
   const hasCanonicalRotation = Boolean(
     rotation &&
       (Math.abs(rotation.rotationXDeg || 0) > 0.0001 ||
@@ -468,6 +470,9 @@ async function runBlenderOptimize(projectId, sourcePath, options = {}) {
   if (normalizeToGround) {
     blenderArgs.push("--normalize-to-ground");
   }
+  if (levelSupportPlane) {
+    blenderArgs.push("--level-support-plane");
+  }
   await spawnProcess(tools.blender.path, blenderArgs, {
     projectId,
     onOutput: (chunk) => appendJobLog(projectId, chunk.trim()),
@@ -489,6 +494,7 @@ async function runBlenderOptimize(projectId, sourcePath, options = {}) {
     optimizedGlb,
     rotation,
     normalizeToGround,
+    levelSupportPlane,
     canonicalBounds,
     warnings: [],
   };
@@ -547,6 +553,7 @@ async function runQuick(projectId, inputFiles) {
   );
   const optimized = await runBlenderOptimize(projectId, raw, {
     rotation: QUICK_CANONICAL_ROTATION,
+    levelSupportPlane: true,
     normalizeToGround: true,
   });
   return {
@@ -556,6 +563,7 @@ async function runQuick(projectId, inputFiles) {
     source: generated,
     rotation: optimized.rotation,
     axisNormalization: QUICK_AXIS_NORMALIZATION,
+    supportPlaneLevelingRequested: optimized.levelSupportPlane,
     canonicalBounds: optimized.canonicalBounds,
     warnings: optimized.warnings,
   };

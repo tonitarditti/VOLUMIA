@@ -1,4 +1,5 @@
 import argparse
+import itertools
 import math
 import sys
 from pathlib import Path
@@ -141,6 +142,261 @@ def center_and_ground_scene() -> None:
         raise RuntimeError("Failed to center and ground the normalized mesh.")
 
 
+def median_vector(points: list[Vector]) -> Vector:
+    if not points:
+        raise RuntimeError("Cannot calculate the median of an empty point set.")
+    ordered_x = sorted(point.x for point in points)
+    ordered_y = sorted(point.y for point in points)
+    ordered_z = sorted(point.z for point in points)
+    middle = len(points) // 2
+    if len(points) % 2:
+        return Vector((ordered_x[middle], ordered_y[middle], ordered_z[middle]))
+    return Vector(
+        (
+            (ordered_x[middle - 1] + ordered_x[middle]) * 0.5,
+            (ordered_y[middle - 1] + ordered_y[middle]) * 0.5,
+            (ordered_z[middle - 1] + ordered_z[middle]) * 0.5,
+        )
+    )
+
+
+def support_candidates_from_low_components(
+    minimum: Vector,
+    maximum: Vector,
+) -> list[tuple[Vector, int]]:
+    """Find leg/contact endpoints below the seat using mesh connectivity."""
+    height = maximum.z - minimum.z
+    cutoff_z = minimum.z + height * 0.36
+    maximum_contact_z = minimum.z + height * 0.28
+    minimum_component_span = height * 0.06
+    candidates: list[tuple[Vector, int]] = []
+
+    for obj in scene_mesh_objects():
+        mesh = obj.data
+        positions = [obj.matrix_world @ vertex.co for vertex in mesh.vertices]
+        eligible = {index for index, point in enumerate(positions) if point.z <= cutoff_z}
+        if not eligible:
+            continue
+
+        adjacency: dict[int, list[int]] = {index: [] for index in eligible}
+        for edge in mesh.edges:
+            first, second = edge.vertices
+            if first in eligible and second in eligible:
+                adjacency[first].append(second)
+                adjacency[second].append(first)
+
+        remaining = set(eligible)
+        while remaining:
+            start = remaining.pop()
+            component = [start]
+            stack = [start]
+            while stack:
+                current = stack.pop()
+                for neighbor in adjacency[current]:
+                    if neighbor in remaining:
+                        remaining.remove(neighbor)
+                        component.append(neighbor)
+                        stack.append(neighbor)
+
+            if len(component) < 12:
+                continue
+            component_points = [positions[index] for index in component]
+            component_min_z = min(point.z for point in component_points)
+            component_max_z = max(point.z for point in component_points)
+            if component_min_z > maximum_contact_z:
+                continue
+            if component_max_z - component_min_z < minimum_component_span:
+                continue
+
+            bottom_count = min(40, max(6, int(len(component_points) * 0.025)))
+            bottom_points = sorted(component_points, key=lambda point: point.z)[:bottom_count]
+            candidates.append((median_vector(bottom_points), len(component)))
+
+    return sorted(candidates, key=lambda item: item[1], reverse=True)[:8]
+
+
+def fit_support_plane(points: list[Vector]) -> tuple[Vector, float, Vector]:
+    if len(points) < 3:
+        raise RuntimeError("At least three support points are required.")
+
+    sum_x = sum(point.x for point in points)
+    sum_y = sum(point.y for point in points)
+    sum_z = sum(point.z for point in points)
+    sum_xx = sum(point.x * point.x for point in points)
+    sum_xy = sum(point.x * point.y for point in points)
+    sum_yy = sum(point.y * point.y for point in points)
+    sum_xz = sum(point.x * point.z for point in points)
+    sum_yz = sum(point.y * point.z for point in points)
+    normal_matrix = Matrix(
+        (
+            (sum_xx, sum_xy, sum_x),
+            (sum_xy, sum_yy, sum_y),
+            (sum_x, sum_y, float(len(points))),
+        )
+    )
+    if abs(normal_matrix.determinant()) < 1e-10:
+        raise RuntimeError("Support points are collinear.")
+    coefficients = normal_matrix.inverted() @ Vector((sum_xz, sum_yz, sum_z))
+    normal = Vector((-coefficients.x, -coefficients.y, 1.0)).normalized()
+    angle_degrees = math.degrees(normal.angle(Vector((0.0, 0.0, 1.0))))
+    return normal, angle_degrees, coefficients
+
+
+def supporting_plane_from_lower_hull(
+    minimum: Vector,
+    maximum: Vector,
+) -> tuple[list[Vector], Vector, float] | None:
+    """Estimate the lower convex support face from horizontal cell minima."""
+    points = [
+        obj.matrix_world @ vertex.co
+        for obj in scene_mesh_objects()
+        for vertex in obj.data.vertices
+    ]
+    if len(points) < 3:
+        return None
+
+    span_x = maximum.x - minimum.x
+    span_y = maximum.y - minimum.y
+    height = maximum.z - minimum.z
+    if span_x <= 1e-8 or span_y <= 1e-8 or height <= 1e-8:
+        return None
+
+    grid_size = 10
+    cell_minima: dict[tuple[int, int], Vector] = {}
+    for point in points:
+        cell_x = min(grid_size - 1, max(0, int((point.x - minimum.x) / span_x * grid_size)))
+        cell_y = min(grid_size - 1, max(0, int((point.y - minimum.y) / span_y * grid_size)))
+        key = (cell_x, cell_y)
+        previous = cell_minima.get(key)
+        if previous is None or point.z < previous.z:
+            cell_minima[key] = point.copy()
+
+    candidate_limit_z = minimum.z + height * 0.38
+    candidates = [point for point in cell_minima.values() if point.z <= candidate_limit_z]
+    if len(candidates) < 3:
+        return None
+
+    sample_stride = max(1, len(points) // 6000)
+    validation_points = points[::sample_stride]
+    tolerance = height * 0.006
+    minimum_area = span_x * span_y * 0.01
+    best: tuple[float, list[Vector], Vector, float] | None = None
+
+    for triple in itertools.combinations(candidates, 3):
+        first, second, third = triple
+        twice_area = abs(
+            (second.x - first.x) * (third.y - first.y)
+            - (second.y - first.y) * (third.x - first.x)
+        )
+        area = twice_area * 0.5
+        if area < minimum_area:
+            continue
+        try:
+            normal, angle_degrees, coefficients = fit_support_plane(list(triple))
+        except RuntimeError:
+            continue
+        if angle_degrees < 0.25 or angle_degrees > 35.0:
+            continue
+
+        contact_count = 0
+        intersects_geometry = False
+        for point in validation_points:
+            plane_z = coefficients.x * point.x + coefficients.y * point.y + coefficients.z
+            residual = point.z - plane_z
+            if residual < -tolerance:
+                intersects_geometry = True
+                break
+            if residual <= tolerance * 2.0:
+                contact_count += 1
+        if intersects_geometry:
+            continue
+
+        score = area * (1.0 + math.log1p(contact_count))
+        if best is None or score > best[0]:
+            best = (score, list(triple), normal, angle_degrees)
+
+    if best is None:
+        return None
+    return best[1], best[2], best[3]
+
+
+def level_support_plane() -> bool:
+    """Level the real contact plane instead of grounding one AABB corner."""
+    minimum, maximum = scene_world_bounds()
+    lower_hull_support = supporting_plane_from_lower_hull(minimum, maximum)
+    method = "lower-hull"
+    if lower_hull_support is not None:
+        best_points, normal, angle_degrees = lower_hull_support
+    else:
+        weighted_candidates = support_candidates_from_low_components(minimum, maximum)
+        if len(weighted_candidates) < 3:
+            print(
+                "[blender-transform] support leveling skipped: "
+                f"lower hull unavailable and only {len(weighted_candidates)} contact components found",
+                flush=True,
+            )
+            return False
+
+        method = "components"
+        candidate_points = [point for point, _size in weighted_candidates]
+        best_points = candidate_points
+        if len(candidate_points) > 3:
+            best_area = -1.0
+            for triple in itertools.combinations(candidate_points, 3):
+                first, second, third = triple
+                area = abs(
+                    (second.x - first.x) * (third.y - first.y)
+                    - (second.y - first.y) * (third.x - first.x)
+                )
+                if area > best_area:
+                    best_area = area
+                    best_points = list(triple)
+        try:
+            normal, angle_degrees, _coefficients = fit_support_plane(best_points)
+        except RuntimeError as error:
+            print(f"[blender-transform] support leveling skipped: {error}", flush=True)
+            return False
+
+    if angle_degrees < 0.25:
+        print(
+            f"[blender-transform] support plane already level angle={angle_degrees:.4f} contacts={len(best_points)}",
+            flush=True,
+        )
+        return False
+    if angle_degrees > 35.0:
+        print(
+            f"[blender-transform] support leveling rejected angle={angle_degrees:.4f} contacts={len(best_points)}",
+            flush=True,
+        )
+        return False
+
+    up = Vector((0.0, 0.0, 1.0))
+    rotation_quaternion = normal.rotation_difference(up)
+    rotation = rotation_quaternion.to_matrix().to_4x4()
+    for obj in scene_mesh_objects():
+        try:
+            select_only(obj)
+            obj.matrix_world = rotation @ obj.matrix_world
+            bpy.ops.object.transform_apply(location=False, rotation=True, scale=False)
+        finally:
+            try:
+                obj.select_set(False)
+            except Exception:
+                pass
+
+    bpy.context.view_layer.update()
+    leveled_normal = (rotation_quaternion @ normal).normalized()
+    residual_angle = math.degrees(leveled_normal.angle(up))
+    print(
+        "[blender-transform] support plane leveling applied "
+        f"method={method} angle={angle_degrees:.4f} contacts={len(best_points)} "
+        f"residual_angle={residual_angle:.6f} "
+        f"normal=({normal.x:.6f}, {normal.y:.6f}, {normal.z:.6f})",
+        flush=True,
+    )
+    return True
+
+
 def optimize_scene() -> None:
     for obj in bpy.context.scene.objects:
         if obj.type != "MESH":
@@ -267,6 +523,7 @@ def main() -> int:
     parser.add_argument("--rotation-x-deg", type=float, default=0.0)
     parser.add_argument("--rotation-y-deg", type=float, default=0.0)
     parser.add_argument("--rotation-z-deg", type=float, default=0.0)
+    parser.add_argument("--level-support-plane", action="store_true")
     parser.add_argument("--normalize-to-ground", action="store_true")
     args = parser.parse_args(sys.argv[sys.argv.index("--") + 1 :] if "--" in sys.argv else None)
 
@@ -278,6 +535,8 @@ def main() -> int:
     clear_scene()
     import_asset(source)
     apply_canonical_rotation(args.rotation_x_deg, args.rotation_y_deg, args.rotation_z_deg)
+    if args.level_support_plane:
+        level_support_plane()
     if args.normalize_to_ground:
         center_and_ground_scene()
     optimize_scene()
