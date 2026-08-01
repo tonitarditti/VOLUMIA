@@ -1,0 +1,19 @@
+{
+  "projectId": "project_1785546171467",
+  "status": "error",
+  "createdAt": "2026-08-01T01:02:51.468Z",
+  "updatedAt": "2026-08-01T01:03:14.832Z",
+  "warnings": [],
+  "logs": [],
+  "id": "job_1785546194825",
+  "mode": "quick",
+  "message": "TripoSR no configurado: define VOLUMIA_TRIPOSR_DIR.",
+  "inputFiles": [
+    "E:\\VOLUMIA\\apps\\desktop\\projects\\project_1785546171467\\input\\1785546193571-mesa_redonda.png"
+  ],
+  "error": {
+    "message": "TripoSR no configurado: define VOLUMIA_TRIPOSR_DIR."
+  },
+  "startedAt": "2026-08-01T01:03:14.828Z",
+  "finishedAt": "2026-08-01T01:03:14.832Z"
+}
