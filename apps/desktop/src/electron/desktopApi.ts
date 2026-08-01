@@ -20,6 +20,8 @@ import {
   type RememberWindowBoundsPayload,
   type SettingsExportEnvelope,
   type GenerationDonePayload,
+  type GenerationExportPayload,
+  type GenerationExportResult,
   type GenerationErrorPayload,
   type GenerationCheckResult,
   type GenerationProgressPayload,
@@ -70,6 +72,7 @@ export type VolumiaGenerationBridge = {
   cancel: (projectId: string) => Promise<void>;
   check: () => Promise<GenerationCheckResult>;
   test: () => Promise<GenerationTestResult>;
+  exportModel: (payload: GenerationExportPayload) => Promise<GenerationExportResult>;
   captureViewportMultiview: (payload: GenerationCaptureViewportMultiviewPayload) => Promise<string[]>;
   setViewportMultiviewCaptureHandler: (
     handler: (payload: GenerationCaptureViewportMultiviewPayload) => Promise<string[]> | string[]
@@ -202,6 +205,7 @@ function ensureGenerationBridge(): VolumiaGenerationBridge {
     !generation.cancel ||
     !generation.check ||
     !generation.test ||
+    !generation.exportModel ||
     !generation.captureViewportMultiview ||
     !generation.setViewportMultiviewCaptureHandler ||
     !generation.clearViewportMultiviewCaptureHandler ||
@@ -411,6 +415,9 @@ export const desktopApi = {
   },
   openGenerationOutputFolder(glbPath: string): Promise<{ ok: boolean; path: string; error?: string }> {
     return ensureGenerationBridge().openOutputFolder(glbPath);
+  },
+  exportModel(payload: GenerationExportPayload): Promise<GenerationExportResult> {
+    return ensureGenerationBridge().exportModel(payload);
   },
   openGenerationLogPath(logPath: string): Promise<{ ok: boolean; path: string; error?: string }> {
     return ensureGenerationBridge().openLogPath(logPath);

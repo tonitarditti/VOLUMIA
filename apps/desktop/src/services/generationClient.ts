@@ -1,5 +1,12 @@
 export type GenerationMode = "demo" | "quick" | "textured" | "photogrammetry";
-export type JobStatus = "idle" | "queued" | "running" | "optimizing" | "complete" | "error";
+export type JobStatus =
+  | "idle"
+  | "queued"
+  | "running"
+  | "optimizing"
+  | "complete"
+  | "cancelled"
+  | "error";
 
 export type ToolStatus = {
   name: string;
@@ -49,9 +56,21 @@ export type ProjectStatusResponse = {
   job: ProjectJob;
 };
 
+export type DeleteProjectResponse = {
+  ok: boolean;
+  id: string;
+};
+
+export type CancelProjectResponse = {
+  ok: boolean;
+  projectId: string;
+  job: ProjectJob;
+};
+
 export type LocalSettings = Partial<Record<
   | "VOLUMIA_PYTHON"
   | "VOLUMIA_BLENDER"
+  | "VOLUMIA_SKETCHUP"
   | "VOLUMIA_TRIPOSR_DIR"
   | "VOLUMIA_HUNYUAN_DIR"
   | "VOLUMIA_HUNYUAN_MODEL_PATH"
@@ -130,6 +149,20 @@ export const generationClient = {
       method: "POST",
       body: JSON.stringify({ id }),
     });
+  },
+
+  async deleteProject(projectId: string) {
+    return await requestJson<DeleteProjectResponse>(
+      `/api/projects/${encodeURIComponent(projectId)}`,
+      { method: "DELETE" },
+    );
+  },
+
+  async cancelProjectGeneration(projectId: string) {
+    return await requestJson<CancelProjectResponse>(
+      `/api/projects/${encodeURIComponent(projectId)}/cancel`,
+      { method: "POST" },
+    );
   },
 
   async uploadInput(projectId: string, files: File[]) {

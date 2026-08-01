@@ -198,7 +198,8 @@ export function RunSummary({
   generationLogPath,
   isEngineReady,
   onOpenOutputFolder,
-  onGenerateSkp,
+  onExportGlb,
+  onExportSkp,
   onOpenGenerationLog,
 }: {
   generationStage: string;
@@ -212,10 +213,11 @@ export function RunSummary({
   generationLogPath: string;
   isEngineReady: boolean;
   onOpenOutputFolder: () => void | Promise<void>;
-  onGenerateSkp: () => void | Promise<void>;
+  onExportGlb: () => void | Promise<void>;
+  onExportSkp: () => void | Promise<void>;
   onOpenGenerationLog: () => void | Promise<void>;
 }) {
-  const skpDisabled = isGenerating || !hasModel || !isEngineReady;
+  const exportDisabled = isGenerating || !hasModel;
 
   return (
     <div className="space-y-6">
@@ -258,15 +260,22 @@ export function RunSummary({
           <Button
             variant="secondary"
             className="border-[var(--workspace-divider)] bg-[var(--workspace-surface)] text-[var(--workspace-text-muted)] hover:border-[var(--accent)] hover:bg-[var(--workspace-surface-hover)] hover:text-[var(--workspace-text)]"
-            onClick={() => void onGenerateSkp()}
-            disabled={skpDisabled}
-            title={!isEngineReady ? "Engine offline - Restart" : undefined}
+            onClick={() => void onExportGlb()}
+            disabled={exportDisabled}
           >
-            Generate SKP
+            Export GLB
+          </Button>
+          <Button
+            variant="secondary"
+            className="border-[var(--workspace-divider)] bg-[var(--workspace-surface)] text-[var(--workspace-text-muted)] hover:border-[var(--accent)] hover:bg-[var(--workspace-surface-hover)] hover:text-[var(--workspace-text)]"
+            onClick={() => void onExportSkp()}
+            disabled={exportDisabled}
+          >
+            Export SKP
           </Button>
           <Button
             variant="ghost"
-            className="col-span-2 text-[var(--workspace-text-muted)] hover:border-[var(--workspace-divider)] hover:bg-[var(--workspace-surface)] hover:text-[var(--workspace-text)]"
+            className="text-[var(--workspace-text-muted)] hover:border-[var(--workspace-divider)] hover:bg-[var(--workspace-surface)] hover:text-[var(--workspace-text)]"
             onClick={() => void onOpenGenerationLog()}
             disabled={!generationLogPath}
           >

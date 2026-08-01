@@ -1,11 +1,22 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { desktopApi, hasDesktopBridge } from "@/electron/desktopApi";
 import { Button } from "@/ui/primitives";
 import {
   generationClient,
   type LocalSettings,
   type ToolsStatusResponse,
 } from "@/services/generationClient";
+import { applyResolvedThemeToDocument } from "@/ui/theme";
+import { resolveTheme } from "@/volumia/settings/resolvers";
+import {
+  loadAppSettings as loadAppearanceSettings,
+  saveAppSettings as saveAppearanceSettings,
+} from "@/volumia/settings/storage";
+import type {
+  AppSettings as AppearanceSettings,
+  Theme as AppearanceTheme,
+} from "@/volumia/settings/types";
 
 const fields: Array<{ key: keyof LocalSettings; label: string; placeholder: string }> = [
   {
@@ -17,6 +28,11 @@ const fields: Array<{ key: keyof LocalSettings; label: string; placeholder: stri
     key: "VOLUMIA_BLENDER",
     label: "Blender",
     placeholder: "C:\\Program Files\\Blender Foundation\\Blender 4.3\\blender.exe",
+  },
+  {
+    key: "VOLUMIA_SKETCHUP",
+    label: "SketchUp",
+    placeholder: "C:\\Program Files\\SketchUp\\SketchUp 2026\\SketchUp.exe",
   },
   {
     key: "VOLUMIA_TRIPOSR_DIR",
@@ -87,6 +103,7 @@ function emptySettings(): LocalSettings {
   return {
     VOLUMIA_PYTHON: "",
     VOLUMIA_BLENDER: "",
+    VOLUMIA_SKETCHUP: "",
     VOLUMIA_TRIPOSR_DIR: "",
     VOLUMIA_HUNYUAN_DIR: "",
     VOLUMIA_HUNYUAN_MODEL_PATH: "tencent/Hunyuan3D-2",
@@ -100,6 +117,16 @@ function emptySettings(): LocalSettings {
     VOLUMIA_HUNYUAN_ROTATION_Y: "0",
     VOLUMIA_HUNYUAN_ROTATION_Z: "0",
   };
+}
+
+function detectSystemTheme(): AppearanceTheme {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+    return "light";
+  }
+
+  return window.matchMedia("(prefers-color-scheme: dark)").matches
+    ? "dark"
+    : "light";
 }
 
 function fieldFromTools(key: keyof LocalSettings, tools: ToolsStatusResponse["tools"] | null) {
@@ -116,6 +143,63 @@ export function Settings() {
   const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
   const [detecting, setDetecting] = useState(false);
+  const [appearanceSettings, setAppearanceSettings] =
+    useState<AppearanceSettings>(() => loadAppearanceSettings());
+  const [systemTheme, setSystemTheme] = useState<AppearanceTheme>(() =>
+    detectSystemTheme(),
+  );
+
+  const resolvedTheme = useMemo(
+    () => resolveTheme(appearanceSettings, systemTheme, new Date()),
+    [appearanceSettings, systemTheme],
+  );
+
+  useEffect(() => {
+    saveAppearanceSettings(appearanceSettings);
+    applyResolvedThemeToDocument(resolvedTheme, {
+      colorway: appearanceSettings.colorway,
+      glassStyle: appearanceSettings.glassStyle,
+      reduceMotion: appearanceSettings.reduceMotion,
+    });
+  }, [appearanceSettings, resolvedTheme]);
+
+  useEffect(() => {
+    if (!hasDesktopBridge()) {
+      const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+      const handleChange = () => setSystemTheme(detectSystemTheme());
+      mediaQuery.addEventListener("change", handleChange);
+      return () => mediaQuery.removeEventListener("change", handleChange);
+    }
+
+    let active = true;
+    const unsubscribe = desktopApi.onSystemThemeChanged(setSystemTheme);
+    void desktopApi
+      .getSystemTheme()
+      .then((theme) => {
+        if (active) setSystemTheme(theme);
+      })
+      .catch(() => undefined);
+
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, []);
+
+  const setThemePreference = (theme: AppearanceTheme) => {
+    setAppearanceSettings((current) => ({
+      ...current,
+      themeMode: "manual",
+      theme,
+    }));
+  };
+
+  const followSystemTheme = () => {
+    setAppearanceSettings((current) => ({
+      ...current,
+      themeMode: "system",
+    }));
+  };
 
   const load = async () => {
     const response = await generationClient.settings();
@@ -178,6 +262,70 @@ export function Settings() {
             Inicio
           </Button>
         </div>
+
+        <section className="mt-8 rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface-1)] p-5">
+          <div>
+            <p className="text-xs uppercase tracking-[0.14em] text-[var(--text-faint)]">
+              Apariencia
+            </p>
+            <h2 className="mt-1 text-lg font-medium text-[var(--text)]">
+              Tema de la interfaz
+            </h2>
+            <p className="mt-1 text-xs text-[var(--text-muted)]">
+              Elegí cómo se muestra VOLUMIA. La opción del sistema se actualiza automáticamente.
+            </p>
+          </div>
+
+          <div className="mt-4 grid gap-2 sm:grid-cols-3">
+            <Button
+              variant={
+                appearanceSettings.themeMode === "manual" &&
+                appearanceSettings.theme === "dark"
+                  ? "primary"
+                  : "secondary"
+              }
+              aria-pressed={
+                appearanceSettings.themeMode === "manual" &&
+                appearanceSettings.theme === "dark"
+              }
+              onClick={() => setThemePreference("dark")}
+            >
+              Oscuro
+            </Button>
+            <Button
+              variant={
+                appearanceSettings.themeMode === "manual" &&
+                appearanceSettings.theme === "light"
+                  ? "primary"
+                  : "secondary"
+              }
+              aria-pressed={
+                appearanceSettings.themeMode === "manual" &&
+                appearanceSettings.theme === "light"
+              }
+              onClick={() => setThemePreference("light")}
+            >
+              Claro
+            </Button>
+            <Button
+              variant={
+                appearanceSettings.themeMode === "system"
+                  ? "primary"
+                  : "secondary"
+              }
+              aria-pressed={appearanceSettings.themeMode === "system"}
+              onClick={followSystemTheme}
+            >
+              Igual al sistema
+            </Button>
+          </div>
+
+          <p className="mt-3 text-xs text-[var(--text-muted)]">
+            {appearanceSettings.themeMode === "system"
+              ? `Tema del sistema: ${systemTheme === "dark" ? "Oscuro" : "Claro"}`
+              : `Tema aplicado: ${resolvedTheme === "dark" ? "Oscuro" : "Claro"}`}
+          </p>
+        </section>
 
         <section className="mt-8 rounded-[var(--radius-md)] border border-[var(--border)] bg-[var(--surface-1)] p-5">
           <div className="flex flex-wrap items-center justify-between gap-3">

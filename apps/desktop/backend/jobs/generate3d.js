@@ -9,6 +9,7 @@ const {
   ensureProjectLayout,
   getToolStatus,
   projectPaths,
+  projectsRoot,
   readLocalSettings,
 } = require("../config/paths");
 
@@ -28,6 +29,108 @@ const PYTHON_OPENMP_ENV = [
   ["MKL_NUM_THREADS", "VOLUMIA_MKL_NUM_THREADS", "1"],
   ["NUMEXPR_NUM_THREADS", "VOLUMIA_NUMEXPR_NUM_THREADS", "1"],
 ];
+const activeJobs = new Map();
+
+class GenerationCancelledError extends Error {
+  constructor() {
+    super("Generación cancelada.");
+    this.name = "GenerationCancelledError";
+  }
+}
+
+function isActiveStatus(status) {
+  return ["queued", "running", "optimizing"].includes(status);
+}
+
+function isGenerationCancelled(projectId) {
+  return Boolean(activeJobs.get(projectId)?.cancelled) || readJob(projectId).status === "cancelled";
+}
+
+function waitForChildExit(child, timeoutMs = 5000) {
+  if (!child || child.exitCode !== null || child.killed) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    const timeout = setTimeout(resolve, timeoutMs);
+    child.once("close", () => {
+      clearTimeout(timeout);
+      resolve();
+    });
+  });
+}
+
+function terminateProcessTree(child) {
+  if (!child?.pid) {
+    return Promise.resolve();
+  }
+
+  if (process.platform === "win32") {
+    return new Promise((resolve) => {
+      const killer = spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"], {
+        windowsHide: true,
+        stdio: "ignore",
+      });
+      killer.once("error", resolve);
+      killer.once("close", resolve);
+    });
+  }
+
+  try {
+    child.kill("SIGTERM");
+  } catch {
+    // The process may have exited between the cancellation request and kill.
+  }
+  return Promise.resolve();
+}
+
+async function cancelGeneration(projectId, options = {}) {
+  const activeJob = activeJobs.get(projectId);
+  const current = readJob(projectId);
+  if (!activeJob && !isActiveStatus(current.status)) {
+    return current;
+  }
+
+  if (activeJob) {
+    activeJob.cancelled = true;
+  }
+  const cancelled = writeJob(projectId, {
+    status: "cancelled",
+    message: "Generación interrumpida por el usuario.",
+    finishedAt: nowIso(),
+    error: null,
+  });
+  appendJobLog(projectId, "Generación cancelada: terminando procesos asociados.");
+
+  const children = activeJob ? [...activeJob.children] : [];
+  await Promise.all(children.map((child) => terminateProcessTree(child)));
+  await Promise.all(children.map((child) => waitForChildExit(child)));
+  if (options.waitForCompletion && activeJob?.completion) {
+    await activeJob.completion;
+  }
+  return cancelled;
+}
+
+function reconcileInterruptedJobs() {
+  if (!fs.existsSync(projectsRoot)) {
+    return [];
+  }
+
+  const reconciled = [];
+  for (const entry of fs.readdirSync(projectsRoot, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const job = readJob(entry.name);
+    if (!isActiveStatus(job.status)) continue;
+    writeJob(entry.name, {
+      status: "cancelled",
+      message: "Generación interrumpida al reiniciar VOLUMIA.",
+      finishedAt: nowIso(),
+      error: null,
+    });
+    appendJobLog(entry.name, "Estado reconciliado al iniciar: no existe un proceso activo de esta sesión.");
+    reconciled.push(entry.name);
+  }
+  return reconciled;
+}
 
 function configuredRotation(prefix, fallback) {
   return {
@@ -179,6 +282,10 @@ function copyRawOutput(projectId, sourcePath) {
 
 function spawnProcess(command, args, options = {}) {
   return new Promise((resolve, reject) => {
+    if (options.projectId && isGenerationCancelled(options.projectId)) {
+      reject(new GenerationCancelledError());
+      return;
+    }
     const child = spawn(command, args, {
       cwd: options.cwd,
       env: { ...process.env, ...readLocalSettings(), ...(options.env || {}) },
@@ -186,6 +293,8 @@ function spawnProcess(command, args, options = {}) {
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
+    const activeJob = options.projectId ? activeJobs.get(options.projectId) : null;
+    activeJob?.children.add(child);
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (chunk) => {
@@ -196,8 +305,16 @@ function spawnProcess(command, args, options = {}) {
       stderr += String(chunk);
       options.onOutput?.(String(chunk), "stderr");
     });
-    child.on("error", (error) => reject(error));
+    child.on("error", (error) => {
+      activeJob?.children.delete(child);
+      reject(error);
+    });
     child.on("close", (code, signal) => {
+      activeJob?.children.delete(child);
+      if (options.projectId && isGenerationCancelled(options.projectId)) {
+        reject(new GenerationCancelledError());
+        return;
+      }
       if (code === 0) {
         resolve({ stdout, stderr, code });
         return;
@@ -279,6 +396,7 @@ async function runBlenderOptimize(projectId, sourcePath, options = {}) {
     );
   }
   await spawnProcess(tools.blender.path, blenderArgs, {
+    projectId,
     onOutput: (chunk) => appendJobLog(projectId, chunk.trim()),
   });
   if (!isValidGlb(optimizedGlb)) {
@@ -317,11 +435,15 @@ async function runQuick(projectId, inputFiles) {
       "--output-dir",
       triposrOutput,
     ], {
+      projectId,
       cwd: tools.triposr.path,
       env: pythonEnv,
       onOutput: (chunk) => appendJobLog(projectId, chunk.trim()),
     });
   } catch (error) {
+    if (error instanceof GenerationCancelledError) {
+      throw error;
+    }
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`Error ejecutando Python: ${message}`);
   }
@@ -370,6 +492,7 @@ async function runTextured(projectId, inputFiles) {
     "--output-dir",
     hunyuanOutput,
   ], {
+    projectId,
     cwd: tools.hunyuan.path,
     env: pythonEnv,
     onOutput: (chunk) => appendJobLog(projectId, chunk.trim()),
@@ -420,6 +543,7 @@ async function runPhotogrammetry(projectId, inputFiles) {
     "--output-dir",
     paths.output,
   ], {
+    projectId,
     cwd: tools.meshroom.path,
     env: pythonEnv,
     onOutput: (chunk) => appendJobLog(projectId, chunk.trim()),
@@ -440,6 +564,12 @@ async function runGeneration(projectId, mode) {
     .filter((filePath) => fs.statSync(filePath).isFile());
 
   try {
+    // A cancellation can arrive immediately after the HTTP request is accepted,
+    // before this asynchronous runner has written its first "queued" state.
+    // Preserve that cancellation instead of reviving the job.
+    if (isGenerationCancelled(projectId)) {
+      throw new GenerationCancelledError();
+    }
     if (!validModes.has(mode)) {
       throw new Error(`Modo de generacion invalido: ${mode}`);
     }
@@ -466,6 +596,10 @@ async function runGeneration(projectId, mode) {
             ? await runTextured(projectId, inputFiles)
             : await runPhotogrammetry(projectId, inputFiles);
 
+    if (isGenerationCancelled(projectId)) {
+      throw new GenerationCancelledError();
+    }
+
     const finished = writeJob(projectId, {
       status: "complete",
       message: "Modelo listo.",
@@ -477,6 +611,15 @@ async function runGeneration(projectId, mode) {
     log("INFO", "generation complete", { projectId, mode, latestGlb: paths.latestGlb });
     return finished;
   } catch (error) {
+    if (error instanceof GenerationCancelledError || isGenerationCancelled(projectId)) {
+      log("INFO", "generation cancelled", { projectId, mode });
+      return writeJob(projectId, {
+        status: "cancelled",
+        message: "Generación interrumpida por el usuario.",
+        finishedAt: nowIso(),
+        error: null,
+      });
+    }
     const message = error instanceof Error ? error.message : String(error);
     log("ERR", "generation failed", { projectId, mode, message });
     return writeJob(projectId, {
@@ -489,7 +632,19 @@ async function runGeneration(projectId, mode) {
 }
 
 function startGeneration(projectId, mode) {
-  void runGeneration(projectId, mode);
+  if (activeJobs.has(projectId)) {
+    return readJob(projectId);
+  }
+
+  const activeJob = {
+    cancelled: false,
+    children: new Set(),
+    completion: null,
+  };
+  activeJobs.set(projectId, activeJob);
+  activeJob.completion = runGeneration(projectId, mode).finally(() => {
+    activeJobs.delete(projectId);
+  });
   return readJob(projectId);
 }
 
@@ -501,4 +656,6 @@ module.exports = {
   writeJob,
   startGeneration,
   runGeneration,
+  cancelGeneration,
+  reconcileInterruptedJobs,
 };

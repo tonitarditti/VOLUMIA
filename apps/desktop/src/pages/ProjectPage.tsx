@@ -983,6 +983,34 @@ export function ProjectPage() {
     await desktopApi.openGenerationOutputFolder(project.model.glbPath);
   };
 
+  const handleExportModel = async (format: "glb" | "skp") => {
+    if (!hasDesktopBridge() || !project.model?.glbPath || isGenerating) {
+      return;
+    }
+
+    setIsGenerating(true);
+    setGenerationStage("exporting");
+    setGenerationMessage(`Exportando ${format.toUpperCase()}...`);
+    try {
+      const result = await desktopApi.exportModel({ glbPath: project.model.glbPath, format });
+      if (result.canceled) {
+        setGenerationStage("ready");
+        setGenerationMessage("Exportación cancelada.");
+      } else if (result.path) {
+        setGenerationStage("done");
+        setGenerationMessage(`Exportado: ${result.path}`);
+      } else {
+        setGenerationStage("error");
+        setGenerationMessage(result.error ?? `No se pudo exportar ${format.toUpperCase()}.`);
+      }
+    } catch (error) {
+      setGenerationStage("error");
+      setGenerationMessage(error instanceof Error ? error.message : `No se pudo exportar ${format.toUpperCase()}.`);
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
   const handleOpenGenerationLog = async () => {
     if (!hasDesktopBridge() || !generationLogPath) {
       return;
@@ -1078,7 +1106,7 @@ export function ProjectPage() {
           eyebrow="Studio"
           title="Workspace"
           centerSlot={
-            <div className="no-drag min-w-0 text-center">
+            <div className="min-w-0 text-center" title="Arrastra para mover la ventana">
               <p className="text-[9px] font-semibold uppercase tracking-[0.14em] text-[var(--text-faint)]">
                 Project
               </p>
@@ -1283,6 +1311,8 @@ export function ProjectPage() {
                 onToggleNotes={() => setIsNotesOpen((current) => !current)}
                 onUpdateNotes={(value) => updateNotes(project.id, value)}
                 onOpenOutputFolder={handleOpenOutputFolder}
+                onExportGlb={() => handleExportModel("glb")}
+                onExportSkp={() => handleExportModel("skp")}
                 onRestartEngine={restartEngine}
                 onToggleEngineLogs={() =>
                   setShowEngineLogs((current) => !current)
@@ -1320,6 +1350,7 @@ export function ProjectPage() {
               onToggleShadows={handleViewportToggleShadows}
               onToggleWireframe={handleViewportToggleWireframe}
               onCaptureViewport={handleViewportScreenshot}
+              onExportModel={() => handleExportModel("glb")}
             />
           </div>
         </div>

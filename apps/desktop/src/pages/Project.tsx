@@ -5,6 +5,7 @@ import { GenerateButton } from "@/components/GenerateButton";
 import { GenerationModeSelector } from "@/components/GenerationModeSelector";
 import { JobStatus } from "@/components/JobStatus";
 import { ModelViewer } from "@/components/ModelViewer";
+import { desktopApi, hasDesktopBridge } from "@/electron/desktopApi";
 import { Button } from "@/ui/primitives";
 import {
   generationClient,
@@ -129,6 +130,70 @@ export function Project() {
     }
   };
 
+  const cancelGeneration = async () => {
+    if (!project) return;
+    const confirmed = window.confirm("¿Cancelar la generación actual?");
+    if (!confirmed) return;
+
+    setBusy(true);
+    try {
+      const result = await generationClient.cancelProjectGeneration(project.id);
+      setJob(result.job);
+      setProject((current) => (current ? { ...current, job: result.job } : current));
+      setMessage("Generación interrumpida.");
+    } catch (error) {
+      setMessage(
+        error instanceof Error ? error.message : "No se pudo cancelar la generación.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const exportModel = async () => {
+    if (!project?.latestGlb || !modelUrl) {
+      return;
+    }
+
+    setBusy(true);
+    try {
+      if (hasDesktopBridge()) {
+        const result = await desktopApi.exportModel({
+          glbPath: project.latestGlb,
+          format: "glb",
+        });
+        if (result.canceled) {
+          setMessage("Exportación cancelada.");
+        } else if (result.path) {
+          setMessage("Modelo exportado correctamente.");
+        } else {
+          setMessage(result.error ?? "No se pudo exportar el modelo.");
+        }
+        return;
+      }
+
+      const response = await fetch(modelUrl);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const fileUrl = URL.createObjectURL(await response.blob());
+      const link = document.createElement("a");
+      link.href = fileUrl;
+      link.download = `${projectId}.glb`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(fileUrl);
+      setMessage("Modelo exportado correctamente.");
+    } catch (error) {
+      setMessage(
+        error instanceof Error ? error.message : "No se pudo exportar el modelo.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <main className="grid h-full min-h-0 grid-cols-[360px_minmax(0,1fr)] overflow-hidden">
       <aside className="min-h-0 overflow-y-auto border-r border-[var(--border)] bg-[var(--surface-1)] p-5">
@@ -149,6 +214,16 @@ export function Project() {
             <GenerationModeSelector value={mode} disabled={busy || running} onChange={setMode} />
           </div>
           <GenerateButton disabled={busy || running || (files.length === 0 && mode !== "demo")} running={busy || running} onClick={() => void generate()} />
+          {running ? (
+            <Button
+              variant="secondary"
+              className="w-full"
+              disabled={busy}
+              onClick={() => void cancelGeneration()}
+            >
+              Cancelar generación
+            </Button>
+          ) : null}
           <JobStatus job={job} />
           <div>
             <p className="mb-2 text-sm font-medium text-[var(--text)]">Configuracion real</p>
@@ -164,9 +239,24 @@ export function Project() {
             <p className="text-xs uppercase tracking-[0.14em] text-[var(--text-faint)]">Viewer</p>
             <h2 className="mt-1 text-xl font-medium text-[var(--text)]">latest.glb</h2>
           </div>
-          <Button variant="secondary" className="h-9 px-4 text-xs" onClick={() => void refresh()}>
-            Refrescar
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="secondary"
+              className="h-9 px-4 text-xs"
+              onClick={() => void refresh()}
+              disabled={busy}
+            >
+              Refrescar
+            </Button>
+            <Button
+              variant="primary"
+              className="h-9 px-4 text-xs"
+              onClick={() => void exportModel()}
+              disabled={!project?.latestGlb || busy || running}
+            >
+              Exportar GLB
+            </Button>
+          </div>
         </div>
         <div className="min-h-0 flex-1">
           <ModelViewer modelUrl={modelUrl} projectId={projectId} transformRevision={job?.finishedAt ?? null} />

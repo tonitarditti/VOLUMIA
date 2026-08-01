@@ -268,8 +268,12 @@ function getColorwayExpressions(theme: Theme, colorway: Colorway) {
       `radial-gradient(circle at top, color-mix(in srgb, ${brightRef} 10%, transparent) 0%, transparent 48%), linear-gradient(180deg, color-mix(in srgb, ${brightRef} 4%, transparent), transparent 56%)`,
     "--panel-bg": `color-mix(in srgb, var(--theme-bg-surface-1) ${isDark ? 90 : 92}%, ${brightRef} ${isDark ? 10 : 8}%)`,
     "--panel-bg-soft": `color-mix(in srgb, var(--theme-bg-surface-2) ${isDark ? 86 : 89}%, ${brightRef} ${isDark ? 14 : 11}%)`,
-    "--panel-border": `color-mix(in srgb, var(--theme-border) 80%, ${dimRef} 20%)`,
-    "--panel-border-strong": `color-mix(in srgb, var(--theme-border-strong) 76%, ${dimRef} 24%)`,
+    "--panel-border": isDark
+      ? `color-mix(in srgb, var(--theme-border) 80%, ${dimRef} 20%)`
+      : "var(--theme-border)",
+    "--panel-border-strong": isDark
+      ? `color-mix(in srgb, var(--theme-border-strong) 76%, ${dimRef} 24%)`
+      : "var(--theme-border-strong)",
     "--bg-app": "var(--app-bg)",
     "--bg": "var(--app-bg)",
     "--bg-surface-1": "var(--panel-bg)",
@@ -284,8 +288,12 @@ function getColorwayExpressions(theme: Theme, colorway: Colorway) {
     "--border": "var(--panel-border)",
     "--border-strong": "var(--panel-border-strong)",
     "--text-muted": `color-mix(in srgb, var(--theme-text-muted) 90%, ${brightRef} 10%)`,
-    "--accent-primary": `color-mix(in srgb, var(--theme-accent-primary) 62%, ${dimRef} 38%)`,
-    "--accent-primary-hover": `color-mix(in srgb, var(--theme-accent-primary-hover) 64%, ${brightRef} 36%)`,
+    "--accent-primary": isDark
+      ? `color-mix(in srgb, var(--theme-accent-primary) 62%, ${dimRef} 38%)`
+      : "color-mix(in srgb, var(--theme-accent-primary) 88%, white 12%)",
+    "--accent-primary-hover": isDark
+      ? `color-mix(in srgb, var(--theme-accent-primary-hover) 64%, ${brightRef} 36%)`
+      : "color-mix(in srgb, var(--theme-accent-primary-hover) 92%, #8B6F47 8%)",
     "--accent-primary-soft": `color-mix(in srgb, var(--theme-accent-primary) 9%, transparent)`,
     "--accent": "var(--accent-primary)",
     "--accent-hover": "var(--accent-primary-hover)",

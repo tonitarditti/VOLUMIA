@@ -11,6 +11,8 @@ import {
   type GenerationAutoPreset,
   type GenerationDevice,
   type GenerationDonePayload,
+  type GenerationExportPayload,
+  type GenerationExportResult,
   type GenerationErrorPayload,
   type GenerationMode,
   type GenerationMultiviewHardSurfaceQuality,
@@ -24,6 +26,11 @@ import {
   type GenerationTestResult,
   type GenerationWritePngBase64Payload,
 } from "../channels";
+// The legacy generation backend owns the local tool paths used by desktop exports.
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { readLocalSettings } = require("../../backend/config/paths") as {
+  readLocalSettings: () => Record<string, string>;
+};
 import {
   computeDeterministicSeedFromFile,
   resolveComfyMultiviewPresetConfig,
@@ -1104,6 +1111,17 @@ function mapPresetToQuality(preset: GenerationPreset): "fast" | "balanced" | "hi
     return "high";
   }
   return preset;
+}
+
+function resolveGlbToSkpScriptPath() {
+  const candidates = [
+    resolve(process.cwd(), "apps", "desktop", "backend", "tools", "glb_to_skp.py"),
+    resolve(process.cwd(), "backend", "tools", "glb_to_skp.py"),
+    resolve(app.getAppPath(), "backend", "tools", "glb_to_skp.py"),
+    resolve(process.resourcesPath, "app.asar.unpacked", "backend", "tools", "glb_to_skp.py"),
+  ];
+
+  return candidates.find((candidate) => fs.existsSync(candidate));
 }
 
 function mapReconstructionTierToDepthQuality(
@@ -2218,6 +2236,79 @@ export function registerGenerationHandlers(getWindow: WindowGetter) {
     const buffer = fs.readFileSync(glbPath);
     return buffer;
   });
+
+  ipcMain.handle(
+    IPC_CHANNELS.generationExportModel,
+    async (_event, payload: GenerationExportPayload): Promise<GenerationExportResult> => {
+      const sourcePath = typeof payload?.glbPath === "string" ? resolve(payload.glbPath) : "";
+      if (!sourcePath || extname(sourcePath).toLowerCase() !== ".glb" || !fs.existsSync(sourcePath)) {
+        return { canceled: false, error: "El modelo GLB no existe o no es válido." };
+      }
+      if (payload.format !== "glb" && payload.format !== "skp") {
+        return { canceled: false, error: "Formato de exportación no compatible." };
+      }
+
+      const format = payload.format;
+      const sourceName = basename(sourcePath, ".glb");
+      const saveResult = await dialog.showSaveDialog({
+        title: format === "glb" ? "Exportar modelo GLB" : "Exportar modelo SketchUp",
+        defaultPath: `${sourceName}.${format}`,
+        filters: [
+          format === "glb"
+            ? { name: "GLB", extensions: ["glb"] }
+            : { name: "SketchUp", extensions: ["skp"] },
+        ],
+      });
+      if (saveResult.canceled || !saveResult.filePath) {
+        return { canceled: true };
+      }
+
+      const outputPath = resolve(saveResult.filePath);
+      try {
+        if (format === "glb") {
+          fs.copyFileSync(sourcePath, outputPath);
+          return { canceled: false, path: outputPath };
+        }
+
+        const settings = readLocalSettings();
+        const blenderExe = settings.VOLUMIA_BLENDER?.trim();
+        const sketchupExe = settings.VOLUMIA_SKETCHUP?.trim();
+        if (!blenderExe || !fs.existsSync(blenderExe)) {
+          return { canceled: false, error: "Configure Blender antes de exportar a SketchUp." };
+        }
+        if (!sketchupExe || !fs.existsSync(sketchupExe)) {
+          return { canceled: false, error: "Configure SketchUp.exe antes de exportar a SKP." };
+        }
+        const scriptPath = resolveGlbToSkpScriptPath();
+        if (!scriptPath) {
+          return { canceled: false, error: "No se encontró la herramienta de exportación SKP." };
+        }
+        const pythonCommand = resolvePythonCommand(settings.VOLUMIA_PYTHON);
+        if (!pythonCommand) {
+          return { canceled: false, error: "No se encontró Python para ejecutar la exportación SKP." };
+        }
+        const pythonPath = resolveAndValidatePythonExecutablePath(pythonCommand.cmd);
+        const { stdout, stderr } = await runPython(
+          pythonPath,
+          scriptPath,
+          ["--input", sourcePath, "--output", outputPath, "--blender-exe", blenderExe, "--sketchup-exe", sketchupExe],
+          { ...process.env, PYTHONUNBUFFERED: "1" },
+          () => undefined,
+          pythonCommand.prefixArgs,
+        );
+        if (!fs.existsSync(outputPath)) {
+          const detail = (stderr || stdout).trim();
+          return { canceled: false, error: detail || "SketchUp no creó el archivo SKP." };
+        }
+        return { canceled: false, path: outputPath };
+      } catch (error) {
+        return {
+          canceled: false,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    },
+  );
 
   ipcMain.handle("gen:write-png-base64", async (_event, payload: unknown) => {
     if (!validateWritePngBase64Payload(payload)) {

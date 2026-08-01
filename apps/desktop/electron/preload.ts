@@ -19,6 +19,8 @@ import {
   type ComfySubmitJobResult,
   type ComfyStatusResponse,
   type GenerationDonePayload,
+  type GenerationExportPayload,
+  type GenerationExportResult,
   type GenerationErrorPayload,
   type GenerationCheckResult,
   type GenerationCaptureViewportMultiviewPayload,
@@ -113,6 +115,8 @@ const bridge = {
     cancel: (projectId: string) => ipcRenderer.invoke(IPC_CHANNELS.generationCancel, { projectId }) as Promise<void>,
     check: () => ipcRenderer.invoke(IPC_CHANNELS.generationCheck) as Promise<GenerationCheckResult>,
     test: () => ipcRenderer.invoke(IPC_CHANNELS.generationTest) as Promise<GenerationTestResult>,
+    exportModel: (payload: GenerationExportPayload) =>
+      ipcRenderer.invoke(IPC_CHANNELS.generationExportModel, payload) as Promise<GenerationExportResult>,
     readGlb: (glbPath: string) => ipcRenderer.invoke("gen:read-glb", glbPath),
     writePngBase64: (payload: GenerationWritePngBase64Payload) =>
       ipcRenderer.invoke("gen:write-png-base64", payload) as Promise<string>,

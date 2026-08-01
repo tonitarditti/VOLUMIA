@@ -13,7 +13,15 @@ const {
   saveLocalSettings,
   settingsPath,
 } = require("./config/paths");
-const { isValidGlb, logPath, readJob, startGeneration, writeJob } = require("./jobs/generate3d");
+const {
+  cancelGeneration,
+  isValidGlb,
+  logPath,
+  readJob,
+  reconcileInterruptedJobs,
+  startGeneration,
+  writeJob,
+} = require("./jobs/generate3d");
 
 const host = process.env.VOLUMIA_BACKEND_HOST || "127.0.0.1";
 const port = Number.parseInt(process.env.VOLUMIA_BACKEND_PORT || "9360", 10) || 9360;
@@ -22,7 +30,7 @@ const app = express();
 app.use(express.json({ limit: "10mb" }));
 app.use((req, res, next) => {
   res.header("Access-Control-Allow-Origin", "*");
-  res.header("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  res.header("Access-Control-Allow-Methods", "GET,POST,DELETE,OPTIONS");
   res.header("Access-Control-Allow-Headers", "Content-Type");
   if (req.method === "OPTIONS") {
     res.sendStatus(204);
@@ -185,6 +193,13 @@ app.post("/api/projects/:id/input", upload.array("images"), (req, res) => {
 
 app.post("/api/projects/:id/generate", (req, res) => {
   const paths = ensureProjectLayout(req.params.id);
+  if (["queued", "running", "optimizing"].includes(readJob(paths.id).status)) {
+    res.status(409).json({
+      ok: false,
+      error: "El proyecto ya tiene una generación en curso.",
+    });
+    return;
+  }
   const mode = String(req.body?.mode || "demo");
   const job = writeJob(paths.id, {
     id: `job_${Date.now()}`,
@@ -212,6 +227,40 @@ app.get("/api/projects/:id/status", (req, res) => {
   });
 });
 
+app.post("/api/projects/:id/cancel", async (req, res) => {
+  try {
+    const paths = projectPaths(req.params.id);
+    if (!fs.existsSync(paths.root)) {
+      res.status(404).json({ ok: false, error: "Project not found." });
+      return;
+    }
+
+    const job = await cancelGeneration(paths.id);
+    res.json({ ok: true, projectId: paths.id, job });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    res.status(500).json({ ok: false, error: message });
+  }
+});
+
+app.delete("/api/projects/:id", async (req, res) => {
+  try {
+    const paths = projectPaths(req.params.id);
+    if (!fs.existsSync(paths.root)) {
+      res.status(404).json({ ok: false, error: "Project not found." });
+      return;
+    }
+
+    await cancelGeneration(paths.id, { waitForCompletion: true });
+
+    fs.rmSync(paths.root, { recursive: true, force: true });
+    res.json({ ok: true, id: paths.id });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    res.status(500).json({ ok: false, error: message });
+  }
+});
+
 app.get("/api/projects/:id/model", (req, res) => {
   const paths = projectPaths(req.params.id);
   if (!isValidGlb(paths.latestGlb)) {
@@ -227,7 +276,11 @@ app.use((error, _req, res, _next) => {
 });
 
 ensureDir(projectsRoot);
+const reconciledProjects = reconcileInterruptedJobs();
 const serverStartedAt = new Date().toISOString();
 app.listen(port, host, () => {
   console.log(`[VOLUMIA][mvp-backend] http://${host}:${port}`);
+  if (reconciledProjects.length > 0) {
+    console.log(`[VOLUMIA][jobs] reconciled interrupted projects: ${reconciledProjects.join(", ")}`);
+  }
 });

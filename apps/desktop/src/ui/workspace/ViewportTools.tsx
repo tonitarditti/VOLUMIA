@@ -22,6 +22,7 @@ type ViewportToolsProps = {
   onToggleShadows: () => void;
   onToggleWireframe: () => void;
   onCaptureViewport: () => void;
+  onExportModel: () => void | Promise<void>;
 };
 
 function Hint({ children }: { children: ReactNode }) {
@@ -102,6 +103,7 @@ export function ViewportTools({
   onToggleShadows,
   onToggleWireframe,
   onCaptureViewport,
+  onExportModel,
 }: ViewportToolsProps) {
   const [showUtilityMenu, setShowUtilityMenu] = useState(false);
   const hasImages = selectedImages.length > 0;
@@ -233,6 +235,14 @@ export function ViewportTools({
                   {selectedImages.length} refs
                 </span>
               ) : null}
+              <Button
+                variant="secondary"
+                className="h-8 rounded-full px-3 text-[11px]"
+                onClick={() => void onExportModel()}
+                disabled={!hasModel}
+              >
+                Export model
+              </Button>
               <Button
                 variant="secondary"
                 className="hidden h-8 rounded-full px-3 text-[11px] min-[1320px]:inline-flex"

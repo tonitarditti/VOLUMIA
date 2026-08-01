@@ -7,6 +7,7 @@ type JobStatusProps = {
 
 function statusTone(status?: string): BadgeTone {
   if (status === "complete") return "success";
+  if (status === "cancelled") return "neutral";
   if (status === "error") return "danger";
   if (status === "running" || status === "optimizing" || status === "queued") return "warning";
   return "neutral";
@@ -14,6 +15,7 @@ function statusTone(status?: string): BadgeTone {
 
 function StatusIcon({ status }: { status?: string }) {
   if (status === "complete") return <span className="text-[var(--status-success)]" aria-hidden="true">OK</span>;
+  if (status === "cancelled") return <span className="text-[var(--text-muted)]" aria-hidden="true">--</span>;
   if (status === "error") return <span className="text-[var(--status-error)]" aria-hidden="true">!</span>;
   if (status === "running" || status === "optimizing" || status === "queued") {
     return <span className="text-[var(--status-warning)]" aria-hidden="true">...</span>;

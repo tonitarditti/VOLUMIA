@@ -7,6 +7,7 @@ const settingsPath = path.join(__dirname, "local.settings.json");
 const settingKeys = [
   "VOLUMIA_PYTHON",
   "VOLUMIA_BLENDER",
+  "VOLUMIA_SKETCHUP",
   "VOLUMIA_TRIPOSR_DIR",
   "VOLUMIA_HUNYUAN_DIR",
   "VOLUMIA_HUNYUAN_MODEL_PATH",

@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { ProjectPayload } from "@/services/generationClient";
 import { ProjectCard } from "./ProjectCard";
 
@@ -6,7 +7,10 @@ export interface RecentProjectsProps {
   loading?: boolean;
   error?: string | null;
   onOpen: (projectId: string) => void;
-  onViewAll?: () => void;
+  onDelete: (project: ProjectPayload) => void | Promise<void>;
+  onCancel: (project: ProjectPayload) => void | Promise<void>;
+  deletingProjectId: string | null;
+  cancellingProjectId: string | null;
 }
 
 function EmptyProjectsState() {
@@ -41,8 +45,13 @@ export function RecentProjects({
   loading,
   error,
   onOpen,
-  onViewAll,
+  onDelete,
+  onCancel,
+  deletingProjectId,
+  cancellingProjectId,
 }: RecentProjectsProps) {
+  const [showAllProjects, setShowAllProjects] = useState(false);
+
   if (error) {
     return (
       <section className="px-8 py-12">
@@ -85,7 +94,7 @@ export function RecentProjects({
     );
   }
 
-  const recentProjects = projects.slice(0, 6);
+  const recentProjects = showAllProjects ? projects : projects.slice(0, 6);
   const hasMore = projects.length > 6;
 
   return (
@@ -94,14 +103,14 @@ export function RecentProjects({
         <h2 className="text-2xl font-semibold text-[var(--text)]">
           Proyectos recientes
         </h2>
-        {hasMore && onViewAll && (
+        {hasMore ? (
           <button
             className="text-sm font-medium text-[var(--accent)] hover:text-[var(--accent-hover)] flex items-center gap-1"
-            onClick={onViewAll}
+            onClick={() => setShowAllProjects((current) => !current)}
           >
-            Ver todos <span>→</span>
+            {showAllProjects ? "Ver menos" : "Ver todos"} <span>→</span>
           </button>
-        )}
+        ) : null}
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -110,6 +119,10 @@ export function RecentProjects({
             key={project.id}
             project={project}
             onOpen={onOpen}
+            onDelete={onDelete}
+            onCancel={onCancel}
+            isDeleting={deletingProjectId === project.id}
+            isCancelling={cancellingProjectId === project.id}
           />
         ))}
       </div>

@@ -58,6 +58,8 @@ type WorkspaceInspectorProps = {
   onToggleNotes: () => void;
   onUpdateNotes: (value: string) => void;
   onOpenOutputFolder: () => void | Promise<void>;
+  onExportGlb: () => void | Promise<void>;
+  onExportSkp: () => void | Promise<void>;
   onRestartEngine: () => void | Promise<void>;
   onToggleEngineLogs: () => void;
   onOpenGenerationLog: () => void | Promise<void>;
@@ -262,6 +264,8 @@ export function WorkspaceInspector({
   onToggleNotes,
   onUpdateNotes,
   onOpenOutputFolder,
+  onExportGlb,
+  onExportSkp,
   onRestartEngine,
   onToggleEngineLogs,
   onOpenGenerationLog,
@@ -333,7 +337,8 @@ export function WorkspaceInspector({
         generationLogPath={generationLogPath}
         isEngineReady={isEngineReady}
         onOpenOutputFolder={onOpenOutputFolder}
-        onGenerateSkp={onGenerateSkp}
+        onExportGlb={onExportGlb}
+        onExportSkp={onExportSkp}
         onOpenGenerationLog={onOpenGenerationLog}
       />
     );

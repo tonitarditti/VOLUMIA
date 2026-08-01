@@ -21,6 +21,7 @@ export const IPC_CHANNELS = {
   generationCancel: "gen:cancel",
   generationCheck: "gen:check",
   generationTest: "gen:test",
+  generationExportModel: "gen:export-model",
   generationProgress: "gen:progress",
   generationDone: "gen:done",
   generationError: "gen:error",
@@ -430,6 +431,18 @@ export type GenerationPreset = "fast" | "balanced" | "high" | "quality";
 export type GenerationMode = "auto" | "neural" | "architectural";
 export type GenerationPipeline = "depth_glb" | "gen_skp";
 export type GenerationSkpQuality = "fast" | "high";
+export type GenerationExportFormat = "glb" | "skp";
+
+export type GenerationExportPayload = {
+  glbPath: string;
+  format: GenerationExportFormat;
+};
+
+export type GenerationExportResult = {
+  canceled: boolean;
+  path?: string;
+  error?: string;
+};
 export type GenerationAutoEngine = "instantmesh" | "triposr" | "arch" | "blockout";
 export type GenerationAutoPreset = "hard_surface" | "organic";
 export type GenerationAutoProfile = "auto" | "hard_surface" | "organic";

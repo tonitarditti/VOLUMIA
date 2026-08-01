@@ -1,15 +1,145 @@
-import { ProjectPayload, JobStatus } from "@/services/generationClient";
+import { useEffect, useRef, useState } from "react";
+import * as THREE from "three";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import {
+  generationClient,
+  type ProjectPayload,
+  type JobStatus,
+} from "@/services/generationClient";
 import { Button } from "@/ui/primitives";
 
 export interface ProjectCardProps {
   project: ProjectPayload;
   onOpen: (projectId: string) => void;
+  onDelete: (project: ProjectPayload) => void | Promise<void>;
+  onCancel: (project: ProjectPayload) => void | Promise<void>;
+  isDeleting: boolean;
+  isCancelling: boolean;
+}
+
+function disposeModel(model: THREE.Object3D) {
+  model.traverse((child) => {
+    if (!(child instanceof THREE.Mesh)) return;
+    child.geometry.dispose();
+    const materials = Array.isArray(child.material)
+      ? child.material
+      : [child.material];
+    for (const material of materials) {
+      material.dispose();
+    }
+  });
+}
+
+function ModelPreview({ projectId }: { projectId: string }) {
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const [message, setMessage] = useState("Cargando vista previa...");
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.setClearAlpha(0);
+    host.appendChild(renderer.domElement);
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(42, 1, 0.01, 100);
+    camera.position.set(2.5, 1.7, 2.7);
+    camera.lookAt(0, 0, 0);
+
+    scene.add(new THREE.HemisphereLight("#fff4df", "#302820", 2.4));
+    const keyLight = new THREE.DirectionalLight("#fff8eb", 3.2);
+    keyLight.position.set(3, 5, 4);
+    scene.add(keyLight);
+    const rimLight = new THREE.DirectionalLight("#d8a65f", 1.7);
+    rimLight.position.set(-3, 2, -4);
+    scene.add(rimLight);
+
+    let model: THREE.Object3D | null = null;
+    let disposed = false;
+
+    const render = () => renderer.render(scene, camera);
+    const resize = () => {
+      const rect = host.getBoundingClientRect();
+      const width = Math.max(1, rect.width);
+      const height = Math.max(1, rect.height);
+      renderer.setSize(width, height, false);
+      camera.aspect = width / height;
+      camera.updateProjectionMatrix();
+      render();
+    };
+
+    const loadModel = async () => {
+      try {
+        const response = await fetch(generationClient.modelUrl(projectId));
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data = await response.arrayBuffer();
+        const loader = new GLTFLoader();
+        const loadedModel = await new Promise<THREE.Group>((resolve, reject) => {
+          loader.parse(data, "", (gltf) => resolve(gltf.scene), reject);
+        });
+        if (disposed) {
+          disposeModel(loadedModel);
+          return;
+        }
+
+        const box = new THREE.Box3().setFromObject(loadedModel);
+        if (box.isEmpty()) throw new Error("Modelo vacío");
+        const center = box.getCenter(new THREE.Vector3());
+        const size = box.getSize(new THREE.Vector3());
+        const scale = 1.7 / Math.max(size.x, size.y, size.z, 0.01);
+        loadedModel.position.copy(center).multiplyScalar(-scale);
+        loadedModel.scale.setScalar(scale);
+        loadedModel.rotation.set(-0.12, 0.5, 0);
+        loadedModel.traverse((child) => {
+          if (child instanceof THREE.Mesh) {
+            child.castShadow = true;
+            child.receiveShadow = true;
+          }
+        });
+        model = loadedModel;
+        scene.add(model);
+        setMessage("");
+        render();
+      } catch {
+        if (!disposed) setMessage("No se pudo cargar la vista previa.");
+      }
+    };
+
+    resize();
+    void loadModel();
+    const observer = new ResizeObserver(resize);
+    observer.observe(host);
+
+    return () => {
+      disposed = true;
+      observer.disconnect();
+      if (model) disposeModel(model);
+      renderer.dispose();
+      renderer.domElement.remove();
+    };
+  }, [projectId]);
+
+  return (
+    <div className="relative h-full w-full">
+      <div ref={hostRef} className="h-full w-full" />
+      {message ? (
+        <p className="pointer-events-none absolute inset-0 grid place-items-center px-5 text-center text-xs text-[var(--project-preview-chip-text)]">
+          {message}
+        </p>
+      ) : null}
+    </div>
+  );
 }
 
 function getStatusColor(status: JobStatus): string {
   switch (status) {
     case "complete":
       return "text-green-600";
+    case "cancelled":
+      return "text-[var(--text-muted)]";
     case "error":
       return "text-red-600";
     case "running":
@@ -31,6 +161,8 @@ function getStatusLabel(status: JobStatus): string {
       return "Optimizando";
     case "complete":
       return "Completado";
+    case "cancelled":
+      return "Interrumpido";
     case "error":
       return "Error";
     default:
@@ -42,6 +174,8 @@ function getStatusBgColor(status: JobStatus): string {
   switch (status) {
     case "complete":
       return "bg-green-600";
+    case "cancelled":
+      return "bg-[var(--text-muted)]";
     case "error":
       return "bg-red-600";
     case "running":
@@ -52,7 +186,14 @@ function getStatusBgColor(status: JobStatus): string {
   }
 }
 
-export function ProjectCard({ project, onOpen }: ProjectCardProps) {
+export function ProjectCard({
+  project,
+  onOpen,
+  onDelete,
+  onCancel,
+  isDeleting,
+  isCancelling,
+}: ProjectCardProps) {
   const hasModel = !!project.latestGlb;
   const lastModified = project.job.createdAt
     ? new Date(project.job.createdAt)
@@ -72,28 +213,25 @@ export function ProjectCard({ project, onOpen }: ProjectCardProps) {
       )
     : [];
 
-  const previewBgClass = hasModel
-    ? "from-slate-100 to-slate-50"
-    : "from-[var(--panel-bg-soft)] to-[var(--surface-1)]";
-
   const statusColorClass = getStatusColor(project.job.status);
   const statusBgClass = getStatusBgColor(project.job.status);
+  const isProcessing = ["queued", "running", "optimizing"].includes(
+    project.job.status,
+  );
 
   return (
     <div className="group rounded-xl overflow-hidden border border-[var(--border)] bg-[var(--surface-1)] transition-all hover:shadow-lg hover:border-[var(--border-strong)]">
       {/* Preview area */}
       <div
-        className={`relative h-48 bg-gradient-to-br overflow-hidden ${previewBgClass}`}
+        className="relative h-48 overflow-hidden"
+        style={{
+          background: hasModel
+            ? "var(--project-preview-gradient)"
+            : "var(--panel-bg-soft)",
+        }}
       >
         {hasModel ? (
-          <img
-            src={project.modelUrl || undefined}
-            alt={project.id}
-            className="w-full h-full object-cover"
-            onError={(e) => {
-              e.currentTarget.style.display = "none";
-            }}
-          />
+          <ModelPreview projectId={project.id} />
         ) : null}
 
         {!hasModel && (
@@ -146,13 +284,34 @@ export function ProjectCard({ project, onOpen }: ProjectCardProps) {
           </p>
         )}
 
-        <Button
-          variant="secondary"
-          className="w-full h-9 text-sm"
-          onClick={() => onOpen(project.id)}
-        >
-          Abrir proyecto →
-        </Button>
+        {isProcessing ? (
+          <Button
+            variant="secondary"
+            className="h-9 w-full px-2 text-sm"
+            onClick={() => void onCancel(project)}
+            disabled={isCancelling || isDeleting}
+          >
+            {isCancelling ? "Cancelando..." : "Cancelar generación"}
+          </Button>
+        ) : null}
+        <div className="grid grid-cols-2 gap-2">
+          <Button
+            variant="secondary"
+            className="h-9 px-2 text-sm"
+            onClick={() => onOpen(project.id)}
+            disabled={isDeleting || isCancelling}
+          >
+            Abrir →
+          </Button>
+          <Button
+            variant="danger"
+            className="h-9 px-2 text-sm"
+            onClick={() => void onDelete(project)}
+            disabled={isDeleting || isCancelling}
+          >
+            {isDeleting ? "Eliminando..." : "Eliminar"}
+          </Button>
+        </div>
       </div>
     </div>
   );
