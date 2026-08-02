@@ -1,306 +1,42 @@
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import {
-  generationClient,
-  type ProjectPayload,
-  type JobStatus,
-} from "@/services/generationClient";
+import { generationClient, type JobStatus, type ProjectMetadata, type ProjectPayload } from "@/services/generationClient";
 import { Badge, Button, type BadgeTone } from "@/ui/primitives";
 
-export interface ProjectCardProps {
-  project: ProjectPayload;
-  onOpen: (projectId: string) => void;
-  onDelete: (project: ProjectPayload) => void | Promise<void>;
-  onCancel: (project: ProjectPayload) => void | Promise<void>;
-  isDeleting: boolean;
-  isCancelling: boolean;
+function status(status: JobStatus): { label: string; tone: BadgeTone } {
+  if (status === "complete") return { label: "Listo", tone: "success" };
+  if (status === "error") return { label: "Error", tone: "danger" };
+  if (status === "cancelled") return { label: "Interrumpido", tone: "danger" };
+  if (["queued", "running", "optimizing"].includes(status)) return { label: "Procesando", tone: "warning" };
+  return { label: "Borrador", tone: "neutral" };
 }
+function categoryLabel(category: string) { return ({ chair: "Silla", table: "Mesa", sofa: "Sillón", lighting: "Luminaria", faucet: "Grifería", surface: "Revestimiento", free_object: "Objeto libre" } as Record<string, string>)[category] ?? "Otro"; }
+function dispose(root: THREE.Object3D) { root.traverse((node) => { if (node instanceof THREE.Mesh) { node.geometry.dispose(); for (const material of Array.isArray(node.material) ? node.material : [node.material]) material.dispose(); } }); }
 
-function disposeModel(model: THREE.Object3D) {
-  model.traverse((child) => {
-    if (!(child instanceof THREE.Mesh)) return;
-    child.geometry.dispose();
-    const materials = Array.isArray(child.material)
-      ? child.material
-      : [child.material];
-    for (const material of materials) {
-      material.dispose();
-    }
-  });
-}
-
-function ModelPreview({ projectId }: { projectId: string }) {
-  const hostRef = useRef<HTMLDivElement | null>(null);
-  const [message, setMessage] = useState("Cargando vista previa...");
-
+function RenderedPreview({ project }: { project: ProjectPayload }) {
+  const host = useRef<HTMLDivElement>(null); const [failed, setFailed] = useState(false);
   useEffect(() => {
-    const host = hostRef.current;
-    if (!host) return;
-
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
-    renderer.outputColorSpace = THREE.SRGBColorSpace;
-    renderer.setClearAlpha(0);
-    host.appendChild(renderer.domElement);
-
-    const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(42, 1, 0.01, 100);
-    camera.position.set(2.5, 1.7, 2.7);
-    camera.lookAt(0, 0, 0);
-
-    scene.add(new THREE.HemisphereLight("#fff4df", "#302820", 2.4));
-    const keyLight = new THREE.DirectionalLight("#fff8eb", 3.2);
-    keyLight.position.set(3, 5, 4);
-    scene.add(keyLight);
-    const rimLight = new THREE.DirectionalLight("#d8a65f", 1.7);
-    rimLight.position.set(-3, 2, -4);
-    scene.add(rimLight);
-
-    let model: THREE.Object3D | null = null;
-    let disposed = false;
-
-    const render = () => renderer.render(scene, camera);
-    const resize = () => {
-      const rect = host.getBoundingClientRect();
-      const width = Math.max(1, rect.width);
-      const height = Math.max(1, rect.height);
-      renderer.setSize(width, height, false);
-      camera.aspect = width / height;
-      camera.updateProjectionMatrix();
-      render();
-    };
-
-    const loadModel = async () => {
-      try {
-        const response = await fetch(generationClient.modelUrl(projectId));
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const data = await response.arrayBuffer();
-        const loader = new GLTFLoader();
-        const loadedModel = await new Promise<THREE.Group>((resolve, reject) => {
-          loader.parse(data, "", (gltf) => resolve(gltf.scene), reject);
-        });
-        if (disposed) {
-          disposeModel(loadedModel);
-          return;
-        }
-
-        const box = new THREE.Box3().setFromObject(loadedModel);
-        if (box.isEmpty()) throw new Error("Modelo vacío");
-        const center = box.getCenter(new THREE.Vector3());
-        const size = box.getSize(new THREE.Vector3());
-        const scale = 1.7 / Math.max(size.x, size.y, size.z, 0.01);
-        loadedModel.position.copy(center).multiplyScalar(-scale);
-        loadedModel.scale.setScalar(scale);
-        loadedModel.rotation.set(-0.12, 0.5, 0);
-        loadedModel.traverse((child) => {
-          if (child instanceof THREE.Mesh) {
-            child.castShadow = true;
-            child.receiveShadow = true;
-          }
-        });
-        model = loadedModel;
-        scene.add(model);
-        setMessage("");
-        render();
-      } catch {
-        if (!disposed) setMessage("No se pudo cargar la vista previa.");
-      }
-    };
-
-    resize();
-    void loadModel();
-    const observer = new ResizeObserver(resize);
-    observer.observe(host);
-
-    return () => {
-      disposed = true;
-      observer.disconnect();
-      if (model) disposeModel(model);
-      renderer.dispose();
-      renderer.domElement.remove();
-    };
-  }, [projectId]);
-
-  return (
-    <div className="relative h-full w-full">
-      <div ref={hostRef} className="h-full w-full" />
-      {message ? (
-        <p className="pointer-events-none absolute inset-0 grid place-items-center px-5 text-center text-xs text-[var(--project-preview-chip-text)]">
-          {message}
-        </p>
-      ) : null}
-    </div>
-  );
+    if (!project.latestGlb || !host.current) return;
+    const target = host.current; const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true }); renderer.setPixelRatio(Math.min(devicePixelRatio, 1.25)); renderer.outputColorSpace = THREE.SRGBColorSpace; target.append(renderer.domElement);
+    const scene = new THREE.Scene(); const camera = new THREE.PerspectiveCamera(42, 1, .01, 100); camera.position.set(2.2, 1.7, 2.4); camera.lookAt(0, .4, 0);
+    scene.add(new THREE.HemisphereLight("#dcecff", "#101522", 2.3)); const light = new THREE.DirectionalLight("#e9f5ff", 3); light.position.set(3, 5, 4); scene.add(light); const rim = new THREE.DirectionalLight("#9f7aea", 1); rim.position.set(-3, 1, -2); scene.add(rim);
+    let root: THREE.Object3D | null = null; let cancelled = false;
+    const resize = () => { const rect = target.getBoundingClientRect(); renderer.setSize(Math.max(rect.width, 1), Math.max(rect.height, 1), false); camera.aspect = Math.max(rect.width, 1) / Math.max(rect.height, 1); camera.updateProjectionMatrix(); renderer.render(scene, camera); };
+    const loader = new GLTFLoader();
+    void fetch(generationClient.modelUrl(project.id)).then((response) => { if (!response.ok) throw new Error("model"); return response.arrayBuffer(); }).then((buffer) => new Promise<THREE.Group>((resolve, reject) => loader.parse(buffer, "", (gltf) => resolve(gltf.scene), reject))).then((model) => { if (cancelled) { dispose(model); return; } const box = new THREE.Box3().setFromObject(model); const size = box.getSize(new THREE.Vector3()); const center = box.getCenter(new THREE.Vector3()); const scale = 1.75 / Math.max(size.x, size.y, size.z, .01); model.scale.setScalar(scale); model.position.copy(center).multiplyScalar(-scale); model.rotation.y = .45; root = model; scene.add(model); resize(); }).catch(() => !cancelled && setFailed(true));
+    resize(); const observer = new ResizeObserver(resize); observer.observe(target);
+    return () => { cancelled = true; observer.disconnect(); if (root) dispose(root); renderer.dispose(); renderer.domElement.remove(); };
+  }, [project.id, project.latestGlb]);
+  const fallback = project.metadata.references[0];
+  return <div className="relative h-full w-full">{project.latestGlb && !failed ? <div ref={host} className="h-full w-full" /> : fallback ? <img src={generationClient.referenceUrl(project.id, fallback.id)} alt="Referencia principal" className="h-full w-full object-cover" /> : <div className="grid h-full place-items-center text-xs text-[var(--text-faint)]">Sin vista previa</div>}</div>;
 }
 
-function getStatusTone(status: JobStatus): BadgeTone {
-  switch (status) {
-    case "complete":
-      return "success";
-    case "cancelled":
-      return "danger";
-    case "error":
-      return "danger";
-    case "running":
-    case "queued":
-    case "optimizing":
-      return "warning";
-    default:
-      return "neutral";
-  }
-}
-
-function getStatusLabel(status: JobStatus): string {
-  switch (status) {
-    case "idle":
-      return "Pendiente";
-    case "queued":
-    case "running":
-      return "Procesando";
-    case "optimizing":
-      return "Optimizando";
-    case "complete":
-      return "Completado";
-    case "cancelled":
-      return "Interrumpido";
-    case "error":
-      return "Error";
-    default:
-      return "Desconocido";
-  }
-}
-
-export function ProjectCard({
-  project,
-  onOpen,
-  onDelete,
-  onCancel,
-  isDeleting,
-  isCancelling,
-}: ProjectCardProps) {
-  const hasModel = !!project.latestGlb;
-  const lastModified = project.job.createdAt
-    ? new Date(project.job.createdAt)
-    : new Date();
-  const formattedDate = lastModified.toLocaleDateString("es-AR", {
-    month: "short",
-    day: "numeric",
-    year: hasModel ? undefined : "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-
-  // Count input files
-  const inputFiles = project.job.inputFiles
-    ? Array.from(new Set(project.job.inputFiles)).filter((f) =>
-        /\.(jpg|jpeg|png|webp)$/i.test(f)
-      )
-    : [];
-
-  const statusTone = getStatusTone(project.job.status);
-  const isProcessing = ["queued", "running", "optimizing"].includes(
-    project.job.status,
-  );
-
-  return (
-    <article className="group overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface)] shadow-[var(--shadow-sm)] transition-[border-color,box-shadow,transform] duration-200 ease-out hover:-translate-y-0.5 hover:border-[var(--border-strong)] hover:shadow-[var(--shadow-md)] motion-reduce:hover:translate-y-0">
-      {/* Preview area */}
-      <div
-        className="relative h-48 overflow-hidden"
-        style={{
-          backgroundColor: "var(--viewer-start)",
-          backgroundImage:
-            "linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px), linear-gradient(145deg, var(--viewer-start), var(--viewer-end))",
-          backgroundSize: "24px 24px, 24px 24px, 100% 100%",
-        }}
-      >
-        {hasModel ? (
-          <ModelPreview projectId={project.id} />
-        ) : null}
-
-        {!hasModel && (
-          <div className="flex items-center justify-center h-full">
-            <svg
-              className="w-16 h-16 opacity-30 text-[var(--text-faint)]"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={1.5}
-                d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
-              />
-            </svg>
-          </div>
-        )}
-
-        {/* Status badge */}
-        <Badge className="absolute right-3 top-3 shadow-[var(--shadow-sm)]" tone={statusTone} dot>
-          {getStatusLabel(project.job.status)}
-        </Badge>
-      </div>
-
-      {/* Content */}
-      <div className="space-y-3 p-4">
-        <div>
-          <h3 className="truncate text-sm font-semibold text-[var(--text-primary)]" title={project.id}>
-            Proyecto {project.id.replace(/^project_/, "").slice(0, 20)}
-          </h3>
-          <p className="mt-1 text-xs text-[var(--text-secondary)]">
-            {formattedDate}
-          </p>
-        </div>
-
-        {inputFiles.length > 0 && (
-          <p className="text-xs text-[var(--text-muted)]">
-            {inputFiles.length} {inputFiles.length === 1 ? "imagen" : "imágenes"}
-          </p>
-        )}
-
-        {project.job.message && (
-          <p className={`line-clamp-2 text-xs ${
-            project.job.status === "error" || project.job.status === "cancelled"
-              ? "text-[var(--danger)]"
-              : project.job.status === "complete"
-                ? "text-[var(--success)]"
-                : "text-[var(--text-secondary)]"
-          }`}>
-            {project.job.message}
-          </p>
-        )}
-
-        {isProcessing ? (
-          <Button
-            variant="danger"
-            className="h-9 w-full px-2 text-sm"
-            onClick={() => void onCancel(project)}
-            disabled={isCancelling || isDeleting}
-          >
-            {isCancelling ? "Cancelando..." : "Cancelar generación"}
-          </Button>
-        ) : null}
-        <div className="grid grid-cols-2 gap-2">
-          <Button
-            variant="secondary"
-            className="h-9 border-[var(--open-button-border)] px-2 text-sm text-[var(--volumia-blue)] dark:text-[var(--volumia-cyan)]"
-            onClick={() => onOpen(project.id)}
-            disabled={isDeleting || isCancelling}
-          >
-            Abrir →
-          </Button>
-          <Button
-            variant="danger"
-            className="h-9 px-2 text-sm"
-            onClick={() => void onDelete(project)}
-            disabled={isDeleting || isCancelling}
-          >
-            {isDeleting ? "Eliminando..." : "Eliminar"}
-          </Button>
-        </div>
-      </div>
-    </article>
-  );
+export function ProjectCard({ project, onOpen, onDelete, onCancel, onRename, onDuplicate, onPatch, isDeleting, isCancelling }: {
+  project: ProjectPayload; onOpen: (id: string) => void; onDelete: (project: ProjectPayload) => void | Promise<void>; onCancel: (project: ProjectPayload) => void | Promise<void>; onRename: (project: ProjectPayload) => void | Promise<void>; onDuplicate: (project: ProjectPayload) => void | Promise<void>; onPatch: (project: ProjectPayload, patch: Partial<ProjectMetadata>) => void | Promise<void>; isDeleting: boolean; isCancelling: boolean;
+}) {
+  const current = status(project.job.status); const metadata = project.metadata; const busy = isDeleting || isCancelling; const date = new Date(metadata.updatedAt || project.job.updatedAt || project.job.createdAt || Date.now()).toLocaleDateString("es-AR", { day: "2-digit", month: "short", year: "numeric" });
+  const latestVersion = metadata.versions[metadata.versions.length - 1];
+  const modelDetails = project.latestGlb ? `${latestVersion?.mode ?? "visual"} · ${Math.max(metadata.versions.length, 1)} versión` : `${metadata.references.length} referencias`;
+  return <article className="group relative rounded-2xl border border-[var(--border)] bg-[var(--surface)] shadow-[var(--shadow-sm)] transition hover:z-20 hover:-translate-y-0.5 hover:border-[var(--border-strong)] hover:shadow-[var(--shadow-md)]"><div className="relative h-48 overflow-hidden rounded-t-2xl bg-[linear-gradient(135deg,var(--viewer-start),var(--viewer-end))]"><RenderedPreview project={project} /><Badge className="absolute right-3 top-3" tone={current.tone} dot>{current.label}</Badge><button type="button" aria-label={metadata.favorite ? "Quitar de favoritos" : "Agregar a favoritos"} onClick={() => void onPatch(project, { favorite: !metadata.favorite })} className={`absolute left-3 top-3 grid h-8 w-8 place-items-center rounded-full border text-sm ${metadata.favorite ? "border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]" : "border-white/20 bg-black/25 text-white"}`}>★</button></div><div className="space-y-3 p-4"><div className="min-w-0"><p className="text-[10px] font-semibold uppercase tracking-[.14em] text-[var(--text-faint)]">{categoryLabel(metadata.category)} · {modelDetails}</p><h3 title={metadata.name} className="mt-1 truncate text-base font-semibold text-[var(--text)]">{metadata.name}</h3><p className="mt-1 text-xs text-[var(--text-secondary)]">Modificado {date}</p></div>{metadata.referenceMeasurement ? <p className="rounded-md bg-[var(--surface-2)] px-2.5 py-2 text-xs text-[var(--text-secondary)]">Escala: {metadata.referenceMeasurement.label} · {metadata.referenceMeasurement.value} {metadata.referenceMeasurement.unit}</p> : null}{metadata.tags.length ? <div className="flex flex-wrap gap-1.5">{metadata.tags.slice(0, 3).map((tag) => <span key={tag} className="rounded-full border border-[var(--border)] px-2 py-0.5 text-[10px] text-[var(--text-secondary)]">{tag}</span>)}</div> : null}{["queued", "running", "optimizing"].includes(project.job.status) ? <Button variant="danger" className="h-9 w-full text-xs" disabled={busy} onClick={() => void onCancel(project)}>{isCancelling ? "Cancelando…" : "Cancelar generación"}</Button> : null}<div className="grid grid-cols-[1fr_auto] gap-2"><Button variant="secondary" className="h-9 text-xs" disabled={busy} onClick={() => onOpen(project.id)}>Abrir estudio</Button><details className="relative z-30"><summary className="grid h-9 cursor-pointer place-items-center rounded-lg border border-[var(--border)] px-3 text-xs text-[var(--text-secondary)]">•••</summary><div className="absolute right-0 z-30 mt-1 grid w-36 gap-1 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-1 shadow-lg"><button className="rounded px-2 py-1.5 text-left text-xs hover:bg-[var(--surface-hover)]" onClick={() => void onRename(project)}>Renombrar</button><button className="rounded px-2 py-1.5 text-left text-xs hover:bg-[var(--surface-hover)]" onClick={() => void onDuplicate(project)}>Duplicar</button><button className="rounded px-2 py-1.5 text-left text-xs hover:bg-[var(--surface-hover)]" onClick={() => void onPatch(project, { archived: !metadata.archived })}>{metadata.archived ? "Restaurar" : "Archivar"}</button><button className="rounded px-2 py-1.5 text-left text-xs text-[var(--danger)] hover:bg-[var(--danger-soft)]" onClick={() => void onDelete(project)}>Eliminar</button></div></details></div></div></article>;
 }

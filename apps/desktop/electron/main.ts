@@ -264,9 +264,8 @@ function createMainWindow() {
   const fallbackPreloadPath = path.join(__dirname, "preload.js");
   const preloadPath = existsSync(cwdPreloadPath) ? cwdPreloadPath : fallbackPreloadPath;
   const iconPathCandidates = [
-    path.resolve(process.cwd(), "src", "assets", "branding", "VOLUMIA-V-dorado-final.ico"),
-    path.resolve(process.cwd(), "src", "assets", "branding", "VOLUMIA-dorado-transparente.png"),
-    path.resolve(__dirname, "../src/assets/branding/VOLUMIA-dorado-transparente.png"),
+    path.resolve(process.cwd(), "src", "assets", "branding", "volumia-icon-final-1024.png"),
+    path.resolve(__dirname, "../src/assets/branding/volumia-icon-final-1024.png"),
   ];
   const iconPath = iconPathCandidates.find((candidate) => existsSync(candidate));
   const launchBounds = windowStateController.getLaunchBounds();

@@ -37,7 +37,44 @@ export type ProjectJob = {
   inputFiles?: string[];
   logs?: string[];
   createdAt?: string | null;
+  updatedAt?: string | null;
   finishedAt?: string | null;
+};
+
+export type ReferenceAngle = "front" | "side" | "back" | "top" | "detail";
+export type ProjectReference = {
+  id: string;
+  path: string;
+  filename: string;
+  angle: ReferenceAngle;
+  primary: boolean;
+  width?: number;
+  height?: number;
+};
+export type AssetVersion = {
+  id: string;
+  createdAt: string;
+  finishedAt?: string;
+  mode: GenerationMode;
+  status: JobStatus;
+  inputFiles: string[];
+  glbPath?: string;
+};
+export type ProjectMetadata = {
+  schemaVersion: number;
+  name: string;
+  category: string;
+  tags: string[];
+  favorite: boolean;
+  archived: boolean;
+  units: "cm" | "m";
+  referenceMeasurement: { label: string; value: number; unit: "cm" | "m" } | null;
+  scaleFactor: number;
+  references: ProjectReference[];
+  versions: AssetVersion[];
+  thumbnail: string | null;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type ProjectPayload = {
@@ -48,6 +85,7 @@ export type ProjectPayload = {
   latestGlb: string | null;
   modelUrl: string | null;
   job: ProjectJob;
+  metadata: ProjectMetadata;
 };
 
 export type ProjectStatusResponse = {
@@ -121,6 +159,10 @@ export const generationClient = {
     return `${backendBaseUrl}/api/projects/${encodeURIComponent(projectId)}/model${suffix}`;
   },
 
+  referenceUrl(projectId: string, referenceId: string) {
+    return `${backendBaseUrl}/api/projects/${encodeURIComponent(projectId)}/reference/${encodeURIComponent(referenceId)}`;
+  },
+
   async health() {
     return await requestJson<{ ok: boolean; service: string; projectsRoot: string; logPath: string }>("/api/health");
   },
@@ -144,11 +186,25 @@ export const generationClient = {
     });
   },
 
-  async createProject(id?: string) {
+  async createProject(payload: Partial<Pick<ProjectMetadata, "name" | "category" | "tags" | "units" | "referenceMeasurement">> & { id?: string } = {}) {
     return await requestJson<ProjectPayload>("/api/projects", {
       method: "POST",
-      body: JSON.stringify({ id }),
+      body: JSON.stringify(payload),
     });
+  },
+
+  async updateProject(projectId: string, patch: Partial<ProjectMetadata>) {
+    return await requestJson<{ ok: boolean; project: ProjectPayload }>(
+      `/api/projects/${encodeURIComponent(projectId)}`,
+      { method: "PATCH", body: JSON.stringify(patch) },
+    );
+  },
+
+  async duplicateProject(projectId: string, name?: string) {
+    return await requestJson<ProjectPayload>(
+      `/api/projects/${encodeURIComponent(projectId)}/duplicate`,
+      { method: "POST", body: JSON.stringify({ name }) },
+    );
   },
 
   async deleteProject(projectId: string) {

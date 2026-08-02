@@ -1,4 +1,4 @@
-import brandIcon from "@/assets/branding/volumia-icon-final.svg";
+import brandIcon from "@/assets/branding/volumia-icon-final-1024.png";
 
 type BrandLogoTone = "default" | "muted" | "inverse" | "accent";
 type BrandLogoEmphasis = "none" | "soft" | "glow";
@@ -21,13 +21,6 @@ const toneColor: Record<BrandLogoTone, string> = {
   accent: "var(--accent)",
 };
 
-const emphasisShadow: Record<BrandLogoEmphasis, string | undefined> = {
-  none: undefined,
-  soft: "drop-shadow(0 8px 20px rgba(76, 111, 255, 0.22))",
-  glow:
-    "drop-shadow(0 0 22px rgba(22, 199, 227, 0.28)) drop-shadow(0 14px 30px rgba(76, 111, 255, 0.2))",
-};
-
 const BRAND_FONT_STACK =
   'Inter, Geist, "SF Pro Display", "SF Pro Text", system-ui, sans-serif';
 
@@ -39,7 +32,7 @@ export function BrandLogo({
   size = 16,
   showText = true,
   tone = "default",
-  emphasis = "none",
+  emphasis: _emphasis = "none",
   className = "",
   iconClassName = "",
   textClassName = "",
@@ -68,7 +61,6 @@ export function BrandLogo({
         style={{
           width: `${iconSize}px`,
           height: `${iconSize}px`,
-          filter: emphasisShadow[emphasis],
         }}
       >
         <img

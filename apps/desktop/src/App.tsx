@@ -49,7 +49,7 @@ function WindowBar() {
 
       <div className="no-drag hidden items-center gap-2 rounded-full border border-[color-mix(in_srgb,var(--volumia-cyan)_28%,transparent)] bg-[var(--info-soft)] px-3 py-1.5 text-[10px] font-semibold tracking-[0.04em] text-[var(--engine-info-text)] lg:flex">
         <span className="h-2 w-2 rounded-full bg-[var(--volumia-cyan)]" aria-hidden="true" />
-        MOTOR LOCAL: LISTO
+        MOTOR LOCAL
       </div>
 
       <div className="no-drag flex items-center gap-1">

@@ -268,6 +268,8 @@ function projectPaths(projectId) {
     output: path.join(root, "output"),
     latestGlb: path.join(root, "latest.glb"),
     jobJson: path.join(root, "job.json"),
+    metadataJson: path.join(root, "project.json"),
+    versions: path.join(root, "versions"),
   };
 }
 
@@ -276,6 +278,7 @@ function ensureProjectLayout(projectId) {
   ensureDir(paths.root);
   ensureDir(paths.input);
   ensureDir(paths.output);
+  ensureDir(paths.versions);
   return paths;
 }
 

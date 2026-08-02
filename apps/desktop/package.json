@@ -21,12 +21,12 @@
   "build": {
     "appId": "com.volumia.desktop",
     "productName": "Volumia",
-    "icon": "src/assets/branding/VOLUMIA-V-dorado-final.ico",
+    "icon": "src/assets/branding/volumia-icon-final-1024.png",
     "win": {
-      "icon": "src/assets/branding/VOLUMIA-V-dorado-final.ico"
+      "icon": "src/assets/branding/volumia-icon-final-1024.png"
     },
     "linux": {
-      "icon": "src/assets/branding/VOLUMIA-dorado-transparente.png"
+      "icon": "src/assets/branding/volumia-icon-final-1024.png"
     },
     "directories": {
       "output": "release"
@@ -40,7 +40,7 @@
       "backend/tools/**/*",
       "backend/python/**/*",
       "assets/templates/**/*",
-      "src/assets/branding/VOLUMIA-dorado-transparente.png",
+      "src/assets/branding/volumia-icon-final-1024.png",
       "package.json"
     ],
     "asarUnpack": [

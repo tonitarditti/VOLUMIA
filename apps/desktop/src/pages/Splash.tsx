@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { LogoPrimary } from "@/components/branding/LogoPrimary";
+import { BrandLogo } from "@/components/branding";
 
 export type SplashProps = {
   onComplete: () => void;
@@ -74,31 +74,8 @@ export function Splash({ onComplete }: SplashProps) {
           }}
         >
           <div className="w-28 h-28 flex items-center justify-center">
-            <LogoPrimary size={112} />
+            <BrandLogo size={112} showText={false} label="VOLUMIA" />
           </div>
-        </div>
-
-        {/* Title and subtitle */}
-        <div className="text-center space-y-2">
-          <h1
-            className="text-4xl font-bold tracking-wide text-[var(--text)]"
-            style={{
-              animation: "fadeInUp 0.8s ease-out 0.4s both",
-              textShadow:
-                "0 2px 8px rgba(0, 0, 0, 0.15), 0 0 20px rgba(76, 111, 255, 0.18)",
-            }}
-          >
-            VOLUMIA
-          </h1>
-          <p
-            className="text-sm font-light tracking-widest text-[var(--text-muted)] uppercase"
-            style={{
-              animation: "fadeInUp 0.8s ease-out 0.5s both",
-              letterSpacing: "0.15em",
-            }}
-          >
-            Tu asistente creativo 3D
-          </p>
         </div>
 
         {/* Loading progress bar */}

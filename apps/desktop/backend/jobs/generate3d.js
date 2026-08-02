@@ -12,6 +12,7 @@ const {
   projectsRoot,
   readLocalSettings,
 } = require("../config/paths");
+const { readMetadata } = require("../project-metadata");
 
 const logDir = path.join(backendDir, "logs");
 const logPath = path.join(logDir, "volumia.log");
@@ -665,6 +666,11 @@ async function runGeneration(projectId, mode) {
   const inputFiles = fs.readdirSync(paths.input)
     .map((fileName) => path.join(paths.input, fileName))
     .filter((filePath) => fs.statSync(filePath).isFile());
+  const references = readMetadata(projectId).references;
+  const primaryPath = references.find((reference) => reference.primary)?.path;
+  if (primaryPath && inputFiles.includes(primaryPath)) {
+    inputFiles.sort((left, right) => (left === primaryPath ? -1 : right === primaryPath ? 1 : 0));
+  }
 
   try {
     // A cancellation can arrive immediately after the HTTP request is accepted,

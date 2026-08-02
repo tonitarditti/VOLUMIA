@@ -2,9 +2,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { useSettings } from "@/volumia/settings/context";
 
 type ModelViewerProps = {
   modelUrl: string | null;
+  renderMode?: "textures" | "shaded" | "clay" | "wireframe" | "normals";
+  cameraView?: "perspective" | "front" | "side" | "top";
+  gridEnabled?: boolean;
+  onStatsChange?: (stats: { width: number; depth: number; height: number; triangles: number; vertices: number; materials: number; pieces: number } | null) => void;
 };
 
 function logBoundingBox(label: string, box: THREE.Box3) {
@@ -49,7 +54,12 @@ export function normalizeModelToScene(model: THREE.Object3D) {
   return after;
 }
 
-export function ModelViewer({ modelUrl }: ModelViewerProps) {
+export function ModelViewer({ modelUrl, renderMode = "textures", cameraView = "perspective", gridEnabled = true, onStatsChange }: ModelViewerProps) {
+  const { resolvedTheme } = useSettings();
+  const isDarkTheme = resolvedTheme === "dark";
+  const viewportBackground = isDarkTheme ? "#182333" : "#edf3f9";
+  const viewportGround = isDarkTheme ? "#7186a0" : "#94a7bc";
+  const viewportSubGrid = isDarkTheme ? "#2c3d53" : "#ced9e5";
   const hostRef = useRef<HTMLDivElement | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
@@ -64,21 +74,25 @@ export function ModelViewer({ modelUrl }: ModelViewerProps) {
     const size = box.getSize(new THREE.Vector3());
     const maxDim = Math.max(size.x, size.y, size.z, 0.01);
     const center = box.getCenter(new THREE.Vector3());
-    camera.position.set(maxDim * 1.35, maxDim * 1.05, maxDim * 1.35);
+    const distance = maxDim * 1.7;
+    if (cameraView === "front") camera.position.set(0, maxDim * 0.6, distance);
+    else if (cameraView === "side") camera.position.set(distance, maxDim * 0.6, 0);
+    else if (cameraView === "top") camera.position.set(0, distance, 0.001);
+    else camera.position.set(maxDim * 1.35, maxDim * 1.05, maxDim * 1.35);
     camera.near = Math.max(0.01, maxDim / 100);
     camera.far = Math.max(100, maxDim * 20);
     camera.updateProjectionMatrix();
     controls.target.copy(center);
     controls.target.y = Math.max(0.2, size.y * 0.35);
     controls.update();
-  }, []);
+  }, [cameraView]);
 
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return;
 
     const scene = new THREE.Scene();
-    scene.background = new THREE.Color("#10141d");
+    scene.background = new THREE.Color(viewportBackground);
     sceneRef.current = scene;
 
     const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
@@ -96,12 +110,14 @@ export function ModelViewer({ modelUrl }: ModelViewerProps) {
     controls.target.set(0, 0.4, 0);
     controlsRef.current = controls;
 
-    scene.add(new THREE.HemisphereLight("#ffffff", "#252a34", 2.2));
+    scene.add(new THREE.HemisphereLight("#ffffff", isDarkTheme ? "#26384d" : "#a8b8ca", 2.2));
     const key = new THREE.DirectionalLight("#ffffff", 3.1);
     key.position.set(3, 5, 4);
     key.castShadow = true;
     scene.add(key);
-    scene.add(new THREE.GridHelper(4, 16, "#3f4754", "#252b36"));
+    const grid = new THREE.GridHelper(4, 16, viewportGround, viewportSubGrid);
+    grid.visible = gridEnabled;
+    scene.add(grid);
 
     let disposed = false;
 
@@ -145,16 +161,44 @@ export function ModelViewer({ modelUrl }: ModelViewerProps) {
         modelRef.current = gltf;
         gltf.traverse((child) => {
           if (child instanceof THREE.Mesh) {
+            if (renderMode !== "textures") {
+              const source = Array.isArray(child.material) ? child.material[0] : child.material;
+              const standard = new THREE.MeshStandardMaterial({
+                color: renderMode === "clay" ? "#9aa7b8" : "#c5d0df",
+                roughness: 0.72,
+                metalness: 0,
+                wireframe: renderMode === "wireframe",
+              });
+              child.material = renderMode === "normals" ? new THREE.MeshNormalMaterial() : standard;
+              if (source) source.dispose();
+            }
             child.castShadow = true;
             child.receiveShadow = true;
           }
         });
 
         const box = normalizeModelToScene(gltf);
+        let triangles = 0;
+        let vertices = 0;
+        let pieces = 0;
+        const materials = new Set<THREE.Material>();
+        gltf.traverse((child) => {
+          if (!(child instanceof THREE.Mesh)) return;
+          pieces += 1;
+          const position = child.geometry.getAttribute("position");
+          vertices += position?.count ?? 0;
+          triangles += child.geometry.index
+            ? child.geometry.index.count / 3
+            : (position?.count ?? 0) / 3;
+          for (const material of Array.isArray(child.material) ? child.material : [child.material]) materials.add(material);
+        });
+        const dimensions = box.getSize(new THREE.Vector3());
+        onStatsChange?.({ width: dimensions.x, depth: dimensions.z, height: dimensions.y, triangles: Math.round(triangles), vertices, materials: materials.size, pieces });
         scene.add(gltf);
         fitCamera(box);
         setMessage("");
       } catch (error) {
+        onStatsChange?.(null);
         setMessage(error instanceof Error ? `No se pudo cargar el GLB: ${error.message}` : "No se pudo cargar el GLB.");
       }
     };
@@ -186,13 +230,13 @@ export function ModelViewer({ modelUrl }: ModelViewerProps) {
       renderer.dispose();
       renderer.domElement.remove();
     };
-  }, [fitCamera, modelUrl]);
+  }, [fitCamera, gridEnabled, isDarkTheme, modelUrl, onStatsChange, renderMode, viewportBackground, viewportGround, viewportSubGrid]);
 
   return (
-    <div className="relative h-full min-h-[360px] overflow-hidden rounded-[var(--radius-md)] border border-[var(--border)] bg-[#10141d]">
+    <div className="relative h-full min-h-[360px] overflow-hidden rounded-[var(--radius-md)] border border-[var(--border)]" style={{ backgroundColor: viewportBackground }}>
       <div ref={hostRef} className="h-full w-full" />
       {message ? (
-        <div className="pointer-events-none absolute inset-0 grid place-items-center px-6 text-center text-sm text-slate-300">
+        <div className={`pointer-events-none absolute inset-0 grid place-items-center px-6 text-center text-sm ${isDarkTheme ? "text-slate-200" : "text-slate-600"}`}>
           {message}
         </div>
       ) : null}

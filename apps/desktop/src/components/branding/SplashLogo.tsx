@@ -14,7 +14,7 @@ export function SplashLogo({
   size = 80,
   variant = "dark",
   glow = true,
-  showWordmark = true,
+  showWordmark = false,
   className = "",
 }: SplashLogoProps) {
   return (
