@@ -15,14 +15,28 @@ export type ToolStatus = {
   configured: boolean;
   path: string | null;
   exists: boolean;
-  status: "Configurada" | "No configurada";
+  status: "Configurada" | "No instalada";
+  verificationStatus: "Configurado" | "Verificado" | "No instalado" | "Error";
   details?: string;
   entrypoint?: string | null;
+  checkedAt?: string;
+  bundledPath?: string;
+  responsePath?: string | null;
 };
 
 export type ToolsStatusResponse = {
   ok: boolean;
-  tools: Record<"python" | "blender" | "triposr" | "hunyuan" | "meshroom", ToolStatus>;
+  tools: Record<
+    | "python"
+    | "blender"
+    | "sketchup"
+    | "dae"
+    | "sketchupBridge"
+    | "triposr"
+    | "hunyuan"
+    | "meshroom",
+    ToolStatus
+  >;
 };
 
 export type ProjectJob = {
@@ -59,6 +73,37 @@ export type AssetVersion = {
   status: JobStatus;
   inputFiles: string[];
   glbPath?: string;
+  daePath?: string;
+  bridgeMetadataPath?: string;
+  piecesDirectory?: string;
+  operation?: "separate" | "scale" | "optimize";
+  sourceStats?: EditableAssetStats;
+  editableStats?: EditableAssetStats;
+  separation?: {
+    method: "loose_parts_vertex_connectivity";
+    sourceMeshes: number;
+    piecesDetected: number;
+    additionalDisconnectedComponents: number;
+    topologicallyUnsplitSourceMeshes: number;
+    notice: string;
+  };
+  optimization?: { requested: boolean; preset: "ligero" | "equilibrado" | "liviano" | null; ratio: number | null };
+  daeValidation?: {
+    exists: boolean;
+    bytes: number;
+    expectedPieces: number;
+    pieceNodes: number;
+    preservesPieceNodes: boolean;
+    error?: string;
+  };
+};
+export type EditableAssetStats = {
+  pieces: number;
+  materials: number;
+  polygons: number;
+  triangles: number;
+  vertices: number;
+  fileBytes?: number;
 };
 export type ProjectMetadata = {
   schemaVersion: number;
@@ -68,7 +113,11 @@ export type ProjectMetadata = {
   favorite: boolean;
   archived: boolean;
   units: "cm" | "m";
-  referenceMeasurement: { label: string; value: number; unit: "cm" | "m" } | null;
+  referenceMeasurement: {
+    label: string;
+    value: number;
+    unit: "cm" | "m";
+  } | null;
   scaleFactor: number;
   references: ProjectReference[];
   versions: AssetVersion[];
@@ -105,24 +154,27 @@ export type CancelProjectResponse = {
   job: ProjectJob;
 };
 
-export type LocalSettings = Partial<Record<
-  | "VOLUMIA_PYTHON"
-  | "VOLUMIA_BLENDER"
-  | "VOLUMIA_SKETCHUP"
-  | "VOLUMIA_TRIPOSR_DIR"
-  | "VOLUMIA_HUNYUAN_DIR"
-  | "VOLUMIA_HUNYUAN_MODEL_PATH"
-  | "VOLUMIA_HUNYUAN_SHAPE_SUBFOLDER"
-  | "VOLUMIA_HUNYUAN_PAINT_SUBFOLDER"
-  | "VOLUMIA_MESHROOM_DIR"
-  | "VOLUMIA_QUICK_ROTATION_X"
-  | "VOLUMIA_QUICK_ROTATION_Y"
-  | "VOLUMIA_QUICK_ROTATION_Z"
-  | "VOLUMIA_HUNYUAN_ROTATION_X"
-  | "VOLUMIA_HUNYUAN_ROTATION_Y"
-  | "VOLUMIA_HUNYUAN_ROTATION_Z",
-  string
->>;
+export type LocalSettings = Partial<
+  Record<
+    | "VOLUMIA_PYTHON"
+    | "VOLUMIA_BLENDER"
+    | "VOLUMIA_SKETCHUP"
+    | "VOLUMIA_SKETCHUP_BRIDGE_DIR"
+    | "VOLUMIA_TRIPOSR_DIR"
+    | "VOLUMIA_HUNYUAN_DIR"
+    | "VOLUMIA_HUNYUAN_MODEL_PATH"
+    | "VOLUMIA_HUNYUAN_SHAPE_SUBFOLDER"
+    | "VOLUMIA_HUNYUAN_PAINT_SUBFOLDER"
+    | "VOLUMIA_MESHROOM_DIR"
+    | "VOLUMIA_QUICK_ROTATION_X"
+    | "VOLUMIA_QUICK_ROTATION_Y"
+    | "VOLUMIA_QUICK_ROTATION_Z"
+    | "VOLUMIA_HUNYUAN_ROTATION_X"
+    | "VOLUMIA_HUNYUAN_ROTATION_Y"
+    | "VOLUMIA_HUNYUAN_ROTATION_Z",
+    string
+  >
+>;
 
 export type SettingsResponse = {
   ok: boolean;
@@ -146,7 +198,9 @@ async function requestJson<T>(route: string, init?: RequestInit): Promise<T> {
   });
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
-    throw new Error(`Backend ${route} failed (${response.status}): ${detail || response.statusText}`);
+    throw new Error(
+      `Backend ${route} failed (${response.status}): ${detail || response.statusText}`,
+    );
   }
   return (await response.json()) as T;
 }
@@ -163,8 +217,17 @@ export const generationClient = {
     return `${backendBaseUrl}/api/projects/${encodeURIComponent(projectId)}/reference/${encodeURIComponent(referenceId)}`;
   },
 
+  versionDaeUrl(projectId: string, versionId: string) {
+    return `${backendBaseUrl}/api/projects/${encodeURIComponent(projectId)}/versions/${encodeURIComponent(versionId)}/dae`;
+  },
+
   async health() {
-    return await requestJson<{ ok: boolean; service: string; projectsRoot: string; logPath: string }>("/api/health");
+    return await requestJson<{
+      ok: boolean;
+      service: string;
+      projectsRoot: string;
+      logPath: string;
+    }>("/api/health");
   },
 
   async toolsStatus() {
@@ -172,7 +235,21 @@ export const generationClient = {
   },
 
   async detectTools() {
-    return await requestJson<ToolsStatusResponse>("/api/tools/detect", { method: "POST" });
+    return await requestJson<ToolsStatusResponse>("/api/tools/detect", {
+      method: "POST",
+    });
+  },
+
+  async testTool(target: "blender" | "sketchup" | "dae" | "sketchupBridge") {
+    return await requestJson<{
+      ok: boolean;
+      target: string;
+      result: { state: ToolStatus["verificationStatus"]; details: string };
+      tools: ToolsStatusResponse["tools"];
+    }>("/api/tools/test", {
+      method: "POST",
+      body: JSON.stringify({ target }),
+    });
   },
 
   async settings() {
@@ -186,7 +263,14 @@ export const generationClient = {
     });
   },
 
-  async createProject(payload: Partial<Pick<ProjectMetadata, "name" | "category" | "tags" | "units" | "referenceMeasurement">> & { id?: string } = {}) {
+  async createProject(
+    payload: Partial<
+      Pick<
+        ProjectMetadata,
+        "name" | "category" | "tags" | "units" | "referenceMeasurement"
+      >
+    > & { id?: string } = {},
+  ) {
     return await requestJson<ProjectPayload>("/api/projects", {
       method: "POST",
       body: JSON.stringify(payload),
@@ -226,28 +310,60 @@ export const generationClient = {
     for (const file of files) {
       body.append("images", file, file.name);
     }
-    const response = await fetch(`${backendBaseUrl}/api/projects/${encodeURIComponent(projectId)}/input`, {
-      method: "POST",
-      body,
-    });
+    const response = await fetch(
+      `${backendBaseUrl}/api/projects/${encodeURIComponent(projectId)}/input`,
+      {
+        method: "POST",
+        body,
+      },
+    );
     if (!response.ok) {
       const detail = await response.text().catch(() => "");
-      throw new Error(`Upload failed (${response.status}): ${detail || response.statusText}`);
+      throw new Error(
+        `Upload failed (${response.status}): ${detail || response.statusText}`,
+      );
     }
-    return (await response.json()) as { ok: boolean; project: ProjectPayload; files: Array<{ path: string; size: number }> };
+    return (await response.json()) as {
+      ok: boolean;
+      project: ProjectPayload;
+      files: Array<{ path: string; size: number }>;
+    };
   },
 
   async generate(projectId: string, mode: GenerationMode) {
-    return await requestJson<{ ok: boolean; projectId: string; job: ProjectJob }>(
-      `/api/projects/${encodeURIComponent(projectId)}/generate`,
-      {
-        method: "POST",
-        body: JSON.stringify({ mode }),
-      },
-    );
+    return await requestJson<{
+      ok: boolean;
+      projectId: string;
+      job: ProjectJob;
+    }>(`/api/projects/${encodeURIComponent(projectId)}/generate`, {
+      method: "POST",
+      body: JSON.stringify({ mode }),
+    });
+  },
+
+  async prepare(
+    projectId: string,
+    payload: {
+      operation: "separate" | "scale" | "optimize";
+      sourceVersionId?: string;
+      scale?: number;
+      ratio?: number;
+      preset?: "ligero" | "equilibrado" | "liviano";
+    },
+  ) {
+    return await requestJson<{
+      ok: boolean;
+      version: AssetVersion;
+      project: ProjectPayload;
+    }>(`/api/projects/${encodeURIComponent(projectId)}/prepare`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
   },
 
   async status(projectId: string) {
-    return await requestJson<ProjectStatusResponse>(`/api/projects/${encodeURIComponent(projectId)}/status`);
+    return await requestJson<ProjectStatusResponse>(
+      `/api/projects/${encodeURIComponent(projectId)}/status`,
+    );
   },
 };

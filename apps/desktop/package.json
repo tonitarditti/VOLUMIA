@@ -39,6 +39,7 @@
       "backend/jobs/**/*",
       "backend/tools/**/*",
       "backend/python/**/*",
+      "sketchup-bridge/**/*",
       "assets/templates/**/*",
       "src/assets/branding/volumia-icon-final-1024.png",
       "package.json"
