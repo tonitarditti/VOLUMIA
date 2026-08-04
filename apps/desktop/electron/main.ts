@@ -264,7 +264,9 @@ function createMainWindow() {
   const fallbackPreloadPath = path.join(__dirname, "preload.js");
   const preloadPath = existsSync(cwdPreloadPath) ? cwdPreloadPath : fallbackPreloadPath;
   const iconPathCandidates = [
+    path.resolve(process.cwd(), "src", "assets", "branding", "volumia-icon-final-1024.ico"),
     path.resolve(process.cwd(), "src", "assets", "branding", "volumia-icon-final-1024.png"),
+    path.resolve(__dirname, "../src/assets/branding/volumia-icon-final-1024.ico"),
     path.resolve(__dirname, "../src/assets/branding/volumia-icon-final-1024.png"),
   ];
   const iconPath = iconPathCandidates.find((candidate) => existsSync(candidate));
@@ -280,7 +282,7 @@ function createMainWindow() {
     minHeight: 760,
     frame: false,
     titleBarStyle: "hidden",
-    backgroundColor: "#0B0D12",
+    backgroundColor: "#F8F5F1",
     icon: iconPath,
     webPreferences: {
       preload: preloadPath,

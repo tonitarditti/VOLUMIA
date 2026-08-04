@@ -13,6 +13,9 @@ const {
   readLocalSettings,
 } = require("../config/paths");
 const { readMetadata, syncLatestVersion } = require("../project-metadata");
+const { gpuTaskQueue, GpuQueueCancelledError } = require("./gpu-task-queue");
+const { createPipelineState } = require("./pipeline-state");
+const { readGlbJson, validateMeshGlb, validateTexturedGlb } = require("./output-validator");
 
 const logDir = path.join(backendDir, "logs");
 const logPath = path.join(logDir, "volumia.log");
@@ -50,11 +53,41 @@ const generationStages = [
   ["validating", "Validando referencias"],
   ["preparing_image", "Preparando imagen"],
   ["geometry", "Reconstruyendo geometría"],
+  ["optimizing", "Preparando malla y UV"],
   ["texture", "Generando textura"],
-  ["optimizing", "Optimizando malla"],
   ["editable", "Preparando activo editable"],
   ["exporting", "Exportando archivos"],
 ];
+
+const stageStateOrder = {
+  pending: 0,
+  queued: 1,
+  running: 2,
+  complete: 3,
+  skipped: 3,
+  blocked: 3,
+  cancelled: 3,
+  error: 3,
+};
+
+function normalizeGenerationMode(value) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (["textured", "objeto texturizado", "textured-object", "object_textured", "hunyuan_textured"].includes(normalized)) return "textured";
+  if (["geometry_only", "geometry-only", "solo geometría", "solo geometria", "mesh-only", "quick", "photogrammetry", "demo"].includes(normalized)) return "geometry_only";
+  if (["editable", "activo editable"].includes(normalized)) return "editable";
+  throw new Error(`Modo de generación no reconocido: ${value}`);
+}
+
+function getRequiredStages(mode) {
+  switch (normalizeGenerationMode(mode)) {
+    case "textured":
+      return ["validating", "preparing_image", "geometry", "optimizing", "texture", "exporting"];
+    case "editable":
+      return ["validating", "preparing_image", "geometry", "optimizing", "editable", "exporting"];
+    case "geometry_only":
+      return ["validating", "preparing_image", "geometry", "optimizing", "exporting"];
+  }
+}
 
 class GenerationCancelledError extends Error {
   constructor() {
@@ -118,6 +151,7 @@ async function cancelGeneration(projectId, options = {}) {
   if (activeJob) {
     activeJob.cancelled = true;
   }
+  if (current.id) gpuTaskQueue.cancel(current.id);
   const cancelled = writeJob(projectId, {
     status: "cancelled",
     message: "Generación interrumpida por el usuario.",
@@ -125,6 +159,11 @@ async function cancelGeneration(projectId, options = {}) {
     error: null,
   });
   finishActiveStage(projectId, "cancelled", "Cancelada por el usuario.");
+  for (const stage of readJob(projectId).progress?.stages || []) {
+    if (["pending", "queued"].includes(stage.state)) {
+      updateGenerationStage(projectId, stage.id, { state: "cancelled", detail: "Cancelada antes de iniciar.", progress: null });
+    }
+  }
   const cancelledWithDuration = writeJob(projectId, {
     totalDurationMs: durationSince(cancelled.startedAt),
   });
@@ -213,12 +252,16 @@ function durationSince(startedAt, finishedAt = nowIso()) {
 }
 
 function createGenerationProgress(context = {}) {
+  const generationMode = normalizeGenerationMode(context.mode || "geometry_only");
+  const requiredStageIds = getRequiredStages(generationMode);
   return {
     jobId: context.jobId || null,
     currentStageId: "validating",
     stageId: "validating",
     stageIndex: 1,
-    stageCount: generationStages.length,
+    stageCount: requiredStageIds.length,
+    requiredStageIds,
+    generationMode,
     stageProgress: null,
     overallProgress: 0,
     message: "Pendiente.",
@@ -241,6 +284,10 @@ function createGenerationProgress(context = {}) {
 function normaliseGenerationProgress(progress, context = {}) {
   const provided = Array.isArray(progress?.stages) ? progress.stages : [];
   const byId = new Map(provided.map((stage) => [stage?.id, stage]));
+  const generationMode = normalizeGenerationMode(context.mode || progress?.generationMode || "geometry_only");
+  const requiredStageIds = progress?.generationMode === generationMode && Array.isArray(progress?.requiredStageIds)
+    ? progress.requiredStageIds
+    : getRequiredStages(generationMode);
   const normalized = {
     jobId: typeof progress?.jobId === "string" ? progress.jobId : context.jobId || null,
     currentStageId: typeof progress?.currentStageId === "string"
@@ -248,7 +295,9 @@ function normaliseGenerationProgress(progress, context = {}) {
       : "validating",
     stageId: typeof progress?.stageId === "string" ? progress.stageId : "validating",
     stageIndex: Number.isInteger(progress?.stageIndex) ? progress.stageIndex : 1,
-    stageCount: generationStages.length,
+    requiredStageIds,
+    generationMode,
+    stageCount: 0,
     stageProgress: Number.isFinite(progress?.stageProgress) ? progress.stageProgress : null,
     overallProgress: Number.isFinite(progress?.overallProgress)
       ? Math.max(0, Math.min(100, Number(progress.overallProgress)))
@@ -277,6 +326,7 @@ function normaliseGenerationProgress(progress, context = {}) {
       label,
     })),
   };
+  normalized.stageCount = normalized.requiredStageIds.length;
   return normalized;
 }
 
@@ -285,9 +335,11 @@ function stageTimeMs(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function confirmedOverallProgress(stages) {
+function confirmedOverallProgress(stages, requiredStageIds) {
+  const required = stages.filter((stage) => requiredStageIds.includes(stage.id));
+  if (required.length === 0) return 0;
   let confirmed = 0;
-  for (const stage of stages) {
+  for (const stage of required) {
     if (stage.state === "complete") {
       confirmed += 100;
       continue;
@@ -297,23 +349,24 @@ function confirmedOverallProgress(stages) {
     }
     break;
   }
-  return Math.floor(confirmed / generationStages.length);
+  return Math.floor(confirmed / required.length);
 }
 
 function updateProgressContract(progress, job) {
-  const current = progress.stages.find((stage) => stage.id === progress.currentStageId)
+  const requiredStages = progress.stages.filter((stage) => progress.requiredStageIds.includes(stage.id));
+  const current = requiredStages.find((stage) => stage.id === progress.currentStageId)
     || progress.stages.find((stage) => stage.state === "running")
-    || progress.stages.find((stage) => stage.state === "pending")
-    || progress.stages[progress.stages.length - 1];
-  const index = Math.max(0, progress.stages.findIndex((stage) => stage.id === current?.id));
-  const confirmed = confirmedOverallProgress(progress.stages);
+    || requiredStages.find((stage) => ["pending", "queued"].includes(stage.state))
+    || requiredStages[requiredStages.length - 1];
+  const index = Math.max(0, requiredStages.findIndex((stage) => stage.id === current?.id));
+  const confirmed = confirmedOverallProgress(progress.stages, progress.requiredStageIds);
   return {
     ...progress,
     jobId: job.id || progress.jobId || null,
     currentStageId: current?.id || progress.currentStageId,
     stageId: current?.id || progress.stageId,
     stageIndex: index + 1,
-    stageCount: generationStages.length,
+    stageCount: progress.requiredStageIds.length,
     stageProgress: Number.isFinite(current?.progress) ? Number(current.progress) : null,
     overallProgress: Math.max(progress.overallProgress || 0, confirmed),
     message: current?.detail || progress.message,
@@ -327,18 +380,24 @@ function updateGenerationStage(projectId, stageId, patch = {}) {
   const progress = normaliseGenerationProgress(job.progress, {
     jobId: job.id,
     startedAt: stageTimeMs(job.startedAt),
+    mode: job.generationMode || job.mode,
   });
   const stage = progress.stages.find((entry) => entry.id === stageId);
   if (!stage) return job;
 
   const timestamp = nowIso();
   const state = patch.state || stage.state;
-  const terminal = ["complete", "cancelled", "error"].includes(state);
+  const terminal = ["complete", "skipped", "blocked", "cancelled", "error"].includes(state);
+  if (["complete", "skipped", "blocked", "cancelled", "error"].includes(stage.state)) return job;
+  if (state === "complete" && stage.state !== "running") {
+    throw new Error(`Transición inválida de ${stage.state} a complete para ${stageId}.`);
+  }
+  if (stageStateOrder[state] < stageStateOrder[stage.state]) return job;
   const next = {
     ...stage,
     ...patch,
     state,
-    startedAt: patch.startedAt || stage.startedAt || (state !== "pending" ? timestamp : null),
+    startedAt: patch.startedAt || stage.startedAt || (state === "running" ? timestamp : null),
   };
   if (terminal) {
     next.finishedAt = patch.finishedAt || stage.finishedAt || timestamp;
@@ -348,9 +407,11 @@ function updateGenerationStage(projectId, stageId, patch = {}) {
   }
 
   progress.stages = progress.stages.map((entry) => entry.id === stageId ? next : entry);
-  if (state === "running") progress.currentStageId = stageId;
+  if (["running", "queued"].includes(state)) progress.currentStageId = stageId;
   const contract = updateProgressContract(progress, job);
-  return writeJob(projectId, { progress: contract, overallProgress: contract.overallProgress });
+  const updated = writeJob(projectId, { progress: contract, overallProgress: contract.overallProgress });
+  persistPipelineState(projectId, updated);
+  return updated;
 }
 
 function finishActiveStage(projectId, state, detail) {
@@ -358,6 +419,7 @@ function finishActiveStage(projectId, state, detail) {
   const progress = normaliseGenerationProgress(job.progress, {
     jobId: job.id,
     startedAt: stageTimeMs(job.startedAt),
+    mode: job.generationMode || job.mode,
   });
   const active = progress.stages.find(
     (stage) => stage.id === progress.currentStageId && stage.state === "running",
@@ -372,14 +434,14 @@ function markNotRequiredStages(projectId, stageIds) {
     const current = normaliseGenerationProgress(job.progress, {
       jobId: job.id,
       startedAt: stageTimeMs(job.startedAt),
+      mode: job.generationMode || job.mode,
     })
       .stages.find((stage) => stage.id === stageId);
     if (current?.state === "pending") {
       updateGenerationStage(projectId, stageId, {
-        state: "complete",
+        state: "skipped",
         detail: "No requerida por el modo seleccionado.",
-        progress: 100,
-        startedAt: nowIso(),
+        progress: null,
       });
     }
   }
@@ -429,6 +491,34 @@ function readJob(projectId) {
   });
 }
 
+function persistPipelineState(projectId, job = readJob(projectId)) {
+  const paths = ensureProjectLayout(projectId);
+  const fallback = createPipelineState(job.id, job.startedAt || nowIso());
+  const previous = readJson(paths.pipelineStateJson, fallback);
+  const progress = normaliseGenerationProgress(job.progress, {
+    jobId: job.id,
+    startedAt: stageTimeMs(job.startedAt),
+    mode: job.generationMode || job.mode,
+  });
+  const snapshot = {
+    ...previous,
+    jobId: job.id || previous.jobId || null,
+    generationMode: progress.generationMode,
+    overallState: job.status || previous.state,
+    state: job.status || previous.state,
+    activeStage: progress.currentStageId,
+    stages: progress.stages,
+    errors: job.error ? [...(previous.errors || []), { stage: progress.currentStageId, message: job.error.message || String(job.error), timestamp: nowIso() }] : previous.errors || [],
+    outputPaths: Array.isArray(job.resultFiles) ? job.resultFiles : previous.outputPaths || [],
+    activePids: [...(activeJobs.get(projectId)?.children || [])].map((child) => child.pid).filter(Boolean),
+    startedAt: job.startedAt || previous.startedAt,
+    finishedAt: job.finishedAt || null,
+    updatedAt: nowIso(),
+  };
+  fs.writeFileSync(paths.pipelineStateJson, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8");
+  return snapshot;
+}
+
 function appendJobLog(projectId, line) {
   const cleanLine = String(line || "").trim();
   if (!cleanLine) {
@@ -443,15 +533,32 @@ function appendJobLog(projectId, line) {
 
 function applyRunnerEvent(projectId, event) {
   if (!event || typeof event !== "object" || typeof event.stage !== "string") return;
+  const job = readJob(projectId);
+  if (event.jobId && event.jobId !== job.id) {
+    appendJobLog(projectId, `Evento ignorado de otro job: ${event.jobId}`);
+    return;
+  }
   const allowed = new Set(generationStages.map(([id]) => id));
   if (!allowed.has(event.stage)) return;
+  const existing = normaliseGenerationProgress(job.progress, {
+    jobId: job.id,
+    startedAt: stageTimeMs(job.startedAt),
+    mode: job.generationMode || job.mode,
+  }).stages.find((stage) => stage.id === event.stage);
+  const sequenceNumber = Number(event.sequenceNumber);
+  if (Number.isFinite(sequenceNumber) && sequenceNumber <= Number(existing?.lastSequenceNumber || 0)) return;
+  if (["complete", "skipped", "blocked", "cancelled", "error"].includes(existing?.state)) return;
   const progress = Number.isFinite(event.progress)
     ? Math.max(0, Math.min(100, Number(event.progress)))
     : null;
+  const eventState = ["complete", "error", "cancelled"].includes(event.state)
+    ? event.state
+    : "running";
   updateGenerationStage(projectId, event.stage, {
-    state: event.state === "complete" ? "complete" : "running",
+    state: eventState,
     detail: typeof event.detail === "string" ? event.detail : undefined,
     progress,
+    lastSequenceNumber: Number.isFinite(sequenceNumber) ? sequenceNumber : existing?.lastSequenceNumber || 0,
     // Runners use this only while their inference has no native percentage.
     indeterminate: event.indeterminate === true && progress === null,
   });
@@ -506,19 +613,6 @@ function isValidGlb(filePath) {
     fs.closeSync(fd);
   }
   return header.equals(glbMagic);
-}
-
-function readGlbJson(filePath) {
-  const buffer = fs.readFileSync(filePath);
-  if (buffer.length < 20 || !buffer.subarray(0, 4).equals(glbMagic)) {
-    throw new Error(`Invalid GLB header: ${filePath}`);
-  }
-  const jsonLength = buffer.readUInt32LE(12);
-  const jsonType = buffer.readUInt32LE(16);
-  if (jsonType !== 0x4e4f534a || 20 + jsonLength > buffer.length) {
-    throw new Error(`Invalid GLB JSON chunk: ${filePath}`);
-  }
-  return JSON.parse(buffer.subarray(20, 20 + jsonLength).toString("utf8").replace(/\0+$/u, ""));
 }
 
 function verifyGroundedYUpGlb(filePath) {
@@ -587,11 +681,40 @@ function latestGeneratedAsset(outputDir) {
 function generatedResultFiles(result) {
   return Object.entries(result || {})
     .filter(([key, value]) =>
-      ["latestGlb", "optimizedGlb", "raw"].includes(key) &&
+      ["latestGlb", "optimizedGlb", "texturedGlb", "raw"].includes(key) &&
       typeof value === "string" &&
       fs.existsSync(value)
     )
     .map(([, filePath]) => path.resolve(filePath));
+}
+
+function assertPipelineReadyForExport(projectId, mode) {
+  const job = readJob(projectId);
+  const required = getRequiredStages(mode).filter((stageId) => stageId !== "exporting");
+  const stageById = new Map((job.progress?.stages || []).map((stage) => [stage.id, stage]));
+  const incomplete = required.filter((stageId) => stageById.get(stageId)?.state !== "complete");
+  if (incomplete.length) {
+    const states = incomplete.map((stageId) => `${stageId}=${stageById.get(stageId)?.state || "missing"}`).join(", ");
+    throw new Error(`No se puede exportar: etapas obligatorias incompletas (${states}).`);
+  }
+  if (normalizeGenerationMode(mode) === "textured") validateTexturedGlb(projectPaths(projectId).latestGlb);
+}
+
+function assertJobCanComplete(projectId, mode) {
+  const job = readJob(projectId);
+  const stageById = new Map((job.progress?.stages || []).map((stage) => [stage.id, stage]));
+  const incomplete = getRequiredStages(mode).filter((stageId) => stageById.get(stageId)?.state !== "complete");
+  if (incomplete.length) throw new Error(`El trabajo no puede finalizar. Etapas incompletas: ${incomplete.join(", ")}`);
+}
+
+function blockPendingRequiredStages(projectId, mode, reason) {
+  const required = new Set(getRequiredStages(mode));
+  const job = readJob(projectId);
+  for (const stage of job.progress?.stages || []) {
+    if (required.has(stage.id) && ["pending", "queued"].includes(stage.state)) {
+      updateGenerationStage(projectId, stage.id, { state: "blocked", detail: reason, progress: null });
+    }
+  }
 }
 
 function copyRawOutput(projectId, sourcePath) {
@@ -656,7 +779,10 @@ function spawnProcess(command, args, options = {}) {
         resolve({ stdout, stderr, code });
         return;
       }
-      const error = new Error(`${command} exited with code ${code}${signal ? ` (${signal})` : ""}.\n${stderr || stdout}`);
+      const argparseHint = code === 2
+        ? " El runner rechazó sus argumentos; revisá el detalle del comando y los flags obligatorios."
+        : "";
+      const error = new Error(`${command} exited with code ${code}${signal ? ` (${signal})` : ""}.${argparseHint}\n${stderr || stdout}`);
       error.stdout = stdout;
       error.stderr = stderr;
       error.code = code;
@@ -881,6 +1007,97 @@ async function runQuick(projectId, inputFiles) {
   };
 }
 
+function buildHunyuanRunnerArgs({ jobId, hunyuanDir, inputPath, outputDir }) {
+  if (jobId === undefined || jobId === null || String(jobId).trim() === "") {
+    throw new Error("No se puede ejecutar Hunyuan3D sin un jobId válido.");
+  }
+  return [
+    path.join(backendDir, "tools", "hunyuan_runner.py"),
+    "--job-id",
+    String(jobId),
+    "--hunyuan-dir",
+    hunyuanDir,
+    "--input",
+    inputPath,
+    "--output-dir",
+    outputDir,
+  ];
+}
+
+function buildHunyuanTexgenArgs({ jobId, inputPath, meshPath, outputDir, hunyuanDir }) {
+  const normalizedJobId = String(jobId ?? "").trim();
+  if (!normalizedJobId) throw new Error("No se puede iniciar la textura Hunyuan: falta jobId.");
+  return [
+    path.join(backendDir, "python", "hunyuan_texgen.py"),
+    "--job-id", normalizedJobId,
+    "--image", inputPath,
+    "--mesh", meshPath,
+    "--output-dir", outputDir,
+    "--repo-root", hunyuanDir,
+  ];
+}
+
+async function runTexture(projectId, inputPath, meshPath) {
+  const tools = getToolStatus();
+  const paths = ensureProjectLayout(projectId);
+  const job = readJob(projectId);
+  const jobId = String(job.id || "").trim();
+  if (!jobId) throw new Error("No se puede iniciar la textura: falta jobId.");
+  validateMeshGlb(meshPath, { requireUv: true });
+  const textureOutput = path.join(paths.output, "hunyuan-texture");
+  fs.rmSync(textureOutput, { recursive: true, force: true });
+  ensureDir(textureOutput);
+  updateGenerationStage(projectId, "texture", {
+    state: "queued",
+    detail: "Esperando acceso exclusivo a la GPU.",
+    progress: null,
+    indeterminate: true,
+  });
+  appendJobLog(projectId, `[GPU_QUEUE] job queued: ${jobId}:texture`);
+  const texturedGlb = await gpuTaskQueue.runExclusive({
+    jobId,
+    stage: "texture",
+    isCancelled: () => isGenerationCancelled(projectId),
+    onStart: () => {
+      appendJobLog(projectId, `[GPU_QUEUE] lock acquired: ${jobId}:texture`);
+      updateGenerationStage(projectId, "texture", {
+        state: "running",
+        detail: "Generando textura con Hunyuan3D.",
+        progress: null,
+        indeterminate: true,
+      });
+    },
+  }, async () => {
+    try {
+      await spawnProcess(tools.python.path, buildHunyuanTexgenArgs({
+        jobId,
+        inputPath,
+        meshPath,
+        outputDir: textureOutput,
+        hunyuanDir: tools.hunyuan.path,
+      }), {
+        projectId,
+        cwd: tools.hunyuan.path,
+        env: pythonGenerationEnv(),
+        onOutput: (chunk) => appendJobLog(projectId, chunk.trim()),
+        onLine: (line) => handleRunnerLine(projectId, line),
+      });
+      const candidate = path.join(textureOutput, "textured.glb");
+      validateTexturedGlb(candidate);
+      return candidate;
+    } finally {
+      appendJobLog(projectId, `[GPU_QUEUE] lock released: ${jobId}:texture`);
+    }
+  });
+  fs.copyFileSync(texturedGlb, paths.latestGlb);
+  updateGenerationStage(projectId, "texture", {
+    state: "complete",
+    detail: "Textura, materiales y UV validados.",
+    progress: 100,
+  });
+  return texturedGlb;
+}
+
 async function runTextured(projectId, inputFiles) {
   const tools = getToolStatus();
   if (!tools.python.exists) {
@@ -893,6 +1110,7 @@ async function runTextured(projectId, inputFiles) {
     throw new Error("No se encontró imagen de entrada.");
   }
   const paths = ensureProjectLayout(projectId);
+  const jobId = readJob(projectId).id;
   const hunyuanOutput = path.join(paths.output, "hunyuan");
   fs.rmSync(hunyuanOutput, { recursive: true, force: true });
   ensureDir(hunyuanOutput);
@@ -904,20 +1122,43 @@ async function runTextured(projectId, inputFiles) {
   });
   const pythonEnv = pythonGenerationEnv();
   appendPythonEnvLogs(projectId, "hunyuan", pythonEnv);
-  await spawnProcess(tools.python.path, [
-    path.join(backendDir, "tools", "hunyuan_runner.py"),
-    "--hunyuan-dir",
-    tools.hunyuan.path,
-    "--input",
-    inputFiles[0],
-    "--output-dir",
-    hunyuanOutput,
-  ], {
-    projectId,
-    cwd: tools.hunyuan.path,
-    env: pythonEnv,
-    onOutput: (chunk) => appendJobLog(projectId, chunk.trim()),
-    onLine: (line) => handleRunnerLine(projectId, line),
+  updateGenerationStage(projectId, "geometry", {
+    state: "queued",
+    detail: "Esperando acceso exclusivo a la GPU.",
+    progress: null,
+    indeterminate: true,
+  });
+  appendJobLog(projectId, `[GPU_QUEUE] job queued: ${jobId}:geometry`);
+  await gpuTaskQueue.runExclusive({
+    jobId,
+    stage: "geometry",
+    isCancelled: () => isGenerationCancelled(projectId),
+    onStart: () => {
+      appendJobLog(projectId, `[GPU_QUEUE] lock acquired: ${jobId}:geometry`);
+      updateGenerationStage(projectId, "geometry", {
+        state: "running",
+        detail: "Cargando modelo de geometría.",
+        progress: null,
+        indeterminate: true,
+      });
+    },
+  }, async () => {
+    try {
+      await spawnProcess(tools.python.path, buildHunyuanRunnerArgs({
+        jobId,
+        hunyuanDir: tools.hunyuan.path,
+        inputPath: inputFiles[0],
+        outputDir: hunyuanOutput,
+      }), {
+        projectId,
+        cwd: tools.hunyuan.path,
+        env: pythonEnv,
+        onOutput: (chunk) => appendJobLog(projectId, chunk.trim()),
+        onLine: (line) => handleRunnerLine(projectId, line),
+      });
+    } finally {
+      appendJobLog(projectId, `[GPU_QUEUE] lock released: ${jobId}:geometry`);
+    }
   });
   const generated = latestGeneratedAsset(hunyuanOutput);
   if (!generated) {
@@ -937,10 +1178,13 @@ async function runTextured(projectId, inputFiles) {
       rotationZDeg: 0,
     }),
   });
+  validateMeshGlb(optimized.latestGlb, { requireUv: true });
+  const texturedGlb = await runTexture(projectId, inputFiles[0], optimized.latestGlb);
   return {
-    latestGlb: optimized.latestGlb,
+    latestGlb: texturedGlb,
     raw,
     optimizedGlb: optimized.optimizedGlb,
+    texturedGlb,
     source: generated,
     rotation: optimized.rotation,
     warnings: optimized.warnings,
@@ -1023,9 +1267,11 @@ async function runGeneration(projectId, mode) {
     if (!validModes.has(mode)) {
       throw new Error(`Modo de generacion invalido: ${mode}`);
     }
+    const generationMode = normalizeGenerationMode(mode);
     writeJob(projectId, {
       id: current.id,
       mode,
+      generationMode,
       status: "queued",
       message: "Job en cola.",
       startedAt: current.startedAt || nowIso(),
@@ -1037,13 +1283,19 @@ async function runGeneration(projectId, mode) {
         current.progress || createGenerationProgress({
           jobId: current.id,
           startedAt: stageTimeMs(current.startedAt),
+          mode: generationMode,
         }),
-        { jobId: current.id, startedAt: stageTimeMs(current.startedAt) },
+        { jobId: current.id, startedAt: stageTimeMs(current.startedAt), mode: generationMode },
       ),
       error: null,
       warnings: [],
       inputFiles,
     });
+    const requiredStages = new Set(getRequiredStages(generationMode));
+    markNotRequiredStages(
+      projectId,
+      generationStages.map(([stageId]) => stageId).filter((stageId) => !requiredStages.has(stageId)),
+    );
     updateGenerationStage(projectId, "validating", {
       state: "running",
       detail: "Verificando referencias y configuración del modo.",
@@ -1077,7 +1329,8 @@ async function runGeneration(projectId, mode) {
       throw new GenerationCancelledError();
     }
 
-    markNotRequiredStages(projectId, ["editable"]);
+    appendJobLog(projectId, `[PIPELINE] Export preconditions: mode=${generationMode} required=${getRequiredStages(generationMode).join(",")}`);
+    assertPipelineReadyForExport(projectId, generationMode);
     updateGenerationStage(projectId, "exporting", {
       state: "running",
       detail: "Verificando el archivo final para el visor.",
@@ -1097,6 +1350,8 @@ async function runGeneration(projectId, mode) {
       progress: 100,
     });
 
+    assertJobCanComplete(projectId, generationMode);
+
     const finishedAt = nowIso();
     const finished = writeJob(projectId, {
       status: "complete",
@@ -1108,6 +1363,7 @@ async function runGeneration(projectId, mode) {
       resultFiles: generatedResultFiles(result),
       warnings: result.warnings || [],
     });
+    persistPipelineState(projectId, finished);
     syncLatestVersion(projectId, finished, paths.latestGlb);
     log("INFO", "generation complete", { projectId, mode, latestGlb: paths.latestGlb });
     return finished;
@@ -1123,12 +1379,14 @@ async function runGeneration(projectId, mode) {
         totalDurationMs: durationSince(readJob(projectId).startedAt, finishedAt),
         error: null,
       });
+      persistPipelineState(projectId, cancelled);
       syncLatestVersion(projectId, cancelled, null);
       return cancelled;
     }
     const message = error instanceof Error ? error.message : String(error);
     log("ERR", "generation failed", { projectId, mode, message });
     finishActiveStage(projectId, "error", message);
+    blockPendingRequiredStages(projectId, normalizeGenerationMode(mode), "Bloqueada por una etapa obligatoria fallida.");
     const finishedAt = nowIso();
     const failed = writeJob(projectId, {
       status: "error",
@@ -1137,6 +1395,7 @@ async function runGeneration(projectId, mode) {
       totalDurationMs: durationSince(readJob(projectId).startedAt, finishedAt),
       error: { message },
     });
+    persistPipelineState(projectId, failed);
     syncLatestVersion(projectId, failed, null);
     return failed;
   }
@@ -1146,6 +1405,9 @@ function startGeneration(projectId, mode) {
   if (activeJobs.has(projectId)) {
     return readJob(projectId);
   }
+
+  const current = readJob(projectId);
+  if (current.id) gpuTaskQueue.resetCancellation(current.id);
 
   const activeJob = {
     cancelled: false,
@@ -1167,6 +1429,12 @@ module.exports = {
   validModes,
   isValidGlb,
   createGenerationProgress,
+  buildHunyuanRunnerArgs,
+  buildHunyuanTexgenArgs,
+  normalizeGenerationMode,
+  getRequiredStages,
+  assertPipelineReadyForExport,
+  assertJobCanComplete,
   readJob,
   writeJob,
   startGeneration,

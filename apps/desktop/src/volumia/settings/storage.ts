@@ -18,8 +18,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   languageMode: "system",
   language: "es",
   themeMode: "manual",
-  theme: "dark",
-  colorway: "neutral",
+  theme: "light",
+  colorway: "warm",
   studioProfile: "neutral",
   timeTheme: { ...DEFAULT_TIME_THEME },
   glassStyle: false,
@@ -48,7 +48,7 @@ const LANGUAGE_MODE_SET = new Set<LanguageMode>(["system", "manual"]);
 const LANGUAGE_SET = new Set<Language>(["es", "en", "pt"]);
 const THEME_MODE_SET = new Set<ThemeMode>(["system", "time", "manual"]);
 const THEME_SET = new Set<Theme>(["light", "dark"]);
-const COLORWAY_SET = new Set<Colorway>(["atelier", "neutral"]);
+const COLORWAY_SET = new Set<Colorway>(["atelier", "neutral", "warm"]);
 const STUDIO_PROFILE_SET = new Set<StudioProfile>(["neutral", "atelier"]);
 const WINDOW_MODE_SET = new Set<WindowMode>([
   "windowed",

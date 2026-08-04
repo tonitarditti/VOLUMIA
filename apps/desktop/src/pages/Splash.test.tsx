@@ -16,15 +16,15 @@ describe("Splash", () => {
 
     render(<Splash onComplete={onComplete} />);
 
-    expect(screen.getByText("Inicializando espacio de trabajo...")).toBeInTheDocument();
+    expect(screen.getByText("Preparando interfaz")).toBeInTheDocument();
 
     act(() => {
-      vi.advanceTimersByTime(2800);
+      vi.advanceTimersByTime(179);
     });
     expect(onComplete).not.toHaveBeenCalled();
 
     act(() => {
-      vi.advanceTimersByTime(500);
+      vi.advanceTimersByTime(1);
     });
     expect(onComplete).toHaveBeenCalledTimes(1);
   });

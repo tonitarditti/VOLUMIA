@@ -23,7 +23,7 @@
     "productName": "Volumia",
     "icon": "src/assets/branding/volumia-icon-final-1024.png",
     "win": {
-      "icon": "src/assets/branding/volumia-icon-final-1024.png"
+      "icon": "src/assets/branding/volumia-icon-final-1024.ico"
     },
     "linux": {
       "icon": "src/assets/branding/volumia-icon-final-1024.png"
@@ -42,6 +42,7 @@
       "sketchup-bridge/**/*",
       "assets/templates/**/*",
       "src/assets/branding/volumia-icon-final-1024.png",
+      "src/assets/branding/volumia-icon-final-1024.ico",
       "package.json"
     ],
     "asarUnpack": [

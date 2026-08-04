@@ -27,15 +27,15 @@ function WindowBar() {
         onClick={() => navigate("/")}
         aria-label="Ir a Inicio"
       >
-        <BrandLogo size={36} showText={false} label="VOLUMIA" emphasis="soft" />
-        <span className="hidden min-w-0 flex-col justify-center sm:flex">
-          <span className="text-[17px] font-semibold uppercase leading-none tracking-[0.06em] text-[var(--text-primary)]">
-            VOLUMIA
-          </span>
-          <span className="mt-1 truncate text-[10px] leading-none text-[var(--text-secondary)]">
-            Tu asistente creativo 3D
-          </span>
-        </span>
+        <BrandLogo
+          size={17}
+          label="VOLUMIA"
+          subtitle="Your Creative 3D Assistant"
+          iconClassName="h-9 w-9"
+          className="hidden sm:inline-flex"
+          subtitleClassName="max-w-[210px]"
+        />
+        <BrandLogo size={28} showText={false} label="VOLUMIA" className="sm:hidden" />
       </button>
 
       <nav className="no-drag ml-auto flex items-center gap-1" aria-label="Navegación principal">

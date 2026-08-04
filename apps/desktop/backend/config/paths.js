@@ -444,6 +444,7 @@ function projectPaths(projectId) {
     output: path.join(root, "output"),
     latestGlb: path.join(root, "latest.glb"),
     jobJson: path.join(root, "job.json"),
+    pipelineStateJson: path.join(root, "pipeline_state.json"),
     metadataJson: path.join(root, "project.json"),
     versions: path.join(root, "versions"),
   };

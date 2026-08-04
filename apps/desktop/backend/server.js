@@ -20,6 +20,7 @@ const {
   createGenerationProgress,
   isValidGlb,
   logPath,
+  normalizeGenerationMode,
   readJob,
   reconcileInterruptedJobs,
   startGeneration,
@@ -588,7 +589,23 @@ app.post("/api/projects/:id/generate", (req, res) => {
     });
     return;
   }
-  const mode = String(req.body?.mode || "demo");
+  const requestedMode = req.body?.generationMode ?? req.body?.mode ?? "demo";
+  let mode;
+  try {
+    const normalizedMode = normalizeGenerationMode(requestedMode);
+    mode = normalizedMode === "textured"
+      ? "textured"
+      : normalizedMode === "geometry_only"
+        ? (["quick", "photogrammetry", "demo"].includes(String(requestedMode).trim().toLowerCase()) ? String(requestedMode).trim().toLowerCase() : "quick")
+        : "editable";
+  } catch (error) {
+    res.status(400).json({ ok: false, error: error instanceof Error ? error.message : String(error) });
+    return;
+  }
+  if (mode === "editable") {
+    res.status(400).json({ ok: false, error: "El modo editable todavía requiere seleccionar un runner de geometría explícito." });
+    return;
+  }
   const metadata = readMetadata(paths.id);
   const referenceCount =
     metadata.references.length || fs.readdirSync(paths.input).length;
@@ -615,6 +632,7 @@ app.post("/api/projects/:id/generate", (req, res) => {
     progress: createGenerationProgress({
       jobId,
       startedAt: startedAt.getTime(),
+      mode,
     }),
     warnings: [],
     logs: [],

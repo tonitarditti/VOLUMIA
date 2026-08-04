@@ -62,8 +62,11 @@ export type ProjectJob = {
 
 export type GenerationStageState =
   | "pending"
+  | "queued"
   | "running"
   | "complete"
+  | "skipped"
+  | "blocked"
   | "cancelled"
   | "error";
 

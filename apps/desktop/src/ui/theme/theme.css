@@ -1,5 +1,14 @@
 :root {
   color-scheme: light;
+  --volumia-background: #f8f5f1;
+  --volumia-surface: #f2ede7;
+  --volumia-primary: #b49774;
+  --volumia-primary-light: #dec8a8;
+  --volumia-primary-medium: #c1a17a;
+  --volumia-primary-dark: #695b49;
+  --volumia-text: #5f5a55;
+  --volumia-text-muted: #918a83;
+  --volumia-border: #ded7d0;
   --volumia-blue: #4c6fff;
   --volumia-blue-hover: #3954d9;
   --volumia-cyan: #16c7e3;

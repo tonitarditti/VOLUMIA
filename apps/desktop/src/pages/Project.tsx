@@ -106,6 +106,12 @@ function stageDuration(stage: GenerationStage) {
 function stageStateLabel(stage: GenerationStage) {
   return stage.state === "complete"
     ? "Finalizado"
+    : stage.state === "skipped"
+      ? "No requerido"
+      : stage.state === "blocked"
+        ? "Bloqueado"
+        : stage.state === "queued"
+          ? "En cola"
     : stage.state === "running"
       ? "En proceso"
       : stage.state === "cancelled"
@@ -120,7 +126,9 @@ function StageStateIcon({ stage }: { stage: GenerationStage }) {
     ? "text-[var(--danger)]"
     : stage.state === "cancelled"
       ? "text-[var(--warning)]"
-      : stage.state === "running"
+      : stage.state === "blocked"
+        ? "text-[var(--warning)]"
+        : stage.state === "queued" || stage.state === "running"
         ? "text-[var(--accent)]"
         : stage.state === "complete"
           ? "text-[var(--success)]"
@@ -133,7 +141,7 @@ function StageStateIcon({ stage }: { stage: GenerationStage }) {
       </svg>
     );
   }
-  if (stage.state === "error" || stage.state === "cancelled") {
+  if (stage.state === "error" || stage.state === "cancelled" || stage.state === "blocked") {
     return (
       <svg className={`h-4 w-4 shrink-0 ${tone}`} viewBox="0 0 16 16" fill="none" aria-label={stageStateLabel(stage)}>
         <circle cx="8" cy="8" r="6.25" stroke="currentColor" strokeWidth="1.5" />
@@ -143,7 +151,7 @@ function StageStateIcon({ stage }: { stage: GenerationStage }) {
   }
   return (
     <span
-      className={`mt-0.5 h-3.5 w-3.5 shrink-0 rounded-full border-2 border-current ${tone} ${stage.state === "running" ? "animate-pulse bg-current/20" : ""}`}
+      className={`mt-0.5 h-3.5 w-3.5 shrink-0 rounded-full border-2 border-current ${tone} ${stage.state === "running" || stage.state === "queued" ? "animate-pulse bg-current/20" : ""}`}
       aria-label={stageStateLabel(stage)}
     />
   );
@@ -191,6 +199,8 @@ function GenerationProgressPanel({
                     <span className="text-[11px] text-[var(--text-secondary)]">
                       {stage.state === "running"
                         ? `En proceso · ${formatDuration(duration)}`
+                        : stage.state === "queued"
+                          ? "En cola de GPU"
                         : duration !== null
                           ? formatDuration(duration)
                           : stageStateLabel(stage)}
@@ -202,15 +212,15 @@ function GenerationProgressPanel({
                       ? ` · Inicio ${new Date(stage.startedAt).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`
                       : ""}
                   </p>
-                  {stage.state === "running" && (hasDeterminateProgress || stage.indeterminate) ? (
+                  {(stage.state === "running" || stage.state === "queued") && (hasDeterminateProgress || stage.indeterminate) ? (
                     <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-[var(--surface-2)]" aria-label={`Avance de ${stage.label}`}>
                       {hasDeterminateProgress ? (
                         <div
-                          className="h-full rounded-full bg-[linear-gradient(90deg,var(--accent),var(--accent-2))] transition-[width] duration-200"
+                          className="h-full rounded-full bg-[linear-gradient(90deg,var(--volumia-blue),var(--volumia-cyan),var(--volumia-violet))] transition-[width] duration-200"
                           style={{ width: `${stage.progress}%` }}
                         />
                       ) : (
-                        <div className="h-full w-2/5 animate-[pulse_1.2s_ease-in-out_infinite] rounded-full bg-[linear-gradient(90deg,var(--accent),var(--accent-2))]" />
+                        <div className="h-full w-2/5 animate-[pulse_1.2s_ease-in-out_infinite] rounded-full bg-[linear-gradient(90deg,var(--volumia-blue),var(--volumia-cyan),var(--volumia-violet))]" />
                       )}
                     </div>
                   ) : null}
@@ -1130,7 +1140,7 @@ export function Project() {
           </p>
           <div className="relative mt-1.5 h-1.5 overflow-hidden rounded-full bg-[var(--surface-2)]" aria-label="Avance global de generación">
             <div
-              className="h-full rounded-full bg-[linear-gradient(90deg,var(--accent),#22d3ee,var(--accent-2))] transition-[width] duration-200"
+              className="h-full rounded-full bg-[linear-gradient(90deg,var(--volumia-blue),var(--volumia-cyan),var(--volumia-violet))] transition-[width] duration-200"
               style={{ width: `${overallProgress}%` }}
             />
             {running && activeStage?.indeterminate ? (
