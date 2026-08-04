@@ -51,8 +51,46 @@ export type ProjectJob = {
   inputFiles?: string[];
   logs?: string[];
   createdAt?: string | null;
+  startedAt?: string | null;
   updatedAt?: string | null;
   finishedAt?: string | null;
+  totalDurationMs?: number | null;
+  runner?: string | null;
+  resultFiles?: string[];
+  progress?: GenerationProgress;
+};
+
+export type GenerationStageState =
+  | "pending"
+  | "running"
+  | "complete"
+  | "cancelled"
+  | "error";
+
+export type GenerationStage = {
+  id: string;
+  label: string;
+  state: GenerationStageState;
+  progress: number | null;
+  indeterminate: boolean;
+  startedAt: string | null;
+  finishedAt: string | null;
+  durationMs: number | null;
+  detail: string;
+};
+
+export type GenerationProgress = {
+  jobId: string | null;
+  currentStageId: string;
+  stageId: string;
+  stageIndex: number;
+  stageCount: number;
+  stageProgress: number | null;
+  overallProgress: number;
+  message: string;
+  startedAt: number | null;
+  stageStartedAt: number | null;
+  stages: GenerationStage[];
 };
 
 export type ReferenceAngle = "front" | "side" | "back" | "top" | "detail";
@@ -99,6 +137,20 @@ export type AssetVersion = {
     pieceNodes: number;
     preservesPieceNodes: boolean;
     error?: string;
+  };
+  generation?: {
+    startedAt: string | null;
+    finishedAt: string | null;
+    totalDurationMs: number | null;
+    status: JobStatus;
+    runner: string | null;
+    mode: GenerationMode;
+    stages: GenerationStage[];
+    resultFiles: string[];
+    overallProgress?: number;
+    stageDurations?: Record<string, number | null>;
+    generationMode?: GenerationMode;
+    outputFiles?: string[];
   };
 };
 export type EditableAssetStats = {

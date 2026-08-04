@@ -1,8 +1,16 @@
 import argparse
+import json
 import os
 import sys
 import time
 from pathlib import Path
+
+
+def emit(stage: str, detail: str, *, state: str = "running", progress: int | None = None, indeterminate: bool = False) -> None:
+    payload = {"stage": stage, "state": state, "detail": detail, "indeterminate": indeterminate}
+    if progress is not None:
+        payload["progress"] = progress
+    print(f"VOLUMIA_EVENT:{json.dumps(payload)}", flush=True)
 
 
 def apply_openmp_compat_env() -> None:
@@ -72,9 +80,11 @@ def main() -> int:
     print(f"[hunyuan] paint_subfolder={args.paint_subfolder}", flush=True)
 
     try:
+        emit("preparing_image", "Preparando imagen de referencia.", indeterminate=True)
         image = Image.open(input_path).convert("RGBA")
         if image.mode == "RGB":
             image = BackgroundRemover()(image)
+        emit("preparing_image", "Imagen de referencia preparada.", state="complete", progress=100)
     except Exception as error:
         print(f"Error loading input image: {error}", file=sys.stderr)
         return 3
@@ -82,6 +92,7 @@ def main() -> int:
     try:
         started = time.time()
         print("[hunyuan] loading shape pipeline", flush=True)
+        emit("geometry", "Cargando modelo de geometría.", indeterminate=True)
         shape_pipeline = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(
             args.model_path,
             subfolder=args.shape_subfolder,
@@ -89,8 +100,10 @@ def main() -> int:
             device=device,
             dtype=dtype,
         )
+        emit("geometry", "Modelo cargado.", progress=20)
         generator = torch.Generator(device=device).manual_seed(args.seed) if device == "cuda" else torch.manual_seed(args.seed)
         print("[hunyuan] generating shape", flush=True)
+        emit("geometry", "Inferencia iniciada.", indeterminate=True)
         mesh = shape_pipeline(
             image=image,
             num_inference_steps=args.steps,
@@ -99,20 +112,25 @@ def main() -> int:
             generator=generator,
             output_type="trimesh",
         )[0]
+        emit("geometry", "Malla base generada.", progress=65)
         shape_path = output_dir / "shape.glb"
         mesh.export(shape_path)
         print(f"[hunyuan] shape exported: {shape_path}", flush=True)
+        emit("geometry", "GLB temporal guardado.", progress=75)
 
         print("[hunyuan] loading texture pipeline", flush=True)
+        emit("texture", "Cargando modelo de texturas.", indeterminate=True)
         paint_pipeline = Hunyuan3DPaintPipeline.from_pretrained(
             args.model_path,
             subfolder=args.paint_subfolder,
         )
         print("[hunyuan] generating texture", flush=True)
+        emit("texture", "Generando textura.", indeterminate=True)
         textured_mesh = paint_pipeline(mesh, image=image)
         output_path = output_dir / "textured.glb"
         textured_mesh.export(output_path)
         print(f"[hunyuan] textured GLB exported: {output_path}", flush=True)
+        emit("texture", "Textura generada y GLB temporal guardado.", state="complete", progress=100)
         print(f"[hunyuan] finished in {time.time() - started:.2f}s", flush=True)
         return 0
     except Exception as error:

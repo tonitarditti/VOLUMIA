@@ -6,6 +6,7 @@ import { desktopApi, hasDesktopBridge } from "@/electron/desktopApi";
 import {
   generationClient,
   type GenerationMode,
+  type GenerationStage,
   type ProjectPayload,
   type ReferenceAngle,
   type ToolsStatusResponse,
@@ -83,6 +84,157 @@ function dimensions(value: number, unit: "cm" | "m") {
   return `${converted.toFixed(converted < 10 ? 1 : 0)} ${unit}`;
 }
 
+export function formatDuration(durationMs?: number | null) {
+  if (typeof durationMs !== "number" || !Number.isFinite(durationMs) || durationMs < 0) return "00:00";
+  const seconds = Math.floor(durationMs / 1000);
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remainingSeconds = seconds % 60;
+  return hours > 0
+    ? `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(remainingSeconds).padStart(2, "0")}`
+    : `${String(minutes).padStart(2, "0")}:${String(remainingSeconds).padStart(2, "0")}`;
+}
+
+function stageDuration(stage: GenerationStage) {
+  if (typeof stage.durationMs === "number" && Number.isFinite(stage.durationMs)) return stage.durationMs;
+  if (stage.startedAt && stage.state === "running") {
+    return Math.max(0, Date.now() - new Date(stage.startedAt).getTime());
+  }
+  return null;
+}
+
+function stageStateLabel(stage: GenerationStage) {
+  return stage.state === "complete"
+    ? "Finalizado"
+    : stage.state === "running"
+      ? "En proceso"
+      : stage.state === "cancelled"
+        ? "Cancelado"
+        : stage.state === "error"
+          ? "Error"
+          : "Pendiente";
+}
+
+function StageStateIcon({ stage }: { stage: GenerationStage }) {
+  const tone = stage.state === "error"
+    ? "text-[var(--danger)]"
+    : stage.state === "cancelled"
+      ? "text-[var(--warning)]"
+      : stage.state === "running"
+        ? "text-[var(--accent)]"
+        : stage.state === "complete"
+          ? "text-[var(--success)]"
+          : "text-[var(--text-faint)]";
+  if (stage.state === "complete") {
+    return (
+      <svg className={`h-4 w-4 shrink-0 ${tone}`} viewBox="0 0 16 16" fill="none" aria-label="Completado">
+        <circle cx="8" cy="8" r="6.25" stroke="currentColor" strokeWidth="1.5" />
+        <path d="m4.7 8.1 2.05 2.05 4.55-4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+  if (stage.state === "error" || stage.state === "cancelled") {
+    return (
+      <svg className={`h-4 w-4 shrink-0 ${tone}`} viewBox="0 0 16 16" fill="none" aria-label={stageStateLabel(stage)}>
+        <circle cx="8" cy="8" r="6.25" stroke="currentColor" strokeWidth="1.5" />
+        <path d="M5.5 5.5 10.5 10.5M10.5 5.5 5.5 10.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      </svg>
+    );
+  }
+  return (
+    <span
+      className={`mt-0.5 h-3.5 w-3.5 shrink-0 rounded-full border-2 border-current ${tone} ${stage.state === "running" ? "animate-pulse bg-current/20" : ""}`}
+      aria-label={stageStateLabel(stage)}
+    />
+  );
+}
+
+function GenerationProgressPanel({
+  stages,
+  totalDurationMs,
+  running,
+  runner,
+  mode,
+  outputFiles,
+}: {
+  stages: GenerationStage[];
+  totalDurationMs?: number | null;
+  running: boolean;
+  runner?: string | null;
+  mode?: string | null;
+  outputFiles?: string[];
+}) {
+  return (
+    <section className="max-h-[min(48vh,420px)] shrink-0 overflow-auto border-t border-[var(--border)] bg-[var(--surface)] p-4 shadow-[0_-8px_20px_rgb(15_23_42/0.08)]">
+      <div className="mb-3 flex items-baseline justify-between gap-3">
+        <h2 className="text-sm font-semibold text-[var(--text)]">
+          {running ? "Progreso de generación" : "Resumen de generación"}
+        </h2>
+        <span className="text-xs text-[var(--text-secondary)]">
+          Total: {formatDuration(totalDurationMs)}
+        </span>
+      </div>
+      <div className="space-y-3">
+        {stages.map((stage) => {
+          const duration = stageDuration(stage);
+          const hasDeterminateProgress =
+            typeof stage.progress === "number" && Number.isFinite(stage.progress);
+          return (
+            <div key={stage.id} className="rounded-md border border-[var(--border)] bg-[var(--surface-1)] px-3 py-2">
+              <div className="flex items-start gap-2">
+                <StageStateIcon stage={stage} />
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+                    <p className="text-xs font-medium text-[var(--text)]">
+                      {stage.label}
+                    </p>
+                    <span className="text-[11px] text-[var(--text-secondary)]">
+                      {stage.state === "running"
+                        ? `En proceso · ${formatDuration(duration)}`
+                        : duration !== null
+                          ? formatDuration(duration)
+                          : stageStateLabel(stage)}
+                    </span>
+                  </div>
+                  <p className="mt-0.5 text-[11px] leading-4 text-[var(--text-secondary)]">
+                    {stage.detail || stageStateLabel(stage)}
+                    {stage.startedAt
+                      ? ` · Inicio ${new Date(stage.startedAt).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`
+                      : ""}
+                  </p>
+                  {stage.state === "running" && (hasDeterminateProgress || stage.indeterminate) ? (
+                    <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-[var(--surface-2)]" aria-label={`Avance de ${stage.label}`}>
+                      {hasDeterminateProgress ? (
+                        <div
+                          className="h-full rounded-full bg-[linear-gradient(90deg,var(--accent),var(--accent-2))] transition-[width] duration-200"
+                          style={{ width: `${stage.progress}%` }}
+                        />
+                      ) : (
+                        <div className="h-full w-2/5 animate-[pulse_1.2s_ease-in-out_infinite] rounded-full bg-[linear-gradient(90deg,var(--accent),var(--accent-2))]" />
+                      )}
+                    </div>
+                  ) : null}
+                  {hasDeterminateProgress ? (
+                    <span className="mt-1 block text-[11px] text-[var(--text-secondary)]">
+                      {stage.progress}%
+                    </span>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {!running ? (
+        <div className="mt-4 border-t border-[var(--border)] pt-3 text-[11px] text-[var(--text-secondary)]">
+          <p>Runner: {runner || "—"} · Modo: {formatMode(mode)}</p>
+          <p className="mt-1 break-all">Archivos generados: {outputFiles?.length ? outputFiles.join(" · ") : "—"}</p>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 export function Project() {
   const { projectId = "" } = useParams();
   const navigate = useNavigate();
@@ -110,6 +262,7 @@ export function Project() {
     pieces: number;
   } | null>(null);
   const [showLogs, setShowLogs] = useState(false);
+  const [showProgress, setShowProgress] = useState(false);
   const [referenceValue, setReferenceValue] = useState("");
   const [referenceLabel, setReferenceLabel] = useState("Ancho real");
   const [optimizationPreset, setOptimizationPreset] = useState<
@@ -354,8 +507,37 @@ export function Project() {
         Cargando proyecto…
       </main>
     );
+  const lastGeneration = project.metadata.versions
+    .slice()
+    .reverse()
+    .find((version) => version.generation)?.generation;
+  const generationStages = project.job.progress?.stages?.length
+    ? project.job.progress.stages
+    : lastGeneration?.stages ?? [];
+  const activeStage = generationStages.find(
+    (stage) => stage.id === project.job.progress?.currentStageId,
+  ) ?? generationStages.find((stage) => stage.state === "running");
+  const activeStageIndex = activeStage
+    ? generationStages.findIndex((stage) => stage.id === activeStage.id) + 1
+    : generationStages.filter((stage) => stage.state === "complete").length;
+  const progressSnapshot = project.job.progress;
+  const stageCount = progressSnapshot?.stageCount || generationStages.length || 7;
+  const overallProgress = Math.max(
+    0,
+    Math.min(
+      100,
+      progressSnapshot?.overallProgress ??
+        lastGeneration?.overallProgress ??
+        (project.job.status === "complete" ? 100 : 0),
+    ),
+  );
+  const elapsedDurationMs = running
+    ? project.job.startedAt
+      ? Math.max(0, Date.now() - new Date(project.job.startedAt).getTime())
+      : null
+    : project.job.totalDurationMs ?? lastGeneration?.totalDurationMs ?? null;
   return (
-    <main className="flex h-full min-h-0 flex-col overflow-hidden bg-[var(--app-bg)]">
+    <main className="relative flex h-full min-h-0 flex-col overflow-hidden bg-[var(--app-bg)]">
       <header className="flex shrink-0 items-center justify-between border-b border-[var(--border)] bg-[var(--surface)] px-5 py-3">
         <div className="min-w-0">
           <button
@@ -918,17 +1100,44 @@ export function Project() {
           )}
         </aside>
       </div>
-      <footer className="flex shrink-0 items-center justify-between gap-3 border-t border-[var(--border)] bg-[var(--surface)] px-4 py-2 text-xs">
-        <span
-          className={
-            project.job.status === "error"
-              ? "text-[var(--danger)]"
-              : "text-[var(--text-secondary)]"
-          }
-        >
-          {stages[project.job.status] ?? "Listo"}:{" "}
-          {project.job.message || message || "Esperando referencias"}
-        </span>
+      {showProgress && generationStages.length ? (
+        <GenerationProgressPanel
+          stages={generationStages}
+          totalDurationMs={elapsedDurationMs}
+          running={running}
+          runner={project.job.runner ?? lastGeneration?.runner}
+          mode={project.job.mode ?? lastGeneration?.generationMode ?? lastGeneration?.mode}
+          outputFiles={project.job.resultFiles ?? lastGeneration?.outputFiles ?? lastGeneration?.resultFiles}
+        />
+      ) : null}
+      <footer className="grid min-h-[64px] shrink-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 border-t border-[var(--border)] bg-[var(--surface)] px-4 py-2 text-xs">
+        <div className="min-w-0">
+          <div className="flex items-baseline justify-between gap-3">
+            <p className={`truncate font-medium ${project.job.status === "error" ? "text-[var(--danger)]" : "text-[var(--text)]"}`}>
+              {project.job.status === "complete"
+                ? "Activo 3D generado correctamente"
+                : running
+                  ? "Generando activo 3D"
+                  : `${stages[project.job.status] ?? "Listo"}: ${project.job.message || message || "Esperando referencias"}`}
+            </p>
+            <div className="flex shrink-0 items-baseline gap-3 font-medium text-[var(--text-secondary)]">
+              <span>{overallProgress}%</span>
+              <span>{project.job.status === "complete" ? `Tiempo total: ${formatDuration(elapsedDurationMs)}` : formatDuration(elapsedDurationMs)}</span>
+            </div>
+          </div>
+          <p className="mt-0.5 truncate text-[11px] text-[var(--text-secondary)]">
+            {activeStage?.label || stages[project.job.status] || "Esperando referencias"} · Proceso {Math.max(1, progressSnapshot?.stageIndex || activeStageIndex)} de {stageCount}
+          </p>
+          <div className="relative mt-1.5 h-1.5 overflow-hidden rounded-full bg-[var(--surface-2)]" aria-label="Avance global de generación">
+            <div
+              className="h-full rounded-full bg-[linear-gradient(90deg,var(--accent),#22d3ee,var(--accent-2))] transition-[width] duration-200"
+              style={{ width: `${overallProgress}%` }}
+            />
+            {running && activeStage?.indeterminate ? (
+              <div className="absolute inset-y-0 w-1/3 animate-[pulse_1.4s_ease-in-out_infinite] rounded-full bg-white/25" style={{ left: `${Math.max(0, overallProgress - 8)}%` }} />
+            ) : null}
+          </div>
+        </div>
         <div className="flex items-center gap-2">
           {running ? (
             <Button
@@ -940,6 +1149,13 @@ export function Project() {
               Cancelar
             </Button>
           ) : null}
+          <button
+            className="text-xs text-[var(--text-secondary)] underline"
+            onClick={() => setShowProgress((value) => !value)}
+            aria-expanded={showProgress}
+          >
+            {running ? "Ver detalle" : "Ver resumen"}
+          </button>
           <button
             className="text-xs text-[var(--text-secondary)] underline"
             onClick={() => setShowLogs((value) => !value)}

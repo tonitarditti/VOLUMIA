@@ -17,6 +17,7 @@ const {
 } = require("./config/paths");
 const {
   cancelGeneration,
+  createGenerationProgress,
   isValidGlb,
   logPath,
   readJob,
@@ -599,11 +600,22 @@ app.post("/api/projects/:id/generate", (req, res) => {
     });
     return;
   }
+  const startedAt = new Date();
+  const jobId = `job_${startedAt.getTime()}`;
   const job = writeJob(paths.id, {
-    id: `job_${Date.now()}`,
+    id: jobId,
     status: "queued",
     mode,
-    message: "Job en cola.",
+    message: "Validando referencias.",
+    startedAt: startedAt.toISOString(),
+    finishedAt: null,
+    totalDurationMs: null,
+    runner: null,
+    resultFiles: [],
+    progress: createGenerationProgress({
+      jobId,
+      startedAt: startedAt.getTime(),
+    }),
     warnings: [],
     logs: [],
     error: null,

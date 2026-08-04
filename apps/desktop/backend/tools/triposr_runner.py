@@ -1,8 +1,16 @@
 import argparse
+import json
 import os
 import subprocess
 import sys
 from pathlib import Path
+
+
+def emit(stage: str, detail: str, *, state: str = "running", progress: int | None = None, indeterminate: bool = False) -> None:
+    payload = {"stage": stage, "state": state, "detail": detail, "indeterminate": indeterminate}
+    if progress is not None:
+        payload["progress"] = progress
+    print(f"VOLUMIA_EVENT:{json.dumps(payload)}", flush=True)
 
 
 def find_entrypoint(root: Path) -> Path | None:
@@ -62,6 +70,7 @@ def main() -> int:
 
     # Preprocess input image using backend script (non-fatal)
     try:
+        emit("preparing_image", "Preparando imagen de referencia.", indeterminate=True)
         script_path = Path(__file__).resolve().parent.parent / "scripts" / "preprocess_triposr_input.py"
         clean_path = input_path.parent / "input_clean.png"
         debug_dir = output_dir
@@ -82,6 +91,8 @@ def main() -> int:
         print(f"[preprocess] ERROR: {e}, continuing with original image", file=sys.stderr, flush=True)
         used_input = input_path
 
+    emit("preparing_image", "Imagen de referencia preparada.", state="complete", progress=100)
+
     entrypoint = find_entrypoint(triposr_dir)
     if not entrypoint:
         print(
@@ -101,6 +112,7 @@ def main() -> int:
     print("[triposr] spawning python with OpenMP compatibility env", flush=True)
     print_openmp_env(env)
     print("Running TripoSR:", " ".join(command), "--output-dir", str(output_dir), flush=True)
+    emit("geometry", "Inferencia iniciada.", indeterminate=True)
     return subprocess.call(command, cwd=str(triposr_dir), env=env)
 
 
