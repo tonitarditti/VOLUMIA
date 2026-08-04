@@ -79,6 +79,30 @@ apps/service/generated/*
 renders/
 exports/
 
+# Project workspaces and derived 3D assets (never version these)
+apps/desktop/projects/
+projects/
+**/projects/
+!apps/desktop/src/projects/
+!apps/desktop/src/projects/**
+**/versions/
+*.dae
+*.skp
+**/projects/**/textures/
+**/projects/**/texturas/
+**/projects/**/thumbnails/
+**/projects/**/miniaturas/
+**/projects/**/thumbnail*/
+**/projects/**/logs/
+
+# Official application assets remain eligible for version control.
+!apps/desktop/src/assets/**/*.dae
+!apps/desktop/src/assets/**/*.glb
+!apps/desktop/src/assets/**/*.skp
+!apps/desktop/assets/**/*.dae
+!apps/desktop/assets/**/*.glb
+!apps/desktop/assets/**/*.skp
+
 # OS
 .DS_Store
 Thumbs.db

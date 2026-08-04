@@ -112,7 +112,9 @@ export function Project() {
   const [showLogs, setShowLogs] = useState(false);
   const [referenceValue, setReferenceValue] = useState("");
   const [referenceLabel, setReferenceLabel] = useState("Ancho real");
-  const [optimizationPreset, setOptimizationPreset] = useState<"ligero" | "equilibrado" | "liviano">("equilibrado");
+  const [optimizationPreset, setOptimizationPreset] = useState<
+    "ligero" | "equilibrado" | "liviano"
+  >("equilibrado");
   const running = Boolean(
     project && ["queued", "running", "optimizing"].includes(project.job.status),
   );
@@ -274,7 +276,12 @@ export function Project() {
       const result = await generationClient.prepare(project.id, {
         operation,
         scale: project.metadata.scaleFactor,
-        ratio: operation === "optimize" ? { ligero: 0.75, equilibrado: 0.5, liviano: 0.25 }[optimizationPreset] : undefined,
+        ratio:
+          operation === "optimize"
+            ? { ligero: 0.75, equilibrado: 0.5, liviano: 0.25 }[
+                optimizationPreset
+              ]
+            : undefined,
         preset: operation === "optimize" ? optimizationPreset : undefined,
       });
       setProject(result.project);
@@ -751,8 +758,12 @@ export function Project() {
                   }
                   className="mt-1 h-8 w-full rounded border border-[var(--border)] bg-[var(--surface)] px-2 text-xs text-[var(--text)]"
                 >
-                  <option value="ligero">Ligero · conserva más geometría</option>
-                  <option value="equilibrado">Equilibrado · 50% por pieza</option>
+                  <option value="ligero">
+                    Ligero · conserva más geometría
+                  </option>
+                  <option value="equilibrado">
+                    Equilibrado · 50% por pieza
+                  </option>
                   <option value="liviano">Liviano · 25% por pieza</option>
                 </select>
               </label>
@@ -792,11 +803,15 @@ export function Project() {
                 </strong>
                 <span>Polígonos</span>
                 <strong>
-                  {(editableStats?.polygons ?? stats?.triangles)?.toLocaleString() ?? "—"}
+                  {(
+                    editableStats?.polygons ?? stats?.triangles
+                  )?.toLocaleString() ?? "—"}
                 </strong>
                 <span>Vértices</span>
                 <strong>
-                  {(editableStats?.vertices ?? stats?.vertices)?.toLocaleString() ?? "—"}
+                  {(
+                    editableStats?.vertices ?? stats?.vertices
+                  )?.toLocaleString() ?? "—"}
                 </strong>
                 <span>Piezas / mats.</span>
                 <strong>
@@ -809,14 +824,31 @@ export function Project() {
               </div>
               {latestDaeVersion?.sourceStats && editableStats ? (
                 <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-2)] p-3 text-[11px] text-[var(--text-secondary)]">
-                  <p className="font-medium text-[var(--text)]">Versión editable: antes → después</p>
-                  <p className="mt-1">Polígonos: {latestDaeVersion.sourceStats.polygons.toLocaleString()} → {editableStats.polygons.toLocaleString()} · Vértices: {latestDaeVersion.sourceStats.vertices.toLocaleString()} → {editableStats.vertices.toLocaleString()}</p>
-                  <p className="mt-1">Piezas: {editableStats.pieces} · Materiales: {editableStats.materials} · DAE: {editableStats.fileBytes ? `${(editableStats.fileBytes / 1024 / 1024).toFixed(1)} MB` : "—"}</p>
+                  <p className="font-medium text-[var(--text)]">
+                    Versión editable: antes → después
+                  </p>
+                  <p className="mt-1">
+                    Polígonos:{" "}
+                    {latestDaeVersion.sourceStats.polygons.toLocaleString()} →{" "}
+                    {editableStats.polygons.toLocaleString()} · Vértices:{" "}
+                    {latestDaeVersion.sourceStats.vertices.toLocaleString()} →{" "}
+                    {editableStats.vertices.toLocaleString()}
+                  </p>
+                  <p className="mt-1">
+                    Piezas: {editableStats.pieces} · Materiales:{" "}
+                    {editableStats.materials} · DAE:{" "}
+                    {editableStats.fileBytes
+                      ? `${(editableStats.fileBytes / 1024 / 1024).toFixed(1)} MB`
+                      : "—"}
+                  </p>
                 </div>
               ) : null}
               {latestDaeVersion?.separation ? (
                 <p className="text-[11px] leading-4 text-[var(--text-secondary)]">
-                  {latestDaeVersion.separation.notice} Componentes adicionales detectados: {latestDaeVersion.separation.additionalDisconnectedComponents}.
+                  {latestDaeVersion.separation.notice} Componentes adicionales
+                  detectados:{" "}
+                  {latestDaeVersion.separation.additionalDisconnectedComponents}
+                  .
                 </p>
               ) : null}
               <p className="text-xs leading-5 text-[var(--text-secondary)]">

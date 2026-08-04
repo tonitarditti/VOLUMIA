@@ -87,7 +87,11 @@ export type AssetVersion = {
     topologicallyUnsplitSourceMeshes: number;
     notice: string;
   };
-  optimization?: { requested: boolean; preset: "ligero" | "equilibrado" | "liviano" | null; ratio: number | null };
+  optimization?: {
+    requested: boolean;
+    preset: "ligero" | "equilibrado" | "liviano" | null;
+    ratio: number | null;
+  };
   daeValidation?: {
     exists: boolean;
     bytes: number;

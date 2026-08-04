@@ -123,13 +123,14 @@ function run(projectId, operation, options = {}) {
         preparation: {
           versionId: version.id,
           operation,
-          percent: {
-            "Analizando estructura": 15,
-            "Separando componentes": 40,
-            Optimizando: 65,
-            "Exportando DAE": 85,
-            Finalizado: 100,
-          }[stage] || 55,
+          percent:
+            {
+              "Analizando estructura": 15,
+              "Separando componentes": 40,
+              Optimizando: 65,
+              "Exportando DAE": 85,
+              Finalizado: 100,
+            }[stage] || 55,
         },
         logs: [...(readJob(paths.id).logs || []), line].slice(-200),
       });

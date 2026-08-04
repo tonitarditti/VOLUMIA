@@ -1,8 +1,8 @@
 # frozen_string_literal: true
 
-# VOLUMIA Bridge 1.0.0
-# Imports VOLUMIA's local manifest so each disconnected Blender piece becomes a
-# real SketchUp group even when SketchUp flattens a Collada scene hierarchy.
+# VOLUMIA Bridge 1.1.0
+# Imports VOLUMIA's local DAE plus its manifest. The DAE contains one named
+# Blender node per disconnected component for SketchUp's Collada importer.
 
 require "sketchup.rb"
 require "json"
@@ -12,7 +12,7 @@ require "time"
 module VOLUMIA
   module Bridge
     NAME = "VOLUMIA Bridge"
-    VERSION = "1.0.0"
+    VERSION = "1.1.0"
 
     def self.status_path
       local_app_data = ENV["LOCALAPPDATA"] || ENV["APPDATA"]

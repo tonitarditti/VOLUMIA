@@ -59,13 +59,14 @@ def separate_loose_parts():
     for index, obj in enumerate(pieces, 1):
         obj.name = f"Pieza_{index:02d}"
         obj.data.name = f"Pieza_{index:02d}_Mesh"
+    unsplit = sum(1 for count in component_counts if count <= 1)
     return pieces, {
         "method": "loose_parts_vertex_connectivity",
         "sourceMeshes": source_count,
         "piecesDetected": len(pieces),
         "additionalDisconnectedComponents": max(0, len(pieces) - source_count),
-        "topologicallyUnsplitSourceMeshes": sum(1 for count in component_counts if count <= 1),
-        "notice": "Se separaron únicamente componentes geométricamente desconectados. Algunas partes pueden permanecer unidas en la malla IA.",
+        "topologicallyUnsplitSourceMeshes": unsplit,
+        "notice": "Se separaron únicamente componentes geométricamente desconectados. Algunas partes permanecen unidas en la malla IA." if unsplit else "Se separaron todos los componentes geométricamente desconectados detectados.",
     }
 
 

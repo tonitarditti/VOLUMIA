@@ -3,6 +3,7 @@ const path = require("path");
 
 const backendDir = path.resolve(__dirname, "..");
 const desktopDir = path.resolve(backendDir, "..");
+const repositoryRoot = path.resolve(desktopDir, "..", "..");
 const settingsPath = path.join(__dirname, "local.settings.json");
 const settingKeys = [
   "VOLUMIA_PYTHON",
@@ -99,7 +100,9 @@ function configuredNumber(envName, fallback = 0) {
   return Number.isFinite(value) ? value : fallback;
 }
 
-const defaultProjectsRoot = path.join(desktopDir, "projects");
+// Project outputs are user data, never application source. Keep the default at
+// the repository root so exports cannot be added to the desktop package or Git.
+const defaultProjectsRoot = path.join(repositoryRoot, "projects");
 const projectsRoot = path.resolve(
   process.env.VOLUMIA_ROOT || defaultProjectsRoot,
 );
@@ -152,6 +155,7 @@ function baseToolStatus(name, envName, type, resolvedPath, ready, details) {
 }
 
 const verificationResults = new Map();
+const SKETCHUP_BRIDGE_VERSION = "1.1.0";
 
 function recordToolVerification(key, result) {
   verificationResults.set(key, {
@@ -262,14 +266,16 @@ function bridgeStatusPath() {
 
 function sketchupBridgeStatus() {
   const configuredBridgePath = configuredPath("VOLUMIA_SKETCHUP_BRIDGE_DIR");
-  const pluginDir = configuredBridgePath && fileExists(configuredBridgePath)
-    ? path.dirname(configuredBridgePath)
-    : configuredBridgePath;
-  const installedPath = configuredBridgePath && fileExists(configuredBridgePath)
-    ? configuredBridgePath
-    : pluginDir
-      ? path.join(pluginDir, "VOLUMIA_Bridge.rb")
-      : null;
+  const pluginDir =
+    configuredBridgePath && fileExists(configuredBridgePath)
+      ? path.dirname(configuredBridgePath)
+      : configuredBridgePath;
+  const installedPath =
+    configuredBridgePath && fileExists(configuredBridgePath)
+      ? configuredBridgePath
+      : pluginDir
+        ? path.join(pluginDir, "VOLUMIA_Bridge.rb")
+        : null;
   const bundledPath = path.join(
     desktopDir,
     "sketchup-bridge",
@@ -282,7 +288,8 @@ function sketchupBridgeStatus() {
   const responds = Boolean(
     response &&
     response.bridge === "VOLUMIA Bridge" &&
-    response.loaded === true,
+    response.loaded === true &&
+    response.version === SKETCHUP_BRIDGE_VERSION,
   );
   const base = {
     name: "SketchUp Bridge",
@@ -294,18 +301,22 @@ function sketchupBridgeStatus() {
     status: installed ? "Configurada" : "No instalada",
     verificationStatus: response?.error
       ? "Error"
-      : responds
-        ? "Verificado"
-        : installed
-          ? "Configurado"
-          : "No instalado",
+      : response?.loaded && response.version !== SKETCHUP_BRIDGE_VERSION
+        ? "Configurado"
+        : responds
+          ? "Verificado"
+          : installed
+            ? "Configurado"
+            : "No instalado",
     details: response?.error
       ? `SketchUp informó un error del bridge: ${response.error}`
-      : responds
-        ? "La extensión Ruby respondió desde SketchUp."
-        : installed
-          ? "Instalado. Abrí SketchUp una vez para verificar que la extensión responda."
-          : "No instalado. Copiá VOLUMIA_Bridge.rb a Plugins y configurá esa carpeta.",
+      : response?.loaded && response.version !== SKETCHUP_BRIDGE_VERSION
+        ? `Bridge actualizado a ${SKETCHUP_BRIDGE_VERSION}; reiniciá SketchUp para verificar esta versión.`
+        : responds
+          ? "La extensión Ruby respondió desde SketchUp."
+          : installed
+            ? "Instalado. Abrí SketchUp una vez para verificar que la extensión responda."
+            : "No instalado. Copiá VOLUMIA_Bridge.rb a Plugins y configurá esa carpeta.",
     bundledPath,
     responsePath: bridgeStatusPath(),
   };
