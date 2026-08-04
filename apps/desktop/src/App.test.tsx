@@ -27,10 +27,10 @@ describe("App startup", () => {
 
   it("renders the splash within the router and opens Home after it completes", () => {
     expect(() => render(<App />)).not.toThrow();
-    expect(screen.getByText("Inicializando espacio de trabajo...")).toBeInTheDocument();
+    expect(screen.getByText("Preparando interfaz")).toBeInTheDocument();
 
     act(() => {
-      vi.advanceTimersByTime(3300);
+      vi.advanceTimersByTime(200);
     });
 
     expect(screen.getByText("Home page")).toBeInTheDocument();

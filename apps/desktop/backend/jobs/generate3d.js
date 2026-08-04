@@ -12,7 +12,10 @@ const {
   projectsRoot,
   readLocalSettings,
 } = require("../config/paths");
-const { readMetadata } = require("../project-metadata");
+const { readMetadata, syncLatestVersion } = require("../project-metadata");
+const { gpuTaskQueue, GpuQueueCancelledError } = require("./gpu-task-queue");
+const { createPipelineState } = require("./pipeline-state");
+const { readGlbJson, validateMeshGlb, validateTexturedGlb } = require("./output-validator");
 
 const logDir = path.join(backendDir, "logs");
 const logPath = path.join(logDir, "volumia.log");
@@ -46,6 +49,45 @@ const PYTHON_OPENMP_ENV = [
   ["NUMEXPR_NUM_THREADS", "VOLUMIA_NUMEXPR_NUM_THREADS", "1"],
 ];
 const activeJobs = new Map();
+const generationStages = [
+  ["validating", "Validando referencias"],
+  ["preparing_image", "Preparando imagen"],
+  ["geometry", "Reconstruyendo geometría"],
+  ["optimizing", "Preparando malla y UV"],
+  ["texture", "Generando textura"],
+  ["editable", "Preparando activo editable"],
+  ["exporting", "Exportando archivos"],
+];
+
+const stageStateOrder = {
+  pending: 0,
+  queued: 1,
+  running: 2,
+  complete: 3,
+  skipped: 3,
+  blocked: 3,
+  cancelled: 3,
+  error: 3,
+};
+
+function normalizeGenerationMode(value) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (["textured", "objeto texturizado", "textured-object", "object_textured", "hunyuan_textured"].includes(normalized)) return "textured";
+  if (["geometry_only", "geometry-only", "solo geometría", "solo geometria", "mesh-only", "quick", "photogrammetry", "demo"].includes(normalized)) return "geometry_only";
+  if (["editable", "activo editable"].includes(normalized)) return "editable";
+  throw new Error(`Modo de generación no reconocido: ${value}`);
+}
+
+function getRequiredStages(mode) {
+  switch (normalizeGenerationMode(mode)) {
+    case "textured":
+      return ["validating", "preparing_image", "geometry", "optimizing", "texture", "exporting"];
+    case "editable":
+      return ["validating", "preparing_image", "geometry", "optimizing", "editable", "exporting"];
+    case "geometry_only":
+      return ["validating", "preparing_image", "geometry", "optimizing", "exporting"];
+  }
+}
 
 class GenerationCancelledError extends Error {
   constructor() {
@@ -109,12 +151,23 @@ async function cancelGeneration(projectId, options = {}) {
   if (activeJob) {
     activeJob.cancelled = true;
   }
+  if (current.id) gpuTaskQueue.cancel(current.id);
   const cancelled = writeJob(projectId, {
     status: "cancelled",
     message: "Generación interrumpida por el usuario.",
     finishedAt: nowIso(),
     error: null,
   });
+  finishActiveStage(projectId, "cancelled", "Cancelada por el usuario.");
+  for (const stage of readJob(projectId).progress?.stages || []) {
+    if (["pending", "queued"].includes(stage.state)) {
+      updateGenerationStage(projectId, stage.id, { state: "cancelled", detail: "Cancelada antes de iniciar.", progress: null });
+    }
+  }
+  const cancelledWithDuration = writeJob(projectId, {
+    totalDurationMs: durationSince(cancelled.startedAt),
+  });
+  syncLatestVersion(projectId, cancelledWithDuration, null);
   appendJobLog(projectId, "Generación cancelada: terminando procesos asociados.");
 
   const children = activeJob ? [...activeJob.children] : [];
@@ -123,7 +176,7 @@ async function cancelGeneration(projectId, options = {}) {
   if (options.waitForCompletion && activeJob?.completion) {
     await activeJob.completion;
   }
-  return cancelled;
+  return cancelledWithDuration;
 }
 
 function reconcileInterruptedJobs() {
@@ -142,6 +195,9 @@ function reconcileInterruptedJobs() {
       finishedAt: nowIso(),
       error: null,
     });
+    finishActiveStage(entry.name, "cancelled", "Interrumpida al reiniciar VOLUMIA.");
+    const cancelled = writeJob(entry.name, { totalDurationMs: durationSince(readJob(entry.name).startedAt) });
+    syncLatestVersion(entry.name, cancelled, null);
     appendJobLog(entry.name, "Estado reconciliado al iniciar: no existe un proceso activo de esta sesión.");
     reconciled.push(entry.name);
   }
@@ -185,6 +241,210 @@ function appendPythonEnvLogs(projectId, label, env) {
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function durationSince(startedAt, finishedAt = nowIso()) {
+  const start = Date.parse(startedAt || "");
+  const finish = Date.parse(finishedAt || "");
+  return Number.isFinite(start) && Number.isFinite(finish)
+    ? Math.max(0, finish - start)
+    : 0;
+}
+
+function createGenerationProgress(context = {}) {
+  const generationMode = normalizeGenerationMode(context.mode || "geometry_only");
+  const requiredStageIds = getRequiredStages(generationMode);
+  return {
+    jobId: context.jobId || null,
+    currentStageId: "validating",
+    stageId: "validating",
+    stageIndex: 1,
+    stageCount: requiredStageIds.length,
+    requiredStageIds,
+    generationMode,
+    stageProgress: null,
+    overallProgress: 0,
+    message: "Pendiente.",
+    startedAt: Number.isFinite(context.startedAt) ? context.startedAt : null,
+    stageStartedAt: null,
+    stages: generationStages.map(([id, label]) => ({
+      id,
+      label,
+      state: "pending",
+      progress: null,
+      indeterminate: false,
+      startedAt: null,
+      finishedAt: null,
+      durationMs: null,
+      detail: "Pendiente.",
+    })),
+  };
+}
+
+function normaliseGenerationProgress(progress, context = {}) {
+  const provided = Array.isArray(progress?.stages) ? progress.stages : [];
+  const byId = new Map(provided.map((stage) => [stage?.id, stage]));
+  const generationMode = normalizeGenerationMode(context.mode || progress?.generationMode || "geometry_only");
+  const requiredStageIds = progress?.generationMode === generationMode && Array.isArray(progress?.requiredStageIds)
+    ? progress.requiredStageIds
+    : getRequiredStages(generationMode);
+  const normalized = {
+    jobId: typeof progress?.jobId === "string" ? progress.jobId : context.jobId || null,
+    currentStageId: typeof progress?.currentStageId === "string"
+      ? progress.currentStageId
+      : "validating",
+    stageId: typeof progress?.stageId === "string" ? progress.stageId : "validating",
+    stageIndex: Number.isInteger(progress?.stageIndex) ? progress.stageIndex : 1,
+    requiredStageIds,
+    generationMode,
+    stageCount: 0,
+    stageProgress: Number.isFinite(progress?.stageProgress) ? progress.stageProgress : null,
+    overallProgress: Number.isFinite(progress?.overallProgress)
+      ? Math.max(0, Math.min(100, Number(progress.overallProgress)))
+      : 0,
+    message: typeof progress?.message === "string" ? progress.message : "Pendiente.",
+    startedAt: Number.isFinite(progress?.startedAt)
+      ? Number(progress.startedAt)
+      : Number.isFinite(context.startedAt)
+        ? context.startedAt
+        : null,
+    stageStartedAt: Number.isFinite(progress?.stageStartedAt)
+      ? Number(progress.stageStartedAt)
+      : null,
+    stages: generationStages.map(([id, label]) => ({
+      id,
+      label,
+      state: "pending",
+      progress: null,
+      indeterminate: false,
+      startedAt: null,
+      finishedAt: null,
+      durationMs: null,
+      detail: "Pendiente.",
+      ...(byId.get(id) || {}),
+      id,
+      label,
+    })),
+  };
+  normalized.stageCount = normalized.requiredStageIds.length;
+  return normalized;
+}
+
+function stageTimeMs(value) {
+  const parsed = Date.parse(value || "");
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function confirmedOverallProgress(stages, requiredStageIds) {
+  const required = stages.filter((stage) => requiredStageIds.includes(stage.id));
+  if (required.length === 0) return 0;
+  let confirmed = 0;
+  for (const stage of required) {
+    if (stage.state === "complete") {
+      confirmed += 100;
+      continue;
+    }
+    if (stage.state === "running" && Number.isFinite(stage.progress)) {
+      confirmed += Math.max(0, Math.min(100, Number(stage.progress)));
+    }
+    break;
+  }
+  return Math.floor(confirmed / required.length);
+}
+
+function updateProgressContract(progress, job) {
+  const requiredStages = progress.stages.filter((stage) => progress.requiredStageIds.includes(stage.id));
+  const current = requiredStages.find((stage) => stage.id === progress.currentStageId)
+    || progress.stages.find((stage) => stage.state === "running")
+    || requiredStages.find((stage) => ["pending", "queued"].includes(stage.state))
+    || requiredStages[requiredStages.length - 1];
+  const index = Math.max(0, requiredStages.findIndex((stage) => stage.id === current?.id));
+  const confirmed = confirmedOverallProgress(progress.stages, progress.requiredStageIds);
+  return {
+    ...progress,
+    jobId: job.id || progress.jobId || null,
+    currentStageId: current?.id || progress.currentStageId,
+    stageId: current?.id || progress.stageId,
+    stageIndex: index + 1,
+    stageCount: progress.requiredStageIds.length,
+    stageProgress: Number.isFinite(current?.progress) ? Number(current.progress) : null,
+    overallProgress: Math.max(progress.overallProgress || 0, confirmed),
+    message: current?.detail || progress.message,
+    startedAt: stageTimeMs(job.startedAt) ?? progress.startedAt,
+    stageStartedAt: stageTimeMs(current?.startedAt),
+  };
+}
+
+function updateGenerationStage(projectId, stageId, patch = {}) {
+  const job = readJob(projectId);
+  const progress = normaliseGenerationProgress(job.progress, {
+    jobId: job.id,
+    startedAt: stageTimeMs(job.startedAt),
+    mode: job.generationMode || job.mode,
+  });
+  const stage = progress.stages.find((entry) => entry.id === stageId);
+  if (!stage) return job;
+
+  const timestamp = nowIso();
+  const state = patch.state || stage.state;
+  const terminal = ["complete", "skipped", "blocked", "cancelled", "error"].includes(state);
+  if (["complete", "skipped", "blocked", "cancelled", "error"].includes(stage.state)) return job;
+  if (state === "complete" && stage.state !== "running") {
+    throw new Error(`Transición inválida de ${stage.state} a complete para ${stageId}.`);
+  }
+  if (stageStateOrder[state] < stageStateOrder[stage.state]) return job;
+  const next = {
+    ...stage,
+    ...patch,
+    state,
+    startedAt: patch.startedAt || stage.startedAt || (state === "running" ? timestamp : null),
+  };
+  if (terminal) {
+    next.finishedAt = patch.finishedAt || stage.finishedAt || timestamp;
+    next.durationMs = durationSince(next.startedAt, next.finishedAt);
+    next.indeterminate = false;
+    if (state === "complete" && next.progress === null) next.progress = 100;
+  }
+
+  progress.stages = progress.stages.map((entry) => entry.id === stageId ? next : entry);
+  if (["running", "queued"].includes(state)) progress.currentStageId = stageId;
+  const contract = updateProgressContract(progress, job);
+  const updated = writeJob(projectId, { progress: contract, overallProgress: contract.overallProgress });
+  persistPipelineState(projectId, updated);
+  return updated;
+}
+
+function finishActiveStage(projectId, state, detail) {
+  const job = readJob(projectId);
+  const progress = normaliseGenerationProgress(job.progress, {
+    jobId: job.id,
+    startedAt: stageTimeMs(job.startedAt),
+    mode: job.generationMode || job.mode,
+  });
+  const active = progress.stages.find(
+    (stage) => stage.id === progress.currentStageId && stage.state === "running",
+  ) || progress.stages.find((stage) => stage.state === "running");
+  if (!active) return job;
+  return updateGenerationStage(projectId, active.id, { state, detail, progress: null });
+}
+
+function markNotRequiredStages(projectId, stageIds) {
+  for (const stageId of stageIds) {
+    const job = readJob(projectId);
+    const current = normaliseGenerationProgress(job.progress, {
+      jobId: job.id,
+      startedAt: stageTimeMs(job.startedAt),
+      mode: job.generationMode || job.mode,
+    })
+      .stages.find((stage) => stage.id === stageId);
+    if (current?.state === "pending") {
+      updateGenerationStage(projectId, stageId, {
+        state: "skipped",
+        detail: "No requerida por el modo seleccionado.",
+        progress: null,
+      });
+    }
+  }
 }
 
 function log(level, message, details) {
@@ -231,6 +491,34 @@ function readJob(projectId) {
   });
 }
 
+function persistPipelineState(projectId, job = readJob(projectId)) {
+  const paths = ensureProjectLayout(projectId);
+  const fallback = createPipelineState(job.id, job.startedAt || nowIso());
+  const previous = readJson(paths.pipelineStateJson, fallback);
+  const progress = normaliseGenerationProgress(job.progress, {
+    jobId: job.id,
+    startedAt: stageTimeMs(job.startedAt),
+    mode: job.generationMode || job.mode,
+  });
+  const snapshot = {
+    ...previous,
+    jobId: job.id || previous.jobId || null,
+    generationMode: progress.generationMode,
+    overallState: job.status || previous.state,
+    state: job.status || previous.state,
+    activeStage: progress.currentStageId,
+    stages: progress.stages,
+    errors: job.error ? [...(previous.errors || []), { stage: progress.currentStageId, message: job.error.message || String(job.error), timestamp: nowIso() }] : previous.errors || [],
+    outputPaths: Array.isArray(job.resultFiles) ? job.resultFiles : previous.outputPaths || [],
+    activePids: [...(activeJobs.get(projectId)?.children || [])].map((child) => child.pid).filter(Boolean),
+    startedAt: job.startedAt || previous.startedAt,
+    finishedAt: job.finishedAt || null,
+    updatedAt: nowIso(),
+  };
+  fs.writeFileSync(paths.pipelineStateJson, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8");
+  return snapshot;
+}
+
 function appendJobLog(projectId, line) {
   const cleanLine = String(line || "").trim();
   if (!cleanLine) {
@@ -241,6 +529,72 @@ function appendJobLog(projectId, line) {
   return writeJob(projectId, {
     logs: [...logs, `[${nowIso()}] ${cleanLine}`].slice(-200),
   });
+}
+
+function applyRunnerEvent(projectId, event) {
+  if (!event || typeof event !== "object" || typeof event.stage !== "string") return;
+  const job = readJob(projectId);
+  if (event.jobId && event.jobId !== job.id) {
+    appendJobLog(projectId, `Evento ignorado de otro job: ${event.jobId}`);
+    return;
+  }
+  const allowed = new Set(generationStages.map(([id]) => id));
+  if (!allowed.has(event.stage)) return;
+  const existing = normaliseGenerationProgress(job.progress, {
+    jobId: job.id,
+    startedAt: stageTimeMs(job.startedAt),
+    mode: job.generationMode || job.mode,
+  }).stages.find((stage) => stage.id === event.stage);
+  const sequenceNumber = Number(event.sequenceNumber);
+  if (Number.isFinite(sequenceNumber) && sequenceNumber <= Number(existing?.lastSequenceNumber || 0)) return;
+  if (["complete", "skipped", "blocked", "cancelled", "error"].includes(existing?.state)) return;
+  const progress = Number.isFinite(event.progress)
+    ? Math.max(0, Math.min(100, Number(event.progress)))
+    : null;
+  const eventState = ["complete", "error", "cancelled"].includes(event.state)
+    ? event.state
+    : "running";
+  updateGenerationStage(projectId, event.stage, {
+    state: eventState,
+    detail: typeof event.detail === "string" ? event.detail : undefined,
+    progress,
+    lastSequenceNumber: Number.isFinite(sequenceNumber) ? sequenceNumber : existing?.lastSequenceNumber || 0,
+    // Runners use this only while their inference has no native percentage.
+    indeterminate: event.indeterminate === true && progress === null,
+  });
+}
+
+function handleRunnerLine(projectId, line) {
+  const value = String(line || "").trim();
+  if (!value) return;
+  const marker = "VOLUMIA_EVENT:";
+  const markerIndex = value.indexOf(marker);
+  if (markerIndex >= 0) {
+    try {
+      applyRunnerEvent(projectId, JSON.parse(value.slice(markerIndex + marker.length)));
+    } catch {
+      appendJobLog(projectId, `Evento de progreso no válido: ${value}`);
+    }
+    return;
+  }
+
+  // TripoSR is an external checkout. Only promote its own emitted log lines to
+  // milestones; never derive a percentage from elapsed time.
+  if (/model (loaded|initialized)|loaded .*model/i.test(value)) {
+    updateGenerationStage(projectId, "geometry", {
+      state: "running",
+      detail: "Modelo cargado.",
+      progress: null,
+      indeterminate: true,
+    });
+  } else if (/inference|reconstructing|generating (?:the )?mesh/i.test(value)) {
+    updateGenerationStage(projectId, "geometry", {
+      state: "running",
+      detail: "Inferencia iniciada.",
+      progress: null,
+      indeterminate: true,
+    });
+  }
 }
 
 function isValidGlb(filePath) {
@@ -259,19 +613,6 @@ function isValidGlb(filePath) {
     fs.closeSync(fd);
   }
   return header.equals(glbMagic);
-}
-
-function readGlbJson(filePath) {
-  const buffer = fs.readFileSync(filePath);
-  if (buffer.length < 20 || !buffer.subarray(0, 4).equals(glbMagic)) {
-    throw new Error(`Invalid GLB header: ${filePath}`);
-  }
-  const jsonLength = buffer.readUInt32LE(12);
-  const jsonType = buffer.readUInt32LE(16);
-  if (jsonType !== 0x4e4f534a || 20 + jsonLength > buffer.length) {
-    throw new Error(`Invalid GLB JSON chunk: ${filePath}`);
-  }
-  return JSON.parse(buffer.subarray(20, 20 + jsonLength).toString("utf8").replace(/\0+$/u, ""));
 }
 
 function verifyGroundedYUpGlb(filePath) {
@@ -337,6 +678,45 @@ function latestGeneratedAsset(outputDir) {
   return candidates[0]?.filePath || null;
 }
 
+function generatedResultFiles(result) {
+  return Object.entries(result || {})
+    .filter(([key, value]) =>
+      ["latestGlb", "optimizedGlb", "texturedGlb", "raw"].includes(key) &&
+      typeof value === "string" &&
+      fs.existsSync(value)
+    )
+    .map(([, filePath]) => path.resolve(filePath));
+}
+
+function assertPipelineReadyForExport(projectId, mode) {
+  const job = readJob(projectId);
+  const required = getRequiredStages(mode).filter((stageId) => stageId !== "exporting");
+  const stageById = new Map((job.progress?.stages || []).map((stage) => [stage.id, stage]));
+  const incomplete = required.filter((stageId) => stageById.get(stageId)?.state !== "complete");
+  if (incomplete.length) {
+    const states = incomplete.map((stageId) => `${stageId}=${stageById.get(stageId)?.state || "missing"}`).join(", ");
+    throw new Error(`No se puede exportar: etapas obligatorias incompletas (${states}).`);
+  }
+  if (normalizeGenerationMode(mode) === "textured") validateTexturedGlb(projectPaths(projectId).latestGlb);
+}
+
+function assertJobCanComplete(projectId, mode) {
+  const job = readJob(projectId);
+  const stageById = new Map((job.progress?.stages || []).map((stage) => [stage.id, stage]));
+  const incomplete = getRequiredStages(mode).filter((stageId) => stageById.get(stageId)?.state !== "complete");
+  if (incomplete.length) throw new Error(`El trabajo no puede finalizar. Etapas incompletas: ${incomplete.join(", ")}`);
+}
+
+function blockPendingRequiredStages(projectId, mode, reason) {
+  const required = new Set(getRequiredStages(mode));
+  const job = readJob(projectId);
+  for (const stage of job.progress?.stages || []) {
+    if (required.has(stage.id) && ["pending", "queued"].includes(stage.state)) {
+      updateGenerationStage(projectId, stage.id, { state: "blocked", detail: reason, progress: null });
+    }
+  }
+}
+
 function copyRawOutput(projectId, sourcePath) {
   const paths = ensureProjectLayout(projectId);
   const ext = path.extname(sourcePath).toLowerCase();
@@ -365,13 +745,22 @@ function spawnProcess(command, args, options = {}) {
     activeJob?.children.add(child);
     let stdout = "";
     let stderr = "";
+    const lineBuffers = { stdout: "", stderr: "" };
+    const consumeLines = (chunk, stream) => {
+      lineBuffers[stream] += String(chunk);
+      const lines = lineBuffers[stream].split(/\r?\n/u);
+      lineBuffers[stream] = lines.pop() || "";
+      for (const line of lines) options.onLine?.(line, stream);
+    };
     child.stdout.on("data", (chunk) => {
       stdout += String(chunk);
       options.onOutput?.(String(chunk), "stdout");
+      consumeLines(chunk, "stdout");
     });
     child.stderr.on("data", (chunk) => {
       stderr += String(chunk);
       options.onOutput?.(String(chunk), "stderr");
+      consumeLines(chunk, "stderr");
     });
     child.on("error", (error) => {
       activeJob?.children.delete(child);
@@ -379,6 +768,9 @@ function spawnProcess(command, args, options = {}) {
     });
     child.on("close", (code, signal) => {
       activeJob?.children.delete(child);
+      for (const stream of ["stdout", "stderr"]) {
+        if (lineBuffers[stream]) options.onLine?.(lineBuffers[stream], stream);
+      }
       if (options.projectId && isGenerationCancelled(options.projectId)) {
         reject(new GenerationCancelledError());
         return;
@@ -387,7 +779,10 @@ function spawnProcess(command, args, options = {}) {
         resolve({ stdout, stderr, code });
         return;
       }
-      const error = new Error(`${command} exited with code ${code}${signal ? ` (${signal})` : ""}.\n${stderr || stdout}`);
+      const argparseHint = code === 2
+        ? " El runner rechazó sus argumentos; revisá el detalle del comando y los flags obligatorios."
+        : "";
+      const error = new Error(`${command} exited with code ${code}${signal ? ` (${signal})` : ""}.${argparseHint}\n${stderr || stdout}`);
       error.stdout = stdout;
       error.stderr = stderr;
       error.code = code;
@@ -398,11 +793,23 @@ function spawnProcess(command, args, options = {}) {
 
 async function runDemo(projectId) {
   const paths = ensureProjectLayout(projectId);
+  markNotRequiredStages(projectId, ["preparing_image", "texture", "optimizing"]);
+  updateGenerationStage(projectId, "geometry", {
+    state: "running",
+    detail: "Copiando activo de demostración.",
+    progress: null,
+    indeterminate: true,
+  });
   const templatePath = path.join(desktopDir, "assets", "templates", "box.glb");
   if (!isValidGlb(templatePath)) {
     throw new Error(`Demo GLB not found or invalid: ${templatePath}`);
   }
   fs.copyFileSync(templatePath, paths.latestGlb);
+  updateGenerationStage(projectId, "geometry", {
+    state: "complete",
+    detail: "GLB de demostración validado.",
+    progress: 100,
+  });
   return {
     latestGlb: paths.latestGlb,
     source: templatePath,
@@ -428,6 +835,11 @@ async function runBlenderOptimize(projectId, sourcePath, options = {}) {
     }
     if (path.extname(sourcePath).toLowerCase() === ".glb" && isValidGlb(sourcePath)) {
       fs.copyFileSync(sourcePath, paths.latestGlb);
+      updateGenerationStage(projectId, "optimizing", {
+        state: "complete",
+        detail: "No se requirió optimización adicional; se validó el GLB original.",
+        progress: 100,
+      });
       return {
         latestGlb: paths.latestGlb,
         warnings: ["Blender no esta configurado; se uso el GLB generado directamente."],
@@ -436,7 +848,13 @@ async function runBlenderOptimize(projectId, sourcePath, options = {}) {
     throw new Error("Blender no configurado: se necesita para convertir OBJ/PLY a GLB.");
   }
 
-  writeJob(projectId, { status: "optimizing", message: "Optimizando y exportando con Blender..." });
+  writeJob(projectId, { status: "optimizing", message: "Optimizando malla con Blender..." });
+  updateGenerationStage(projectId, "optimizing", {
+    state: "running",
+    detail: "Procesando malla con Blender.",
+    progress: null,
+    indeterminate: true,
+  });
   appendJobLog(projectId, `Blender optimize: ${sourcePath}`);
   if (hasCanonicalRotation) {
     appendJobLog(
@@ -477,6 +895,7 @@ async function runBlenderOptimize(projectId, sourcePath, options = {}) {
   await spawnProcess(tools.blender.path, blenderArgs, {
     projectId,
     onOutput: (chunk) => appendJobLog(projectId, chunk.trim()),
+    onLine: (line) => handleRunnerLine(projectId, line),
   });
   if (!isValidGlb(optimizedGlb)) {
     throw new Error("Blender termino, pero output/optimized.glb no es un GLB valido.");
@@ -490,6 +909,11 @@ async function runBlenderOptimize(projectId, sourcePath, options = {}) {
     );
   }
   fs.copyFileSync(optimizedGlb, paths.latestGlb);
+  updateGenerationStage(projectId, "optimizing", {
+    state: "complete",
+    detail: "Malla procesada y validada por Blender.",
+    progress: 100,
+  });
   return {
     latestGlb: paths.latestGlb,
     optimizedGlb,
@@ -518,6 +942,13 @@ async function runQuick(projectId, inputFiles) {
   fs.rmSync(triposrOutput, { recursive: true, force: true });
   ensureDir(triposrOutput);
   writeJob(projectId, { status: "running", message: "Ejecutando TripoSR..." });
+  updateGenerationStage(projectId, "preparing_image", {
+    state: "running",
+    detail: "Preparando imagen de referencia.",
+    progress: null,
+    indeterminate: true,
+  });
+  markNotRequiredStages(projectId, ["texture"]);
   const pythonEnv = pythonGenerationEnv();
   appendPythonEnvLogs(projectId, "triposr", pythonEnv);
   try {
@@ -534,6 +965,7 @@ async function runQuick(projectId, inputFiles) {
       cwd: tools.triposr.path,
       env: pythonEnv,
       onOutput: (chunk) => appendJobLog(projectId, chunk.trim()),
+      onLine: (line) => handleRunnerLine(projectId, line),
     });
   } catch (error) {
     if (error instanceof GenerationCancelledError) {
@@ -548,6 +980,11 @@ async function runQuick(projectId, inputFiles) {
     throw new Error("El runner no generó modelo.");
   }
   const raw = copyRawOutput(projectId, generated);
+  updateGenerationStage(projectId, "geometry", {
+    state: "complete",
+    detail: "Malla base generada y GLB temporal guardado.",
+    progress: 100,
+  });
   appendJobLog(
     projectId,
     "Quick axis normalization applied: TripoSR → VOLUMIA Y-up; support side grounded and canonical front aligned to +Z"
@@ -570,6 +1007,97 @@ async function runQuick(projectId, inputFiles) {
   };
 }
 
+function buildHunyuanRunnerArgs({ jobId, hunyuanDir, inputPath, outputDir }) {
+  if (jobId === undefined || jobId === null || String(jobId).trim() === "") {
+    throw new Error("No se puede ejecutar Hunyuan3D sin un jobId válido.");
+  }
+  return [
+    path.join(backendDir, "tools", "hunyuan_runner.py"),
+    "--job-id",
+    String(jobId),
+    "--hunyuan-dir",
+    hunyuanDir,
+    "--input",
+    inputPath,
+    "--output-dir",
+    outputDir,
+  ];
+}
+
+function buildHunyuanTexgenArgs({ jobId, inputPath, meshPath, outputDir, hunyuanDir }) {
+  const normalizedJobId = String(jobId ?? "").trim();
+  if (!normalizedJobId) throw new Error("No se puede iniciar la textura Hunyuan: falta jobId.");
+  return [
+    path.join(backendDir, "python", "hunyuan_texgen.py"),
+    "--job-id", normalizedJobId,
+    "--image", inputPath,
+    "--mesh", meshPath,
+    "--output-dir", outputDir,
+    "--repo-root", hunyuanDir,
+  ];
+}
+
+async function runTexture(projectId, inputPath, meshPath) {
+  const tools = getToolStatus();
+  const paths = ensureProjectLayout(projectId);
+  const job = readJob(projectId);
+  const jobId = String(job.id || "").trim();
+  if (!jobId) throw new Error("No se puede iniciar la textura: falta jobId.");
+  validateMeshGlb(meshPath, { requireUv: true });
+  const textureOutput = path.join(paths.output, "hunyuan-texture");
+  fs.rmSync(textureOutput, { recursive: true, force: true });
+  ensureDir(textureOutput);
+  updateGenerationStage(projectId, "texture", {
+    state: "queued",
+    detail: "Esperando acceso exclusivo a la GPU.",
+    progress: null,
+    indeterminate: true,
+  });
+  appendJobLog(projectId, `[GPU_QUEUE] job queued: ${jobId}:texture`);
+  const texturedGlb = await gpuTaskQueue.runExclusive({
+    jobId,
+    stage: "texture",
+    isCancelled: () => isGenerationCancelled(projectId),
+    onStart: () => {
+      appendJobLog(projectId, `[GPU_QUEUE] lock acquired: ${jobId}:texture`);
+      updateGenerationStage(projectId, "texture", {
+        state: "running",
+        detail: "Generando textura con Hunyuan3D.",
+        progress: null,
+        indeterminate: true,
+      });
+    },
+  }, async () => {
+    try {
+      await spawnProcess(tools.python.path, buildHunyuanTexgenArgs({
+        jobId,
+        inputPath,
+        meshPath,
+        outputDir: textureOutput,
+        hunyuanDir: tools.hunyuan.path,
+      }), {
+        projectId,
+        cwd: tools.hunyuan.path,
+        env: pythonGenerationEnv(),
+        onOutput: (chunk) => appendJobLog(projectId, chunk.trim()),
+        onLine: (line) => handleRunnerLine(projectId, line),
+      });
+      const candidate = path.join(textureOutput, "textured.glb");
+      validateTexturedGlb(candidate);
+      return candidate;
+    } finally {
+      appendJobLog(projectId, `[GPU_QUEUE] lock released: ${jobId}:texture`);
+    }
+  });
+  fs.copyFileSync(texturedGlb, paths.latestGlb);
+  updateGenerationStage(projectId, "texture", {
+    state: "complete",
+    detail: "Textura, materiales y UV validados.",
+    progress: 100,
+  });
+  return texturedGlb;
+}
+
 async function runTextured(projectId, inputFiles) {
   const tools = getToolStatus();
   if (!tools.python.exists) {
@@ -582,30 +1110,66 @@ async function runTextured(projectId, inputFiles) {
     throw new Error("No se encontró imagen de entrada.");
   }
   const paths = ensureProjectLayout(projectId);
+  const jobId = readJob(projectId).id;
   const hunyuanOutput = path.join(paths.output, "hunyuan");
   fs.rmSync(hunyuanOutput, { recursive: true, force: true });
   ensureDir(hunyuanOutput);
+  updateGenerationStage(projectId, "preparing_image", {
+    state: "running",
+    detail: "Cargando imagen de referencia.",
+    progress: null,
+    indeterminate: true,
+  });
   const pythonEnv = pythonGenerationEnv();
   appendPythonEnvLogs(projectId, "hunyuan", pythonEnv);
-  await spawnProcess(tools.python.path, [
-    path.join(backendDir, "tools", "hunyuan_runner.py"),
-    "--hunyuan-dir",
-    tools.hunyuan.path,
-    "--input",
-    inputFiles[0],
-    "--output-dir",
-    hunyuanOutput,
-  ], {
-    projectId,
-    cwd: tools.hunyuan.path,
-    env: pythonEnv,
-    onOutput: (chunk) => appendJobLog(projectId, chunk.trim()),
+  updateGenerationStage(projectId, "geometry", {
+    state: "queued",
+    detail: "Esperando acceso exclusivo a la GPU.",
+    progress: null,
+    indeterminate: true,
+  });
+  appendJobLog(projectId, `[GPU_QUEUE] job queued: ${jobId}:geometry`);
+  await gpuTaskQueue.runExclusive({
+    jobId,
+    stage: "geometry",
+    isCancelled: () => isGenerationCancelled(projectId),
+    onStart: () => {
+      appendJobLog(projectId, `[GPU_QUEUE] lock acquired: ${jobId}:geometry`);
+      updateGenerationStage(projectId, "geometry", {
+        state: "running",
+        detail: "Cargando modelo de geometría.",
+        progress: null,
+        indeterminate: true,
+      });
+    },
+  }, async () => {
+    try {
+      await spawnProcess(tools.python.path, buildHunyuanRunnerArgs({
+        jobId,
+        hunyuanDir: tools.hunyuan.path,
+        inputPath: inputFiles[0],
+        outputDir: hunyuanOutput,
+      }), {
+        projectId,
+        cwd: tools.hunyuan.path,
+        env: pythonEnv,
+        onOutput: (chunk) => appendJobLog(projectId, chunk.trim()),
+        onLine: (line) => handleRunnerLine(projectId, line),
+      });
+    } finally {
+      appendJobLog(projectId, `[GPU_QUEUE] lock released: ${jobId}:geometry`);
+    }
   });
   const generated = latestGeneratedAsset(hunyuanOutput);
   if (!generated) {
     throw new Error("El runner no generó modelo.");
   }
   const raw = copyRawOutput(projectId, generated);
+  updateGenerationStage(projectId, "geometry", {
+    state: "complete",
+    detail: "Malla base generada y GLB temporal guardado.",
+    progress: 100,
+  });
   const optimized = await runBlenderOptimize(projectId, raw, {
     rotation: configuredRotation("VOLUMIA_HUNYUAN_ROTATION", {
       preset: "hunyuan_default",
@@ -614,10 +1178,13 @@ async function runTextured(projectId, inputFiles) {
       rotationZDeg: 0,
     }),
   });
+  validateMeshGlb(optimized.latestGlb, { requireUv: true });
+  const texturedGlb = await runTexture(projectId, inputFiles[0], optimized.latestGlb);
   return {
-    latestGlb: optimized.latestGlb,
+    latestGlb: texturedGlb,
     raw,
     optimizedGlb: optimized.optimizedGlb,
+    texturedGlb,
     source: generated,
     rotation: optimized.rotation,
     warnings: optimized.warnings,
@@ -636,6 +1203,18 @@ async function runPhotogrammetry(projectId, inputFiles) {
     throw new Error("El modo photogrammetry requiere multiples imagenes.");
   }
   const paths = ensureProjectLayout(projectId);
+  updateGenerationStage(projectId, "preparing_image", {
+    state: "complete",
+    detail: "Las referencias se enviaron directamente a fotogrametría.",
+    progress: 100,
+  });
+  updateGenerationStage(projectId, "geometry", {
+    state: "running",
+    detail: "Reconstruyendo desde las referencias fotográficas.",
+    progress: null,
+    indeterminate: true,
+  });
+  markNotRequiredStages(projectId, ["texture"]);
   const pythonEnv = pythonGenerationEnv();
   appendPythonEnvLogs(projectId, "meshroom", pythonEnv);
   await spawnProcess(tools.python.path, [
@@ -651,12 +1230,18 @@ async function runPhotogrammetry(projectId, inputFiles) {
     cwd: tools.meshroom.path,
     env: pythonEnv,
     onOutput: (chunk) => appendJobLog(projectId, chunk.trim()),
+    onLine: (line) => handleRunnerLine(projectId, line),
   });
   const generated = latestGeneratedAsset(paths.output);
   if (!generated) {
     throw new Error("El runner no generó modelo.");
   }
   const raw = copyRawOutput(projectId, generated);
+  updateGenerationStage(projectId, "geometry", {
+    state: "complete",
+    detail: "Malla base generada por fotogrametría.",
+    progress: 100,
+  });
   return await runBlenderOptimize(projectId, raw);
 }
 
@@ -682,16 +1267,51 @@ async function runGeneration(projectId, mode) {
     if (!validModes.has(mode)) {
       throw new Error(`Modo de generacion invalido: ${mode}`);
     }
+    const generationMode = normalizeGenerationMode(mode);
     writeJob(projectId, {
       id: current.id,
       mode,
+      generationMode,
       status: "queued",
       message: "Job en cola.",
-      startedAt: nowIso(),
+      startedAt: current.startedAt || nowIso(),
       finishedAt: null,
+      totalDurationMs: null,
+      runner: mode === "quick" ? "TripoSR" : mode === "textured" ? "Hunyuan3D" : mode === "photogrammetry" ? "Meshroom" : "Plantilla local",
+      resultFiles: [],
+      progress: normaliseGenerationProgress(
+        current.progress || createGenerationProgress({
+          jobId: current.id,
+          startedAt: stageTimeMs(current.startedAt),
+          mode: generationMode,
+        }),
+        { jobId: current.id, startedAt: stageTimeMs(current.startedAt), mode: generationMode },
+      ),
       error: null,
       warnings: [],
       inputFiles,
+    });
+    const requiredStages = new Set(getRequiredStages(generationMode));
+    markNotRequiredStages(
+      projectId,
+      generationStages.map(([stageId]) => stageId).filter((stageId) => !requiredStages.has(stageId)),
+    );
+    updateGenerationStage(projectId, "validating", {
+      state: "running",
+      detail: "Verificando referencias y configuración del modo.",
+      progress: null,
+      indeterminate: true,
+    });
+    const missingInput = inputFiles.find((filePath) => !fs.existsSync(filePath));
+    if (missingInput) {
+      throw new Error(`No se encontró la referencia: ${missingInput}`);
+    }
+    updateGenerationStage(projectId, "validating", {
+      state: "complete",
+      detail: inputFiles.length
+        ? `${inputFiles.length} referencia(s) validada(s).`
+        : "Modo de demostración validado sin referencias.",
+      progress: 100,
     });
     writeJob(projectId, { status: "running", message: `Ejecutando modo ${mode}...` });
     log("INFO", "generation started", { projectId, mode, inputFiles: inputFiles.length });
@@ -709,34 +1329,75 @@ async function runGeneration(projectId, mode) {
       throw new GenerationCancelledError();
     }
 
+    appendJobLog(projectId, `[PIPELINE] Export preconditions: mode=${generationMode} required=${getRequiredStages(generationMode).join(",")}`);
+    assertPipelineReadyForExport(projectId, generationMode);
+    updateGenerationStage(projectId, "exporting", {
+      state: "running",
+      detail: "Verificando el archivo final para el visor.",
+      progress: null,
+      indeterminate: true,
+    });
+    if (!isValidGlb(paths.latestGlb)) {
+      throw new Error("El archivo final GLB no existe o no es válido.");
+    }
+    const finalGltf = readGlbJson(paths.latestGlb);
+    if (!Array.isArray(finalGltf.meshes) || finalGltf.meshes.length === 0) {
+      throw new Error("El archivo final GLB no contiene una malla cargable en el visor.");
+    }
+    updateGenerationStage(projectId, "exporting", {
+      state: "complete",
+      detail: "GLB final validado y disponible para el visor.",
+      progress: 100,
+    });
+
+    assertJobCanComplete(projectId, generationMode);
+
+    const finishedAt = nowIso();
     const finished = writeJob(projectId, {
       status: "complete",
-      message: "Modelo listo.",
-      finishedAt: nowIso(),
+      message: "Activo generado correctamente.",
+      finishedAt,
+      totalDurationMs: durationSince(readJob(projectId).startedAt, finishedAt),
       latestGlb: paths.latestGlb,
       output: result,
+      resultFiles: generatedResultFiles(result),
       warnings: result.warnings || [],
     });
+    persistPipelineState(projectId, finished);
+    syncLatestVersion(projectId, finished, paths.latestGlb);
     log("INFO", "generation complete", { projectId, mode, latestGlb: paths.latestGlb });
     return finished;
   } catch (error) {
     if (error instanceof GenerationCancelledError || isGenerationCancelled(projectId)) {
       log("INFO", "generation cancelled", { projectId, mode });
-      return writeJob(projectId, {
+      finishActiveStage(projectId, "cancelled", "Cancelada antes de finalizar.");
+      const finishedAt = nowIso();
+      const cancelled = writeJob(projectId, {
         status: "cancelled",
         message: "Generación interrumpida por el usuario.",
-        finishedAt: nowIso(),
+        finishedAt,
+        totalDurationMs: durationSince(readJob(projectId).startedAt, finishedAt),
         error: null,
       });
+      persistPipelineState(projectId, cancelled);
+      syncLatestVersion(projectId, cancelled, null);
+      return cancelled;
     }
     const message = error instanceof Error ? error.message : String(error);
     log("ERR", "generation failed", { projectId, mode, message });
-    return writeJob(projectId, {
+    finishActiveStage(projectId, "error", message);
+    blockPendingRequiredStages(projectId, normalizeGenerationMode(mode), "Bloqueada por una etapa obligatoria fallida.");
+    const finishedAt = nowIso();
+    const failed = writeJob(projectId, {
       status: "error",
       message,
-      finishedAt: nowIso(),
+      finishedAt,
+      totalDurationMs: durationSince(readJob(projectId).startedAt, finishedAt),
       error: { message },
     });
+    persistPipelineState(projectId, failed);
+    syncLatestVersion(projectId, failed, null);
+    return failed;
   }
 }
 
@@ -744,6 +1405,9 @@ function startGeneration(projectId, mode) {
   if (activeJobs.has(projectId)) {
     return readJob(projectId);
   }
+
+  const current = readJob(projectId);
+  if (current.id) gpuTaskQueue.resetCancellation(current.id);
 
   const activeJob = {
     cancelled: false,
@@ -764,6 +1428,13 @@ module.exports = {
   logPath,
   validModes,
   isValidGlb,
+  createGenerationProgress,
+  buildHunyuanRunnerArgs,
+  buildHunyuanTexgenArgs,
+  normalizeGenerationMode,
+  getRequiredStages,
+  assertPipelineReadyForExport,
+  assertJobCanComplete,
   readJob,
   writeJob,
   startGeneration,

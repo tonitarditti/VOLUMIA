@@ -1,4 +1,5 @@
 ﻿import argparse
+import gc
 import inspect
 import json
 import os
@@ -9,6 +10,7 @@ import time
 import traceback
 from pathlib import Path
 from contextlib import nullcontext
+from datetime import datetime, timezone
 from types import MethodType
 from typing import Any, Callable, Dict, Optional
 
@@ -43,6 +45,42 @@ PRESET_CONFIGS: Dict[str, Dict[str, int]] = {
         "steps": 30,
     },
 }
+
+
+_event_sequence = 0
+
+
+def emit(job_id: str, detail: str, *, state: str = "running", progress: Optional[int] = None, indeterminate: bool = False) -> None:
+    global _event_sequence
+    _event_sequence += 1
+    payload: Dict[str, Any] = {
+        "jobId": job_id,
+        "stage": "texture",
+        "state": state,
+        "detail": detail,
+        "indeterminate": indeterminate,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "sequenceNumber": _event_sequence,
+    }
+    if progress is not None:
+        payload["progress"] = progress
+    print(f"VOLUMIA_EVENT:{json.dumps(payload, ensure_ascii=False)}", flush=True)
+
+
+def cleanup_cuda() -> None:
+    gc.collect()
+    try:
+        import torch  # noqa: WPS433
+        if torch.cuda.is_available():
+            try:
+                torch.cuda.synchronize()
+            except Exception:
+                pass
+            torch.cuda.empty_cache()
+            if hasattr(torch.cuda, "ipc_collect"):
+                torch.cuda.ipc_collect()
+    except Exception:
+        pass
 
 
 def log_line(message: str) -> None:
@@ -738,6 +776,7 @@ def run_texgen(
         log_line("KMP_DUPLICATE_LIB_OK set to TRUE (workaround)")
 
     import torch  # noqa: WPS433
+    import diffusers  # noqa: WPS433
     import custom_rasterizer_kernel  # noqa: F401,WPS433
     from hy3dgen.texgen.differentiable_renderer import (  # noqa: F401,WPS433
         mesh_processor,
@@ -758,6 +797,9 @@ def run_texgen(
     resolved_preset = str(runtime_config["preset"])
     log_line("paint pipeline import OK")
     log_line(f"paint pipeline class: {pipeline_class}")
+    log_line(f"diffusers={getattr(diffusers, '__version__', 'unknown')} file={getattr(diffusers, '__file__', 'unknown')}")
+    log_line(f"torch={getattr(torch, '__version__', 'unknown')} file={getattr(torch, '__file__', 'unknown')}")
+    log_line(f"relevant_sys_path={json.dumps([item for item in sys.path if 'hunyuan' in item.lower() or 'diffusers' in item.lower() or 'site-packages' in item.lower()])}")
     log_line(
         "texgen preset resolved: "
         f"{resolved_preset} "
@@ -920,6 +962,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Texture a generated shape GLB using Hunyuan texgen.",
     )
+    parser.add_argument("--job-id", required=True, help="VOLUMIA job identifier")
     parser.add_argument("--image", required=True, help="Reference image path")
     parser.add_argument("--mesh", required=True, help="Input shape mesh GLB path")
     parser.add_argument(
@@ -970,6 +1013,9 @@ def build_result_payload(
 
 def main() -> int:
     args = parse_args()
+    job_id = str(args.job_id).strip()
+    if not job_id:
+        raise ValueError("--job-id no puede estar vacío")
     output_paths = resolve_output_paths(args.output_dir)
     ensure_dir(output_paths["output_dir"])
 
@@ -1008,6 +1054,7 @@ def main() -> int:
         if not os.path.isfile(image_path):
             raise RuntimeError(f"Input image not found: {image_path}")
 
+        emit(job_id, "Cargando pipeline de textura.", indeterminate=True)
         details = run_texgen(
             image_path=image_path,
             mesh_path=shape_glb_path,
@@ -1050,6 +1097,7 @@ def main() -> int:
                 "renderer_fp32_status": details["renderer_fp32_status"],
             }
         )
+        emit(job_id, "Textura, materiales y UV validados.", state="complete", progress=100)
         exit_code = 0
     except Exception as exc:  # noqa: BLE001
         result["texture_status"] = "failed"
@@ -1058,7 +1106,9 @@ def main() -> int:
         result["traceback"] = traceback.format_exc()
         if result.get("model_root") is None:
             result["model_root"] = os.environ.get("HUNYUAN_TEXGEN_MODEL_PATH", "").strip() or None
+        emit(job_id, f"Error de textura: {exc}", state="failed")
     finally:
+        cleanup_cuda()
         result["duration_ms"] = int((time.perf_counter() - started_at) * 1000)
         write_metadata(metadata_path, result)
         print(json.dumps(result, ensure_ascii=False))

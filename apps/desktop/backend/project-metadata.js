@@ -135,10 +135,44 @@ function syncLatestVersion(projectId, job, latestGlb) {
   const nextStatus = job.status;
   const nextFinishedAt = job.finishedAt || last.finishedAt;
   const nextGlbPath = latestGlb || last.glbPath;
-  if (last.status === nextStatus && last.finishedAt === nextFinishedAt && last.glbPath === nextGlbPath) return metadata;
+  const generation = {
+    startedAt: job.startedAt || last.generation?.startedAt || null,
+    finishedAt: job.finishedAt || last.generation?.finishedAt || null,
+    totalDurationMs: Number.isFinite(job.totalDurationMs)
+      ? job.totalDurationMs
+      : last.generation?.totalDurationMs ?? null,
+    status: nextStatus,
+    runner: job.runner || last.generation?.runner || null,
+    mode: job.mode || last.generation?.mode || last.mode,
+    stages: Array.isArray(job.progress?.stages)
+      ? job.progress.stages
+      : last.generation?.stages || [],
+    resultFiles: Array.isArray(job.resultFiles)
+      ? job.resultFiles
+      : last.generation?.resultFiles || [],
+    overallProgress: Number.isFinite(job.progress?.overallProgress)
+      ? job.progress.overallProgress
+      : last.generation?.overallProgress ?? 0,
+    stageDurations: Array.isArray(job.progress?.stages)
+      ? Object.fromEntries(
+          job.progress.stages.map((stage) => [stage.id, stage.durationMs ?? null]),
+        )
+      : last.generation?.stageDurations || {},
+    generationMode: job.mode || last.generation?.generationMode || last.mode,
+    outputFiles: Array.isArray(job.resultFiles)
+      ? job.resultFiles
+      : last.generation?.outputFiles || [],
+  };
+  if (
+    last.status === nextStatus &&
+    last.finishedAt === nextFinishedAt &&
+    last.glbPath === nextGlbPath &&
+    JSON.stringify(last.generation || null) === JSON.stringify(generation)
+  ) return metadata;
   last.status = nextStatus;
   if (nextFinishedAt) last.finishedAt = nextFinishedAt;
   if (nextGlbPath) last.glbPath = nextGlbPath;
+  last.generation = generation;
   versions[versions.length - 1] = last;
   return writeMetadata(projectId, { versions });
 }

@@ -410,6 +410,24 @@ def optimize_scene() -> None:
         obj.select_set(False)
 
 
+def ensure_uv_maps() -> None:
+    """Create a deterministic UV map only when the imported mesh has none."""
+    for obj in scene_mesh_objects():
+        if obj.data.uv_layers:
+            continue
+        select_only(obj)
+        try:
+            bpy.ops.object.mode_set(mode="EDIT")
+            bpy.ops.mesh.select_all(action="SELECT")
+            bpy.ops.uv.smart_project(angle_limit=1.15192, island_margin=0.03)
+            bpy.ops.object.mode_set(mode="OBJECT")
+            print(f"[blender-uv] generated UVMap for {obj.name}", flush=True)
+        finally:
+            if bpy.context.object and bpy.context.object.mode != "OBJECT":
+                bpy.ops.object.mode_set(mode="OBJECT")
+            obj.select_set(False)
+
+
 def ensure_image_textures_use_uv() -> None:
     """Ensure Image Texture nodes use a UVMap node as their vector input.
     This avoids Generated/Generated coordinates being used which misaligns photo textures.
@@ -540,6 +558,7 @@ def main() -> int:
     if args.normalize_to_ground:
         center_and_ground_scene()
     optimize_scene()
+    ensure_uv_maps()
     export_glb(target)
     print(f"Exported GLB: {target}")
     return 0

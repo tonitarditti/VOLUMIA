@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { BrandLogo } from "@/components/branding";
+import { BrandLogo, LoadingDots } from "@/components/branding";
+import { desktopApi, hasDesktopBridge } from "@/electron/desktopApi";
 
 export type SplashProps = {
   onComplete: () => void;
@@ -7,163 +8,64 @@ export type SplashProps = {
 
 export function Splash({ onComplete }: SplashProps) {
   const [isExiting, setIsExiting] = useState(false);
-  const [progress, setProgress] = useState(0);
+  const [status, setStatus] = useState("Inicializando VOLUMIA");
 
   useEffect(() => {
-    // Simulate initialization progress
-    const progressInterval = setInterval(() => {
-      setProgress((prev) => {
-        if (prev >= 85) return prev; // Stop at 85%, let real loading finish
-        return prev + Math.random() * 30;
-      });
-    }, 150);
+    let active = true;
+    let exitTimer: number | undefined;
 
-    // Start the exit animation after the splash duration, then notify the app.
-    const timer = setTimeout(() => {
-      setProgress(100);
+    const finish = () => {
+      if (!active) return;
+      setStatus("Preparando interfaz");
       setIsExiting(true);
-    }, 2800);
-    const completionTimer = setTimeout(onComplete, 3300);
+      // This timer is only the brief opacity transition. Readiness itself is
+      // determined by the desktop backend check below.
+      exitTimer = window.setTimeout(onComplete, 180);
+    };
+
+    if (!hasDesktopBridge()) {
+      finish();
+    } else {
+      void (async () => {
+        setStatus("Comprobando motor local");
+        try {
+          await desktopApi.getBackendStatus();
+        } catch {
+          // The normal application shell can still provide a recoverable
+          // settings path when the local engine is unavailable.
+          if (active) setStatus("Motor local no disponible");
+        }
+        finish();
+      })();
+    }
 
     return () => {
-      clearInterval(progressInterval);
-      clearTimeout(timer);
-      clearTimeout(completionTimer);
+      active = false;
+      if (exitTimer !== undefined) window.clearTimeout(exitTimer);
     };
   }, [onComplete]);
 
   return (
-    <div
-      className={`fixed inset-0 flex items-center justify-center overflow-hidden transition-opacity duration-500 ${
-        isExiting ? "opacity-0" : "opacity-100"
-      }`}
-      style={{
-        background:
-          "linear-gradient(135deg, var(--bg-app) 0%, color-mix(in srgb, var(--bg-app) 95%, var(--accent) 5%) 100%)",
-      }}
+    <main
+      className={`fixed inset-0 z-50 grid place-items-center bg-[var(--bg)] px-6 transition-opacity duration-200 ${isExiting ? "pointer-events-none opacity-0" : "opacity-100"}`}
+      aria-label="Inicializando VOLUMIA"
     >
-      {/* Animated background gradient orbs */}
-      <div className="absolute inset-0 overflow-hidden">
-        <div
-          className="absolute w-96 h-96 rounded-full opacity-20 blur-3xl"
-          style={{
-            background: "radial-gradient(circle, var(--accent), transparent)",
-            top: "-10%",
-            right: "-10%",
-            animation: "float 20s ease-in-out infinite",
-          }}
-        />
-        <div
-          className="absolute w-96 h-96 rounded-full opacity-10 blur-3xl"
-          style={{
-            background: "radial-gradient(circle, var(--accent-2), transparent)",
-            bottom: "-15%",
-            left: "-5%",
-            animation: "float 25s ease-in-out infinite 2s",
-          }}
-        />
-      </div>
-
-      {/* Content */}
-      <div className="relative z-10 flex flex-col items-center gap-12">
-        {/* Logo with fade-in and scale animation */}
-        <div
-          className="flex items-center justify-center"
-          style={{
-            animation: "fadeInScale 0.8s ease-out 0.2s both",
-          }}
+      <div className="flex max-w-sm flex-col items-center text-center">
+        <BrandLogo size={132} showText={false} label="VOLUMIA" />
+        <h1
+          className="mt-8 text-3xl font-medium tracking-[0.18em] text-[var(--text)]"
+          style={{ fontFamily: '"Aptos Display", Aptos, Inter, sans-serif' }}
         >
-          <div className="w-28 h-28 flex items-center justify-center">
-            <BrandLogo size={112} showText={false} label="VOLUMIA" />
-          </div>
-        </div>
-
-        {/* Loading progress bar */}
-        <div
-          className="w-64 h-0.5 rounded-full bg-[var(--surface-2)] overflow-hidden"
-          style={{
-            animation: "fadeIn 0.8s ease-out 0.6s both",
-          }}
-        >
-          <div
-            className="h-full rounded-full transition-all duration-300 ease-out"
-            style={{
-              width: `${progress}%`,
-              background:
-                "linear-gradient(90deg, var(--accent), var(--accent-2))",
-              boxShadow: "0 0 12px rgba(76, 111, 255, 0.45)",
-            }}
-          />
-        </div>
-
-        {/* Subtle status text */}
-        <p
-          className="text-xs text-[var(--text-faint)] tracking-wide uppercase"
-          style={{
-            animation: "fadeIn 0.8s ease-out 0.7s both",
-          }}
-        >
-          Inicializando espacio de trabajo...
+          VOLUMIA
+        </h1>
+        <p className="mt-3 text-sm tracking-[0.04em] text-[var(--text-muted)]">
+          Your Creative 3D Assistant
         </p>
+        <div className="mt-10 flex flex-col items-center gap-3">
+          <LoadingDots size={6} color="var(--volumia-primary)" />
+          <p className="text-xs text-[var(--text-muted)]">{status}</p>
+        </div>
       </div>
-
-      {/* Animated background styles */}
-      <style>{`
-        @keyframes fadeInScale {
-          from {
-            opacity: 0;
-            transform: scale(0.9);
-          }
-          to {
-            opacity: 1;
-            transform: scale(1);
-          }
-        }
-
-        @keyframes fadeInUp {
-          from {
-            opacity: 0;
-            transform: translateY(8px);
-          }
-          to {
-            opacity: 1;
-            transform: translateY(0);
-          }
-        }
-
-        @keyframes fadeIn {
-          from {
-            opacity: 0;
-          }
-          to {
-            opacity: 1;
-          }
-        }
-
-        @keyframes float {
-          0%, 100% {
-            transform: translateY(0px) translateX(0px);
-          }
-          25% {
-            transform: translateY(-20px) translateX(10px);
-          }
-          50% {
-            transform: translateY(-10px) translateX(-10px);
-          }
-          75% {
-            transform: translateY(10px) translateX(20px);
-          }
-        }
-
-        .reduce-motion @keyframes fadeInScale,
-        .reduce-motion @keyframes fadeInUp,
-        .reduce-motion @keyframes fadeIn,
-        .reduce-motion @keyframes float {
-          from, to {
-            transform: none;
-          }
-        }
-      `}</style>
-    </div>
+    </main>
   );
 }

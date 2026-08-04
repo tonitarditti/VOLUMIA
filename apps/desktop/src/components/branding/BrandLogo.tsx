@@ -11,6 +11,8 @@ export type BrandLogoProps = {
   className?: string;
   iconClassName?: string;
   textClassName?: string;
+  subtitle?: string;
+  subtitleClassName?: string;
   label?: string;
 };
 
@@ -22,7 +24,7 @@ const toneColor: Record<BrandLogoTone, string> = {
 };
 
 const BRAND_FONT_STACK =
-  'Inter, Geist, "SF Pro Display", "SF Pro Text", system-ui, sans-serif';
+  '"Aptos Display", Aptos, Inter, Geist, "SF Pro Display", system-ui, sans-serif';
 
 function joinClassNames(...parts: Array<string | undefined>) {
   return parts.filter(Boolean).join(" ");
@@ -36,6 +38,8 @@ export function BrandLogo({
   className = "",
   iconClassName = "",
   textClassName = "",
+  subtitle,
+  subtitleClassName = "",
   label,
 }: BrandLogoProps) {
   const iconSize = showText ? Math.round(size * 1.2) : size;
@@ -72,21 +76,37 @@ export function BrandLogo({
       </span>
 
       {showText ? (
-        <span
-          className={joinClassNames(
-            "truncate uppercase leading-none",
-            textClassName,
-          )}
-          style={{
-            color: textColor,
-            fontFamily: BRAND_FONT_STACK,
-            fontSize: `${size}px`,
-            fontWeight: 600,
-            letterSpacing: "0.06em",
-            lineHeight: 1,
-          }}
-        >
-          VOLUMIA
+        <span className="flex min-w-0 flex-col justify-center gap-1">
+          <span
+            className={joinClassNames(
+              "truncate uppercase leading-none",
+              textClassName,
+            )}
+            style={{
+              color: textColor,
+              fontFamily: BRAND_FONT_STACK,
+              fontSize: `${size}px`,
+              fontWeight: 500,
+              letterSpacing: "0.12em",
+              lineHeight: 1,
+            }}
+          >
+            VOLUMIA
+          </span>
+          {subtitle ? (
+            <span
+              className={joinClassNames("truncate leading-none", subtitleClassName)}
+              style={{
+                color: "var(--text-muted)",
+                fontFamily: BRAND_FONT_STACK,
+                fontSize: `${Math.max(9, Math.round(size * 0.46))}px`,
+                fontWeight: 400,
+                letterSpacing: "0.03em",
+              }}
+            >
+              {subtitle}
+            </span>
+          ) : null}
         </span>
       ) : null}
     </span>
